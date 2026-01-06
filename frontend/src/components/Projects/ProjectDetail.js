@@ -42,6 +42,7 @@ import {
   Fade,
   Collapse,
   Slide,
+  InputAdornment,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import AddIcon from '@mui/icons-material/Add';
@@ -57,6 +58,7 @@ import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import TableViewIcon from '@mui/icons-material/TableView';
 import FilterListIcon from '@mui/icons-material/FilterList';
+import SearchIcon from '@mui/icons-material/Search';
 import SortIcon from '@mui/icons-material/Sort';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
@@ -102,6 +104,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   const [prefilledStatus, setPrefilledStatus] = useState(null);
   
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [calendarDateMode, setCalendarDateMode] = useState('due'); // 'due' or 'target'
   const [filterAnchor, setFilterAnchor] = useState(null);
   const [sortAnchor, setSortAnchor] = useState(null);
   const [groupAnchor, setGroupAnchor] = useState(null);
@@ -113,6 +116,8 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
+  const [draggedTaskId, setDraggedTaskId] = useState(null);
+  const [dragOverStage, setDragOverStage] = useState(null);
   
   // Advanced filter state
   const [advancedFilters, setAdvancedFilters] = useState({
@@ -291,6 +296,13 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
       return 0;
     });
   };
+
+  const normalizeDateValue = (value) => {
+    if (!value) return null;
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    const str = String(value);
+    return str.includes('T') ? str.split('T')[0] : str;
+  };
   
   // Apply advanced filters to tasks
   const filterTasks = (tasksToFilter) => {
@@ -452,19 +464,76 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     }
   };
 
+  const handleDragStart = (task) => (event) => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(task.id));
+    setDraggedTaskId(task.id);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedTaskId(null);
+    setDragOverStage(null);
+  };
+
+  const handleStageDragOver = (stage) => (event) => {
+    event.preventDefault();
+    if (dragOverStage !== stage) {
+      setDragOverStage(stage);
+    }
+  };
+
+  const handleStageDragLeave = (event) => {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      setDragOverStage(null);
+    }
+  };
+
+  const handleStageDrop = (stage) => async (event) => {
+    event.preventDefault();
+    const droppedId = event.dataTransfer.getData('text/plain');
+    const taskId = droppedId ? Number(droppedId) : draggedTaskId;
+    if (!taskId) return;
+
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task || task.stage === stage) {
+      setDraggedTaskId(null);
+      setDragOverStage(null);
+      return;
+    }
+
+    const previousTasks = tasks;
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, stage } : t)));
+    setDraggedTaskId(null);
+    setDragOverStage(null);
+
+    try {
+      await updateTask(taskId, { stage });
+      showToast('success', `Moved to ${stage}`);
+    } catch (error) {
+      console.error('Failed to move task:', error);
+      setTasks(previousTasks);
+      showToast('error', 'Failed to move task');
+    }
+  };
+
   const openTasks = tasks.filter(t => t.status === 'Open');
   const pendingTasks = tasks.filter(t => t.status === 'Pending Approval');
   const closedTasks = tasks.filter(t => t.status === 'Closed');
 
-  const TaskCard = ({ task }) => (
+  const TaskCard = ({ task, draggable = false, onDragStart, onDragEnd, isDragging = false }) => (
     <Card
       elevation={0}
       onClick={() => handleOpenTaskForm(task)}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       sx={{
         border: '1px solid rgba(148, 163, 184, 0.2)',
         borderRadius: 2,
         cursor: 'pointer',
-        transition: 'all 0.2s ease',
+        transition: 'transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease',
+        opacity: isDragging ? 0.6 : 1,
+        transform: isDragging ? 'scale(0.98)' : 'scale(1)',
         '&:hover': {
           borderColor: '#0f766e',
           backgroundColor: 'rgba(15, 118, 110, 0.02)',
@@ -729,7 +798,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                     }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                         <Box>
-                          <Typography variant="h5\" sx={{ fontWeight: 700 }}>
+                          <Typography variant="h5" sx={{ fontWeight: 700 }}>
                             {Math.round((project.completedTasks / project.taskCount) * 100)}%
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
@@ -868,21 +937,27 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
               <Box>
                 {/* View Controls */}
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, gap: 2, flexWrap: 'wrap' }}>
-                  {/* Filter, Group Buttons */}
-                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                    <Button
+                  {/* Search and Filter Buttons */}
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <TextField
                       size="small"
-                      startIcon={<FilterListIcon />}
-                      onClick={(e) => setFilterAnchor(e.currentTarget)}
-                      variant={Object.values(advancedFilters).some(v => (Array.isArray(v) ? v.length > 0 : v)) ? 'contained' : 'outlined'}
-                      sx={{ 
-                        textTransform: 'none', 
-                        borderRadius: 2,
-                        border: '1px solid rgba(148, 163, 184, 0.3)',
+                      placeholder="Search tasks..."
+                      value={advancedFilters.name || ''}
+                      onChange={(e) => setAdvancedFilters(prev => ({ ...prev, name: e.target.value }))}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <SearchIcon sx={{ color: 'text.secondary', fontSize: 20 }} />
+                          </InputAdornment>
+                        ),
                       }}
-                    >
-                      Advanced Filter
-                    </Button>
+                      sx={{ 
+                        minWidth: 250,
+                        '& .MuiOutlinedInput-root': {
+                          borderRadius: 2,
+                        }
+                      }}
+                    />
                     <Button
                       size="small"
                       variant={showArchived ? 'contained' : 'outlined'}
@@ -1511,6 +1586,9 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                         handleOpenTaskForm(null, 'Planned', null);
                       }
                     }}
+                    onDragOver={handleStageDragOver('Planned')}
+                    onDragLeave={handleStageDragLeave}
+                    onDrop={handleStageDrop('Planned')}
                     sx={{
                       minWidth: 300,
                       flex: 1,
@@ -1519,6 +1597,9 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       borderRadius: 2,
                       p: 2,
                       cursor: 'pointer',
+                      transition: 'background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
+                      boxShadow: dragOverStage === 'Planned' ? '0 10px 30px rgba(55, 48, 163, 0.18)' : 'none',
+                      transform: dragOverStage === 'Planned' ? 'translateY(-2px)' : 'translateY(0)',
                       '&:hover': {
                         backgroundColor: 'rgba(224, 231, 255, 0.5)',
                       },
@@ -1551,7 +1632,14 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       {tasks
                         .filter(t => t.stage === 'Planned')
                         .map(task => (
-                          <TaskCard key={task.id} task={task} />
+                          <TaskCard
+                            key={task.id}
+                            task={task}
+                            draggable
+                            onDragStart={handleDragStart(task)}
+                            onDragEnd={handleDragEnd}
+                            isDragging={draggedTaskId === task.id}
+                          />
                         ))}
                       <Box 
                         className="add-task-area"
@@ -1581,6 +1669,9 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                         handleOpenTaskForm(null, 'In-process', null);
                       }
                     }}
+                    onDragOver={handleStageDragOver('In-process')}
+                    onDragLeave={handleStageDragLeave}
+                    onDrop={handleStageDrop('In-process')}
                     sx={{
                       minWidth: 300,
                       flex: 1,
@@ -1589,6 +1680,9 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       borderRadius: 2,
                       p: 2,
                       cursor: 'pointer',
+                      transition: 'background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
+                      boxShadow: dragOverStage === 'In-process' ? '0 10px 30px rgba(146, 64, 14, 0.18)' : 'none',
+                      transform: dragOverStage === 'In-process' ? 'translateY(-2px)' : 'translateY(0)',
                       '&:hover': {
                         backgroundColor: 'rgba(254, 243, 199, 0.5)',
                       },
@@ -1621,7 +1715,14 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       {tasks
                         .filter(t => t.stage === 'In-process')
                         .map(task => (
-                          <TaskCard key={task.id} task={task} />
+                          <TaskCard
+                            key={task.id}
+                            task={task}
+                            draggable
+                            onDragStart={handleDragStart(task)}
+                            onDragEnd={handleDragEnd}
+                            isDragging={draggedTaskId === task.id}
+                          />
                         ))}
                       <Box
                         className="add-task-area"
@@ -1657,6 +1758,9 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                         handleOpenTaskForm(null, 'Completed', null);
                       }
                     }}
+                    onDragOver={handleStageDragOver('Completed')}
+                    onDragLeave={handleStageDragLeave}
+                    onDrop={handleStageDrop('Completed')}
                     sx={{
                       minWidth: 300,
                       flex: 1,
@@ -1665,6 +1769,9 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       borderRadius: 2,
                       p: 2,
                       cursor: 'pointer',
+                      transition: 'background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
+                      boxShadow: dragOverStage === 'Completed' ? '0 10px 30px rgba(6, 95, 70, 0.18)' : 'none',
+                      transform: dragOverStage === 'Completed' ? 'translateY(-2px)' : 'translateY(0)',
                       '&:hover': {
                         backgroundColor: 'rgba(209, 250, 229, 0.5)',
                       },
@@ -1697,7 +1804,14 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       {tasks
                         .filter(t => t.stage === 'Completed')
                         .map(task => (
-                          <TaskCard key={task.id} task={task} />
+                          <TaskCard
+                            key={task.id}
+                            task={task}
+                            draggable
+                            onDragStart={handleDragStart(task)}
+                            onDragEnd={handleDragEnd}
+                            isDragging={draggedTaskId === task.id}
+                          />
                         ))}
                       <Box
                         className="add-task-area"
@@ -1733,6 +1847,9 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                         handleOpenTaskForm(null, 'On-hold', null);
                       }
                     }}
+                    onDragOver={handleStageDragOver('On-hold')}
+                    onDragLeave={handleStageDragLeave}
+                    onDrop={handleStageDrop('On-hold')}
                     sx={{
                       minWidth: 300,
                       flex: 1,
@@ -1741,6 +1858,9 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       borderRadius: 2,
                       p: 2,
                       cursor: 'pointer',
+                      transition: 'background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
+                      boxShadow: dragOverStage === 'On-hold' ? '0 10px 30px rgba(107, 33, 168, 0.18)' : 'none',
+                      transform: dragOverStage === 'On-hold' ? 'translateY(-2px)' : 'translateY(0)',
                       '&:hover': {
                         backgroundColor: 'rgba(243, 232, 255, 0.5)',
                       },
@@ -1773,7 +1893,14 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       {tasks
                         .filter(t => t.stage === 'On-hold')
                         .map(task => (
-                          <TaskCard key={task.id} task={task} />
+                          <TaskCard
+                            key={task.id}
+                            task={task}
+                            draggable
+                            onDragStart={handleDragStart(task)}
+                            onDragEnd={handleDragEnd}
+                            isDragging={draggedTaskId === task.id}
+                          />
                         ))}
                       <Box
                         className="add-task-area"
@@ -1809,6 +1936,9 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                         handleOpenTaskForm(null, 'Dropped', null);
                       }
                     }}
+                    onDragOver={handleStageDragOver('Dropped')}
+                    onDragLeave={handleStageDragLeave}
+                    onDrop={handleStageDrop('Dropped')}
                     sx={{
                       minWidth: 300,
                       flex: 1,
@@ -1817,6 +1947,9 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       borderRadius: 2,
                       p: 2,
                       cursor: 'pointer',
+                      transition: 'background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
+                      boxShadow: dragOverStage === 'Dropped' ? '0 10px 30px rgba(153, 27, 27, 0.18)' : 'none',
+                      transform: dragOverStage === 'Dropped' ? 'translateY(-2px)' : 'translateY(0)',
                       '&:hover': {
                         backgroundColor: 'rgba(254, 226, 226, 0.5)',
                       },
@@ -1849,7 +1982,14 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       {tasks
                         .filter(t => t.stage === 'Dropped')
                         .map(task => (
-                          <TaskCard key={task.id} task={task} />
+                          <TaskCard
+                            key={task.id}
+                            task={task}
+                            draggable
+                            onDragStart={handleDragStart(task)}
+                            onDragEnd={handleDragEnd}
+                            isDragging={draggedTaskId === task.id}
+                          />
                         ))}
                       <Box
                         className="add-task-area"
@@ -1886,194 +2026,373 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                   <Box>
                   {/* Calendar Header */}
                   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                    <Typography variant="h4" sx={{ fontWeight: 700, color: '#0f172a' }}>
                       {currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                     </Typography>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <IconButton
+                    <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                      <Box sx={{ display: 'flex', gap: 0.5 }}>
+                        <IconButton
+                          size="small"
+                          onClick={() => {
+                            const newMonth = new Date(currentMonth);
+                            newMonth.setMonth(newMonth.getMonth() - 1);
+                            setCurrentMonth(newMonth);
+                          }}
+                          sx={{ 
+                            bgcolor: '#f8fafc',
+                            '&:hover': {
+                              bgcolor: '#0f766e',
+                              color: '#fff',
+                            }
+                          }}
+                        >
+                          <ChevronLeftIcon fontSize="small" />
+                        </IconButton>
+                        <Button
+                          size="small"
+                          onClick={() => setCurrentMonth(new Date())}
+                          sx={{ 
+                            textTransform: 'none', 
+                            fontWeight: 600,
+                            px: 2,
+                            bgcolor: '#f8fafc',
+                            color: '#0f172a',
+                            '&:hover': {
+                              bgcolor: '#0f766e',
+                              color: '#fff',
+                            }
+                          }}
+                        >
+                          Today
+                        </Button>
+                        <IconButton
+                          size="small"
+                          onClick={() => {
+                            const newMonth = new Date(currentMonth);
+                            newMonth.setMonth(newMonth.getMonth() + 1);
+                            setCurrentMonth(newMonth);
+                          }}
+                          sx={{ 
+                            bgcolor: '#f8fafc',
+                            '&:hover': {
+                              bgcolor: '#0f766e',
+                              color: '#fff',
+                            }
+                          }}
+                        >
+                          <ChevronRightIcon fontSize="small" />
+                        </IconButton>
+                      </Box>
+                      <ToggleButtonGroup
+                        exclusive
                         size="small"
-                        onClick={() => {
-                          const newMonth = new Date(currentMonth);
-                          newMonth.setMonth(newMonth.getMonth() - 1);
-                          setCurrentMonth(newMonth);
+                        value={calendarDateMode}
+                        onChange={(_event, value) => {
+                          if (value) setCalendarDateMode(value);
                         }}
-                        sx={{ border: '1px solid rgba(148, 163, 184, 0.3)' }}
-                      >
-                        <ChevronLeftIcon />
-                      </IconButton>
-                      <Button
-                        size="small"
-                        onClick={() => setCurrentMonth(new Date())}
-                        sx={{ textTransform: 'none', borderRadius: 2 }}
-                      >
-                        Today
-                      </Button>
-                      <IconButton
-                        size="small"
-                        onClick={() => {
-                          const newMonth = new Date(currentMonth);
-                          newMonth.setMonth(newMonth.getMonth() + 1);
-                          setCurrentMonth(newMonth);
+                        sx={{
+                          borderRadius: 999,
+                          backgroundColor: 'rgba(148, 163, 184, 0.2)',
+                          p: 0.25,
+                          '& .MuiToggleButton-root': {
+                            textTransform: 'none',
+                            border: 'none',
+                            borderRadius: 999,
+                            px: 1.5,
+                            py: 0.5,
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            color: '#475569',
+                            '&.Mui-selected': {
+                              backgroundColor: '#0f766e',
+                              color: '#fff',
+                              '&:hover': {
+                                backgroundColor: '#0f766e',
+                              },
+                            },
+                          },
                         }}
-                        sx={{ border: '1px solid rgba(148, 163, 184, 0.3)' }}
                       >
-                        <ChevronRightIcon />
-                      </IconButton>
+                        <ToggleButton value="due">Due date</ToggleButton>
+                        <ToggleButton value="target">Target date</ToggleButton>
+                      </ToggleButtonGroup>
                     </Box>
                   </Box>
 
-                  {/* Calendar Grid */}
+                  {/* Calendar Grid - Asana Style */}
                   <Paper
                     elevation={0}
                     sx={{
-                      border: '1px solid rgba(148, 163, 184, 0.2)',
+                      border: '1px solid #e2e8f0',
                       borderRadius: 2,
                       overflow: 'hidden',
+                      backgroundColor: '#fff',
                     }}
                   >
-                    {/* Day Headers */}
-                    <Grid container>
-                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                        <Grid item xs key={day}>
-                          <Box
-                            sx={{
-                              p: 1.5,
-                              textAlign: 'center',
-                              backgroundColor: 'rgba(15, 118, 110, 0.05)',
-                              borderBottom: '1px solid rgba(148, 163, 184, 0.2)',
-                            }}
-                          >
-                            <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
-                              {day}
-                            </Typography>
-                          </Box>
-                        </Grid>
+                    {/* Weekday Headers */}
+                    <Box sx={{ display: 'flex', borderBottom: '2px solid #e2e8f0', bgcolor: '#f8fafc' }}>
+                      {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map((day, idx) => (
+                        <Box
+                          key={day}
+                          sx={{
+                            flex: 1,
+                            p: 1.5,
+                            textAlign: 'center',
+                            borderRight: idx < 6 ? '1px solid #e2e8f0' : 'none',
+                          }}
+                        >
+                          <Typography variant="caption" sx={{ fontWeight: 700, color: '#64748b', fontSize: '0.75rem' }}>
+                            {day}
+                          </Typography>
+                        </Box>
                       ))}
-                    </Grid>
+                    </Box>
 
-                    {/* Calendar Days */}
-                    <Grid container>
-                      {(() => {
-                        const year = currentMonth.getFullYear();
-                        const month = currentMonth.getMonth();
-                        const firstDay = new Date(year, month, 1).getDay();
-                        const daysInMonth = new Date(year, month + 1, 0).getDate();
-                        const days = [];
-
-                        // Previous month days
-                        for (let i = 0; i < firstDay; i++) {
-                          days.push(
-                            <Grid item xs key={`empty-${i}`}>
-                              <Box
-                                sx={{
-                                  minHeight: 100,
-                                  p: 1,
-                                  borderRight: '1px solid rgba(148, 163, 184, 0.1)',
-                                  borderBottom: '1px solid rgba(148, 163, 184, 0.1)',
-                                  backgroundColor: 'rgba(148, 163, 184, 0.02)',
-                                }}
-                              />
-                            </Grid>
-                          );
+                    {/* Calendar Weeks */}
+                    {(() => {
+                      const year = currentMonth.getFullYear();
+                      const month = currentMonth.getMonth();
+                      const firstDay = new Date(year, month, 1).getDay();
+                      const daysInMonth = new Date(year, month + 1, 0).getDate();
+                      const today = new Date();
+                      const isCurrentMonth = today.getMonth() === month && today.getFullYear() === year;
+                      
+                      const weeks = [];
+                      let currentWeek = [];
+                      
+                      // Previous month days
+                      const prevMonthDays = new Date(year, month, 0).getDate();
+                      for (let i = firstDay - 1; i >= 0; i--) {
+                        const day = prevMonthDays - i;
+                        currentWeek.push({
+                          day,
+                          isCurrentMonth: false,
+                          isPrevMonth: true,
+                          dateStr: null,
+                          isToday: false,
+                        });
+                      }
+                      
+                      // Current month days
+                      for (let day = 1; day <= daysInMonth; day++) {
+                        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                        const isToday = isCurrentMonth && today.getDate() === day;
+                        
+                        currentWeek.push({
+                          day,
+                          isCurrentMonth: true,
+                          isPrevMonth: false,
+                          isNextMonth: false,
+                          dateStr,
+                          isToday,
+                        });
+                        
+                        if (currentWeek.length === 7) {
+                          weeks.push([...currentWeek]);
+                          currentWeek = [];
                         }
-
-                        // Current month days
-                        for (let day = 1; day <= daysInMonth; day++) {
-                          const dateStr = `2026-01-${String(day).padStart(2, '0')}`;
-                          const tasksOnDay = tasks.filter(t => t.due_date === dateStr || t.dueDate === dateStr);
-                          const isToday = new Date().getDate() === day && new Date().getMonth() === month;
-
-                          days.push(
-                            <Grid item xs key={day}>
+                      }
+                      
+                      // Next month days
+                      if (currentWeek.length > 0) {
+                        let nextDay = 1;
+                        while (currentWeek.length < 7) {
+                          currentWeek.push({
+                            day: nextDay++,
+                            isCurrentMonth: false,
+                            isNextMonth: true,
+                            dateStr: null,
+                            isToday: false,
+                          });
+                        }
+                        weeks.push([...currentWeek]);
+                      }
+                      
+                      return weeks.map((week, weekIdx) => (
+                        <Box
+                          key={weekIdx}
+                          sx={{
+                            display: 'flex',
+                            minHeight: 140,
+                            borderBottom: weekIdx < weeks.length - 1 ? '1px solid #e2e8f0' : 'none',
+                          }}
+                        >
+                          {week.map((dayInfo, dayIdx) => {
+                            const tasksOnDay = dayInfo.dateStr
+                              ? tasks.filter((t) => {
+                                const value = calendarDateMode === 'target'
+                                  ? (t.target_date || t.targetDate)
+                                  : (t.due_date || t.dueDate);
+                                return normalizeDateValue(value) === dayInfo.dateStr;
+                              })
+                              : [];
+                            
+                            return (
                               <Box
+                                key={dayIdx}
                                 onClick={(e) => {
-                                  // If clicking on empty space, open new task form with this due date
-                                  if (e.target === e.currentTarget || !e.target.closest('[data-task-chip]')) {
+                                  if (dayInfo.isCurrentMonth && (e.target === e.currentTarget || !e.target.closest('[data-task-chip]'))) {
                                     handleOpenTaskForm(null, null, null);
                                   }
                                 }}
                                 sx={{
-                                  minHeight: 100,
-                                  p: 1,
-                                  borderRight: '1px solid rgba(148, 163, 184, 0.1)',
-                                  borderBottom: '1px solid rgba(148, 163, 184, 0.1)',
-                                  backgroundColor: isToday ? 'rgba(15, 118, 110, 0.05)' : 'transparent',
-                                  cursor: 'pointer',
-                                  '&:hover': {
-                                    backgroundColor: 'rgba(15, 118, 110, 0.08)',
-                                  },
+                                  flex: 1,
+                                  p: 1.5,
+                                  borderRight: dayIdx < 6 ? '1px solid #e2e8f0' : 'none',
+                                  backgroundColor: !dayInfo.isCurrentMonth 
+                                    ? '#fafafa' 
+                                    : dayInfo.isToday 
+                                    ? '#f0fdfa' 
+                                    : '#fff',
+                                  cursor: dayInfo.isCurrentMonth ? 'pointer' : 'default',
+                                  position: 'relative',
+                                  transition: 'background-color 0.2s ease',
+                                  '&:hover': dayInfo.isCurrentMonth ? {
+                                    backgroundColor: dayInfo.isToday ? '#ccfbf1' : '#f8fafc',
+                                  } : {},
                                 }}
                               >
-                                <Typography
-                                  variant="caption"
-                                  sx={{
-                                    fontWeight: isToday ? 700 : 500,
-                                    color: isToday ? '#0f766e' : 'text.secondary',
-                                    mb: 0.5,
-                                    display: 'block',
-                                  }}
-                                >
-                                  {day}
-                                </Typography>
-                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                                  {tasksOnDay.map(task => (
-                                    <Box
-                                      key={task.id}
-                                      data-task-chip
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleOpenTaskForm(task);
-                                      }}
+                                {/* Date Number */}
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
+                                  <Box
+                                    sx={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      minWidth: dayInfo.isToday ? 28 : 'auto',
+                                      height: dayInfo.isToday ? 28 : 'auto',
+                                      borderRadius: '50%',
+                                      bgcolor: dayInfo.isToday ? '#0f766e' : 'transparent',
+                                      px: dayInfo.isToday ? 0 : 0.5,
+                                    }}
+                                  >
+                                    <Typography
+                                      variant="body2"
                                       sx={{
-                                        p: 0.5,
-                                        borderRadius: 1,
-                                        backgroundColor: stageColors[task.stage]?.bg,
+                                        fontWeight: dayInfo.isToday ? 700 : dayInfo.isCurrentMonth ? 600 : 400,
+                                        color: dayInfo.isToday ? '#fff' : dayInfo.isCurrentMonth ? '#0f172a' : '#94a3b8',
+                                        fontSize: '0.875rem',
+                                      }}
+                                    >
+                                      {dayInfo.day}
+                                    </Typography>
+                                  </Box>
+                                  {tasksOnDay.length > 0 && (
+                                    <Chip
+                                      label={tasksOnDay.length}
+                                      size="small"
+                                      sx={{
+                                        height: 20,
+                                        fontSize: '0.65rem',
+                                        fontWeight: 700,
+                                        bgcolor: '#0f766e',
+                                        color: '#fff',
+                                        '& .MuiChip-label': { px: 1 },
+                                      }}
+                                    />
+                                  )}
+                                </Box>
+
+                                {/* Tasks */}
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                                  {tasksOnDay.slice(0, 4).map(task => {
+                                    const assigneeInitials = task.assignee_name 
+                                      ? task.assignee_name.split(' ').map(n => n[0]).join('').toUpperCase()
+                                      : '?';
+                                    
+                                    return (
+                                      <Box
+                                        key={task.id}
+                                        data-task-chip
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleOpenTaskForm(task);
+                                        }}
+                                        sx={{
+                                          p: 1,
+                                          borderRadius: 1.5,
+                                          backgroundColor: stageColors[task.stage]?.bg || '#f1f5f9',
+                                          borderLeft: `3px solid ${stageColors[task.stage]?.text || '#64748b'}`,
+                                          cursor: 'pointer',
+                                          transition: 'all 0.15s ease',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: 1,
+                                          '&:hover': {
+                                            transform: 'translateX(3px)',
+                                            boxShadow: '0 2px 8px rgba(15, 118, 110, 0.15)',
+                                          },
+                                        }}
+                                      >
+                                        <Avatar
+                                          sx={{
+                                            width: 20,
+                                            height: 20,
+                                            fontSize: '0.6rem',
+                                            fontWeight: 700,
+                                            bgcolor: stageColors[task.stage]?.text || '#64748b',
+                                          }}
+                                        >
+                                          {assigneeInitials}
+                                        </Avatar>
+                                        <Typography
+                                          variant="caption"
+                                          sx={{
+                                            fontSize: '0.75rem',
+                                            fontWeight: 600,
+                                            color: stageColors[task.stage]?.text || '#0f172a',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            whiteSpace: 'nowrap',
+                                            flex: 1,
+                                          }}
+                                        >
+                                          {task.name}
+                                        </Typography>
+                                      </Box>
+                                    );
+                                  })}
+                                  {tasksOnDay.length > 4 && (
+                                    <Typography
+                                      variant="caption"
+                                      onClick={() => handleOpenTaskForm(null, null, null)}
+                                      sx={{
+                                        fontSize: '0.7rem',
+                                        color: '#0f766e',
+                                        fontWeight: 600,
                                         cursor: 'pointer',
+                                        pl: 0.5,
                                         '&:hover': {
-                                          opacity: 0.8,
+                                          textDecoration: 'underline',
                                         },
                                       }}
                                     >
-                                      <Typography
-                                        variant="caption"
-                                        sx={{
-                                          fontSize: '0.65rem',
-                                          fontWeight: 500,
-                                          color: stageColors[task.stage]?.text,
-                                          display: 'block',
-                                          overflow: 'hidden',
-                                          textOverflow: 'ellipsis',
-                                          whiteSpace: 'nowrap',
-                                        }}
-                                      >
-                                        {task.name}
-                                      </Typography>
-                                    </Box>
-                                  ))}
+                                      +{tasksOnDay.length - 4} more tasks
+                                    </Typography>
+                                  )}
                                 </Box>
                               </Box>
-                            </Grid>
-                          );
-                        }
-
-                        return days;
-                      })()}
-                    </Grid>
+                            );
+                          })}
+                        </Box>
+                      ));
+                    })()}
                   </Paper>
 
                   {/* Calendar Legend */}
-                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mt: 2 }}>
+                  <Box sx={{ display: 'flex', gap: 4, flexWrap: 'wrap', mt: 3, justifyContent: 'center' }}>
                     {Object.entries(stageColors).map(([stage, colors]) => (
-                      <Box key={stage} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box key={stage} sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                         <Box
                           sx={{
-                            width: 12,
-                            height: 12,
+                            width: 18,
+                            height: 18,
                             borderRadius: 1,
                             backgroundColor: colors.bg,
+                            borderLeft: `4px solid ${colors.text}`,
                           }}
                         />
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography variant="body2" sx={{ fontWeight: 600, color: '#64748b' }}>
                           {stage}
                         </Typography>
                       </Box>

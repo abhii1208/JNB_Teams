@@ -17,6 +17,8 @@ import TaskAltIcon from '@mui/icons-material/TaskAlt';
 import PendingActionsIcon from '@mui/icons-material/PendingActions';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import AssignmentIcon from '@mui/icons-material/Assignment';
+import GroupIcon from '@mui/icons-material/Group';
 import { getProjects, getApprovalCount } from '../../apiClient';
 import api from '../../apiClient';
 
@@ -57,6 +59,20 @@ function Dashboard({ user, workspace, onNavigate }) {
       icon: <TrendingUpIcon />,
       color: '#0f766e',
       bgColor: 'rgba(15, 118, 110, 0.1)',
+    },
+    {
+      title: 'Total Tasks',
+      value: '0',
+      icon: <AssignmentIcon />,
+      color: '#06b6d4',
+      bgColor: 'rgba(6, 182, 212, 0.1)',
+    },
+    {
+      title: 'Team Members',
+      value: '0',
+      icon: <GroupIcon />,
+      color: '#ec4899',
+      bgColor: 'rgba(236, 72, 153, 0.1)',
     },
   ]);
 
@@ -109,6 +125,18 @@ function Dashboard({ user, workspace, onNavigate }) {
           ? Math.round((completedTasks / allTasks.length) * 100) 
           : 0;
         
+        // Count unique team members across all projects
+        const uniqueMembers = new Set();
+        for (const project of activeProjects) {
+          try {
+            const membersResponse = await api.get(`/api/projects/${project.id}/members`);
+            const members = membersResponse.data || [];
+            members.forEach(m => uniqueMembers.add(m.user_id));
+          } catch (err) {
+            console.error(`Failed to fetch members for project ${project.id}:`, err);
+          }
+        }
+        
         setStatCards([
           {
             title: 'Active Projects',
@@ -137,6 +165,20 @@ function Dashboard({ user, workspace, onNavigate }) {
             icon: <TrendingUpIcon />,
             color: '#0f766e',
             bgColor: 'rgba(15, 118, 110, 0.1)',
+          },
+          {
+            title: 'Total Tasks',
+            value: String(allTasks.length),
+            icon: <AssignmentIcon />,
+            color: '#06b6d4',
+            bgColor: 'rgba(6, 182, 212, 0.1)',
+          },
+          {
+            title: 'Team Members',
+            value: String(uniqueMembers.size),
+            icon: <GroupIcon />,
+            color: '#ec4899',
+            bgColor: 'rgba(236, 72, 153, 0.1)',
           },
         ]);
         
@@ -181,10 +223,10 @@ function Dashboard({ user, workspace, onNavigate }) {
         </Typography>
       </Box>
 
-      {/* Stats Grid */}
+      {/* Stats Grid - 2 rows of 3 columns */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
         {statCards.map((stat, index) => (
-          <Grid item xs={12} sm={6} md={3} key={index}>
+          <Grid item xs={12} sm={6} md={4} key={index}>
             <Card
               elevation={0}
               sx={{
@@ -350,10 +392,12 @@ function Dashboard({ user, workspace, onNavigate }) {
           </Paper>
         </Grid>
 
-        {/* Activity & Progress */}
-        <Grid item xs={12} md={4}>
-          {/* Project Progress Widget */}
-          <Paper
+        {/* Widgets Row */}
+        <Grid item xs={12}>
+          <Grid container spacing={3}>
+            {/* Project Progress Widget */}
+            <Grid item xs={12} md={4}>
+              <Paper
             elevation={0}
             sx={{
               p: 3,
@@ -434,10 +478,12 @@ function Dashboard({ user, workspace, onNavigate }) {
                 );
               })
             )}
-          </Paper>
+              </Paper>
+            </Grid>
 
-          {/* Quick Actions Widget */}
-          <Paper
+            {/* Quick Actions Widget */}
+            <Grid item xs={12} md={4}>
+              <Paper
             elevation={0}
             sx={{
               p: 3,
@@ -508,10 +554,12 @@ function Dashboard({ user, workspace, onNavigate }) {
                 </Typography>
               </Box>
             </Box>
-          </Paper>
+              </Paper>
+            </Grid>
 
-          {/* Workspace Info Widget */}
-          <Paper
+            {/* Workspace Info Widget */}
+            <Grid item xs={12} md={4}>
+              <Paper
             elevation={0}
             sx={{
               p: 3,
@@ -552,6 +600,8 @@ function Dashboard({ user, workspace, onNavigate }) {
               </Box>
             </Box>
           </Paper>
+            </Grid>
+          </Grid>
         </Grid>
       </Grid>
     </Box>

@@ -121,7 +121,7 @@ function TopAppBar({ user, currentWorkspace, workspaces = [], onWorkspaceChange,
                 letterSpacing: '-0.5px',
               }}
             >
-              TeamFlow
+              JNB Teams
             </Typography>
             <Chip
               label="Beta"
@@ -251,18 +251,20 @@ function TopAppBar({ user, currentWorkspace, workspaces = [], onWorkspaceChange,
             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
               WORKSPACES
             </Typography>
-            <IconButton
-              size="small"
-              onClick={() => setCreateWorkspaceOpen(true)}
-              sx={{
-                width: 24,
-                height: 24,
-                color: '#0f766e',
-                '&:hover': { backgroundColor: 'rgba(15, 118, 110, 0.1)' },
-              }}
-            >
-              <AddIcon fontSize="small" />
-            </IconButton>
+            {(user?.license_type === 'licensed_user' || user?.license_type === 'licensed_admin') && (
+              <IconButton
+                size="small"
+                onClick={() => setCreateWorkspaceOpen(true)}
+                sx={{
+                  width: 24,
+                  height: 24,
+                  color: '#0f766e',
+                  '&:hover': { backgroundColor: 'rgba(15, 118, 110, 0.1)' },
+                }}
+              >
+                <AddIcon fontSize="small" />
+              </IconButton>
+            )}
           </Box>
 
           <List disablePadding>

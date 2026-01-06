@@ -626,13 +626,6 @@ function SettingsPage({ user }) {
               <Card elevation={0} sx={{ mb: 3, border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2 }}>
                 <CardContent>
                   <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-                    Account ID
-                  </Typography>
-                  <Typography variant="body1" sx={{ fontWeight: 500, mb: 2 }}>
-                    {profile.userId}
-                  </Typography>
-
-                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
                     License Type
                   </Typography>
                   <Typography variant="body1" sx={{ fontWeight: 500, mb: 2, textTransform: 'capitalize' }}>

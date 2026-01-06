@@ -198,13 +198,15 @@ function MainLayout({ userId, onLogout }) {
         sx={{
           flexGrow: 1,
           marginLeft: 0,
-          marginTop: '64px', // Account for fixed AppBar
-          minHeight: 'calc(100vh - 64px)',
+          marginTop: '64px',
+          height: 'calc(100vh - 64px)',
           backgroundColor: '#f8fafc',
-          overflow: 'auto',
+          overflow: 'hidden',
         }}
       >
-        {renderContent()}
+        <Box sx={{ height: '100%', overflow: 'auto' }}>
+          {renderContent()}
+        </Box>
       </Box>
     </Box>
   );
