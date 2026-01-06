@@ -1,0 +1,432 @@
+require('dotenv').config();
+
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const { pool } = require('./db');
+
+// Import routes
+const workspacesRouter = require('./routes/workspaces');
+const projectsRouter = require('./routes/projects');
+const tasksRouter = require('./routes/tasks');
+const approvalsRouter = require('./routes/approvals');
+const activityRouter = require('./routes/activity');
+const notificationsRouter = require('./routes/notifications');
+const userRouter = require('./routes/user');
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+const googleEnabled = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+
+app.use(helmet({
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
+app.use(express.json({ limit: '1mb' }));
+app.use(cors({
+  origin: [FRONTEND_URL, 'http://localhost:3000'],
+  credentials: true,
+}));
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+function signToken(userId) {
+  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '30d' });
+}
+
+function authenticateToken(req, res, next) {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'Missing token' });
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.userId = payload.userId;
+    return next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
+const otpStore = new Map();
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function normalizeUsername(username) {
+  return String(username || '').trim();
+}
+
+if (googleEnabled) {
+  app.use(passport.initialize());
+
+  passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5000/auth/google/callback',
+  }, async (_accessToken, _refreshToken, profile, done) => {
+    try {
+      const email = profile.emails && profile.emails[0] && profile.emails[0].value;
+      if (!email) return done(new Error('Google account did not return an email'));
+
+      const displayName = profile.displayName || '';
+      const nameParts = displayName.split(' ');
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.slice(1).join(' ') || '';
+
+      const existingRes = await pool.query(
+        'SELECT id, email, username, first_name, last_name FROM users WHERE LOWER(email) = LOWER($1)',
+        [email]
+      );
+
+      if (existingRes.rows.length > 0) {
+        return done(null, existingRes.rows[0]);
+      }
+
+      return done(null, {
+        email,
+        first_name: firstName,
+        last_name: lastName,
+        isNew: true,
+      });
+    } catch (err) {
+      return done(err);
+    }
+  }));
+
+  app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+
+  app.get('/auth/google/callback',
+    passport.authenticate('google', { session: false, failureRedirect: `${FRONTEND_URL}?error=google` }),
+    (req, res) => {
+      if (!req.user) {
+        return res.redirect(`${FRONTEND_URL}?error=google`);
+      }
+
+      if (req.user.id) {
+        const token = signToken(req.user.id);
+        return res.redirect(`${FRONTEND_URL}?token=${token}&id=${req.user.id}`);
+      }
+
+      const email = encodeURIComponent(req.user.email || '');
+      const firstName = encodeURIComponent(req.user.first_name || '');
+      const lastName = encodeURIComponent(req.user.last_name || '');
+
+      return res.redirect(
+        `${FRONTEND_URL}?google_signup=1&email=${email}&first_name=${firstName}&last_name=${lastName}`
+      );
+    }
+  );
+} else {
+  app.get('/auth/google', (_req, res) => {
+    res.status(503).send('Google auth not configured');
+  });
+
+  app.get('/auth/google/callback', (_req, res) => {
+    res.status(503).send('Google auth not configured');
+  });
+}
+
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/check-username', async (req, res) => {
+  const username = normalizeUsername(req.query.username);
+  if (!username) return res.json({ exists: false, error: 'Username required' });
+
+  try {
+    const result = await pool.query(
+      'SELECT id FROM users WHERE LOWER(username) = LOWER($1)',
+      [username]
+    );
+    return res.json({ exists: result.rows.length > 0 });
+  } catch (err) {
+    console.error('Check username error:', err);
+    return res.status(500).json({ error: 'Check failed' });
+  }
+});
+
+app.get('/api/check-email', async (req, res) => {
+  const email = normalizeEmail(req.query.email);
+  if (!email) return res.json({ exists: false, error: 'Email required' });
+
+  try {
+    const result = await pool.query(
+      'SELECT id FROM users WHERE LOWER(email) = LOWER($1)',
+      [email]
+    );
+    return res.json({ exists: result.rows.length > 0 });
+  } catch (err) {
+    console.error('Check email error:', err);
+    return res.status(500).json({ error: 'Check failed' });
+  }
+});
+
+app.post('/api/login', authLimiter, async (req, res) => {
+  const identifierRaw = String(req.body.username || req.body.email || '').trim();
+  const password = String(req.body.password || '');
+
+  if (!identifierRaw || !password) {
+    return res.status(400).json({ error: 'Username/email and password are required' });
+  }
+
+  const identifier = identifierRaw.toLowerCase();
+
+  try {
+    const result = await pool.query(
+      'SELECT id, username, email, password_hash FROM users WHERE LOWER(email) = $1 OR LOWER(username) = $1',
+      [identifier]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const user = result.rows[0];
+
+    if (!user.password_hash) {
+      return res.status(400).json({
+        error: 'This account uses Google sign-in. Please use "Login with Google".',
+      });
+    }
+
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) return res.status(401).json({ error: 'Invalid credentials' });
+
+    // Ensure the user has at least one workspace (create personal if missing)
+    const client = await pool.connect();
+    try {
+      const memberCheck = await client.query(
+        'SELECT 1 FROM workspace_members WHERE user_id = $1 LIMIT 1',
+        [user.id]
+      );
+
+      if (memberCheck.rows.length === 0) {
+        await client.query('BEGIN');
+        const wsRes = await client.query(
+          'INSERT INTO workspaces (name, created_by) VALUES ($1, $2) RETURNING id, name, created_at, updated_at',
+          ['Personal', user.id]
+        );
+        const workspace = wsRes.rows[0];
+        await client.query(
+          'INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, $3)',
+          [workspace.id, user.id, 'Owner']
+        );
+        await client.query('COMMIT');
+      }
+    } catch (e) {
+      await client.query('ROLLBACK');
+      console.error('Ensure personal workspace error:', e);
+    } finally {
+      client.release();
+    }
+
+    const token = signToken(user.id);
+    return res.json({ id: user.id, token, username: user.username });
+  } catch (err) {
+    console.error('Login error:', err);
+    return res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.post('/api/complete-signup', authLimiter, async (req, res) => {
+  const email = normalizeEmail(req.body.email);
+  const username = normalizeUsername(req.body.username);
+  const password = String(req.body.password || '');
+  const firstName = String(req.body.first_name || '').trim();
+  const lastName = String(req.body.last_name || '').trim();
+
+  if (!email || !username) {
+    return res.status(400).json({ error: 'Email and username are required' });
+  }
+
+  if (password && password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const existingRes = await client.query(
+      'SELECT id, email, username FROM users WHERE LOWER(email) = $1 OR LOWER(username) = LOWER($2)',
+      [email, username]
+    );
+
+    if (existingRes.rows.length > 0) {
+      const existing = existingRes.rows[0];
+      if (existing.email && existing.email.toLowerCase() === email) {
+        client.release();
+        return res.status(400).json({ error: 'This email is already registered.' });
+      }
+      if (existing.username && existing.username.toLowerCase() === username.toLowerCase()) {
+        client.release();
+        return res.status(400).json({ error: 'This username is already taken.' });
+      }
+      client.release();
+      return res.status(400).json({ error: 'Email or username already in use' });
+    }
+
+    const passwordHash = password ? await bcrypt.hash(password, 12) : null;
+
+    await client.query('BEGIN');
+    const result = await client.query(
+      'INSERT INTO users (email, username, password_hash, first_name, last_name) VALUES ($1, $2, $3, $4, $5) RETURNING id, username',
+      [email, username, passwordHash, firstName, lastName]
+    );
+
+    const user = result.rows[0];
+
+    // create personal workspace for new user
+    const wsRes = await client.query(
+      'INSERT INTO workspaces (name, created_by) VALUES ($1, $2) RETURNING id, name, created_at, updated_at',
+      ['Personal', user.id]
+    );
+    const workspace = wsRes.rows[0];
+    await client.query(
+      'INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, $3)',
+      [workspace.id, user.id, 'Owner']
+    );
+
+    await client.query('COMMIT');
+
+    const token = signToken(user.id);
+    client.release();
+    return res.status(201).json({ id: user.id, token, username: user.username });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    client.release();
+    console.error('Complete signup error:', err);
+    return res.status(500).json({ error: 'Signup failed' });
+  }
+});
+
+app.post('/api/send-otp', authLimiter, async (req, res) => {
+  const email = normalizeEmail(req.body.email);
+  if (!email) return res.status(400).json({ error: 'Email required' });
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const expires = Date.now() + 10 * 60 * 1000;
+  otpStore.set(email, { otp, expires });
+
+  console.log(`OTP for ${email}: ${otp}`);
+  return res.json({ message: 'OTP sent' });
+});
+
+app.post('/api/verify-otp', authLimiter, (req, res) => {
+  const email = normalizeEmail(req.body.email);
+  const otp = String(req.body.otp || '').trim();
+
+  const entry = otpStore.get(email);
+  if (!entry) return res.status(400).json({ error: 'No OTP found' });
+
+  if (Date.now() > entry.expires) {
+    otpStore.delete(email);
+    return res.status(400).json({ error: 'OTP expired' });
+  }
+
+  if (entry.otp !== otp) {
+    return res.status(400).json({ error: 'Invalid OTP' });
+  }
+
+  otpStore.delete(email);
+  return res.json({ message: 'OTP verified' });
+});
+
+app.post('/api/reset-password', authLimiter, async (req, res) => {
+  const email = normalizeEmail(req.body.email);
+  const password = String(req.body.password || '');
+
+  if (!email || password.length < 8) {
+    return res.status(400).json({ error: 'Email and valid password (min 8 chars) required' });
+  }
+
+  try {
+    const hash = await bcrypt.hash(password, 12);
+    const result = await pool.query(
+      'UPDATE users SET password_hash = $1 WHERE LOWER(email) = LOWER($2) RETURNING id',
+      [hash, email]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    return res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+app.get('/api/me', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, username, email, first_name, last_name, license_type FROM users WHERE id = $1',
+      [req.userId]
+    );
+
+    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Me error:', err);
+    return res.status(500).json({ error: 'Failed to retrieve user' });
+  }
+});
+
+// Mount API routes
+app.use('/api/workspaces', authenticateToken, workspacesRouter.router);
+app.use('/api/projects', authenticateToken, projectsRouter);
+app.use('/api/tasks', authenticateToken, tasksRouter);
+app.use('/api/approvals', authenticateToken, approvalsRouter);
+app.use('/api/activity', authenticateToken, activityRouter);
+app.use('/api/notifications', authenticateToken, notificationsRouter);
+app.use('/api/user', authenticateToken, userRouter);
+
+const server = app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
+// Global error handlers - prevent crashes from unhandled errors
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  // Don't exit - log and continue
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit - log and continue
+});
+
+// Graceful shutdown handlers - only exit when explicitly terminated
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    pool.end(() => {
+      console.log('Database pool closed');
+      process.exit(0);
+    });
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  server.close(() => {
+    pool.end(() => {
+      console.log('Database pool closed');
+      process.exit(0);
+    });
+  });
+});
