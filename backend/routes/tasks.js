@@ -4,7 +4,10 @@ const { pool } = require('../db');
 
 // Get tasks for a project
 router.get('/project/:projectId', async (req, res) => {
+  const includeArchived = req.query.include_archived === 'true';
+  
   try {
+    const archiveCondition = includeArchived ? '' : 'AND t.archived_at IS NULL';
     const result = await pool.query(`
       SELECT t.*,
         u.first_name || ' ' || u.last_name as assignee_name,
@@ -17,7 +20,7 @@ router.get('/project/:projectId', async (req, res) => {
       FROM tasks t
       LEFT JOIN users u ON t.assignee_id = u.id
       JOIN users creator ON t.created_by = creator.id
-      WHERE t.project_id = $1 AND t.deleted_at IS NULL
+      WHERE t.project_id = $1 AND t.deleted_at IS NULL ${archiveCondition}
       ORDER BY t.created_at DESC
     `, [req.params.projectId]);
     
@@ -114,6 +117,9 @@ router.put('/:taskId', async (req, res) => {
   try {
     await client.query('BEGIN');
     
+    // Auto-archive when task is closed
+    const shouldArchive = status && status.toLowerCase() === 'closed';
+    
     const result = await client.query(
       `UPDATE tasks 
        SET name = COALESCE($1, name),
@@ -125,10 +131,11 @@ router.put('/:taskId', async (req, res) => {
            due_date = COALESCE($7, due_date),
            target_date = COALESCE($8, target_date),
            notes = COALESCE($9, notes),
+           archived_at = CASE WHEN $11 THEN CURRENT_TIMESTAMP ELSE archived_at END,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $10
        RETURNING *`,
-      [name, description, assignee_id, stage, status, priority, due_date, target_date, notes, req.params.taskId]
+      [name, description, assignee_id, stage, status, priority, due_date, target_date, notes, req.params.taskId, shouldArchive]
     );
     
     if (result.rows.length === 0) {
@@ -219,6 +226,27 @@ router.post('/:taskId/collaborators', async (req, res) => {
     }
     console.error('Add collaborator error:', err);
     res.status(500).json({ error: 'Failed to add collaborator' });
+  }
+});
+
+// Archive/Unarchive task
+router.put('/:taskId/archive', async (req, res) => {
+  const { archive } = req.body; // true to archive, false to unarchive
+  
+  try {
+    const result = await pool.query(
+      'UPDATE tasks SET archived_at = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
+      [archive ? new Date() : null, req.params.taskId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Archive task error:', err);
+    res.status(500).json({ error: 'Failed to archive/unarchive task' });
   }
 });
 

@@ -64,10 +64,13 @@ export const removeProjectMember = (projectId, userId) =>
   api.delete(`/api/projects/${projectId}/members/${userId}`);
 
 // Tasks API
-export const getTasks = (projectId) => api.get(`/api/tasks/project/${projectId}`);
+export const getTasks = (projectId, includeArchived = false) => 
+  api.get(`/api/tasks/project/${projectId}`, { params: includeArchived ? { include_archived: 'true' } : {} });
 export const createTask = (taskData) => api.post('/api/tasks', taskData);
 export const updateTask = (taskId, taskData) => api.put(`/api/tasks/${taskId}`, taskData);
 export const deleteTask = (taskId) => api.delete(`/api/tasks/${taskId}`);
+export const archiveTask = (taskId) => api.put(`/api/tasks/${taskId}/archive`, { archive: true });
+export const unarchiveTask = (taskId) => api.put(`/api/tasks/${taskId}/archive`, { archive: false });
 export const addTaskCollaborator = (taskId, userId) => 
   api.post(`/api/tasks/${taskId}/collaborators`, { user_id: userId });
 

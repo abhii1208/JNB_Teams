@@ -65,7 +65,7 @@ function canEditTask(task, userRole, isAssignee) {
   return true;
 }
 
-function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, prefilledStatus = null, projectId = null, userRole = null, currentUserId = null }) {
+function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, prefilledStatus = null, projectId = null, userRole = null, currentUserId = null, onDelete }) {
   const isEdit = Boolean(task);
   
   const [formData, setFormData] = useState({
@@ -442,6 +442,21 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
         </DialogContent>
 
         <DialogActions sx={{ p: 2.5 }}>
+          {isEdit && onDelete && (
+            <Button
+              onClick={() => {
+                if (window.confirm('Are you sure you want to delete this task?')) {
+                  onDelete(task);
+                  onClose();
+                }
+              }}
+              color="error"
+              variant="outlined"
+              sx={{ textTransform: 'none', mr: 'auto' }}
+            >
+              Delete Task
+            </Button>
+          )}
           <Button onClick={onClose} sx={{ textTransform: 'none' }}>
             Cancel
           </Button>

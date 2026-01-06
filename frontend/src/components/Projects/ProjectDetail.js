@@ -63,6 +63,7 @@ import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
+import CloseIcon from '@mui/icons-material/Close';
 import TaskForm from '../Tasks/TaskForm';
 import { getTasks, createTask, updateTask, deleteTask, getProjectMembers, getWorkspaceMembers, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator } from '../../apiClient';
 import { formatShortDate } from '../../utils/date';
@@ -111,6 +112,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   const [sortDirection, setSortDirection] = useState('asc'); // 'asc' or 'desc'
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showArchived, setShowArchived] = useState(false);
   
   // Advanced filter state
   const [advancedFilters, setAdvancedFilters] = useState({
@@ -183,7 +185,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
       if (!project?.id) return;
       try {
         setLoading(true);
-        const response = await getTasks(project.id);
+        const response = await getTasks(project.id, showArchived);
         setTasks(response.data);
       } catch (error) {
         console.error('Failed to fetch tasks:', error);
@@ -193,7 +195,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     };
     
     fetchTasks();
-  }, [project]);
+  }, [project, showArchived]);
   const [members, setMembers] = useState([]);
   const [workspaceMembers, setWorkspaceMembers] = useState([]);
   const [selectedNewMember, setSelectedNewMember] = useState('');
@@ -436,6 +438,17 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     } catch (error) {
       console.error('Failed to save task:', error);
       showToast('error', 'Failed to save task. Please try again.');
+    }
+  };
+
+  const handleDeleteTask = async (task) => {
+    try {
+      await deleteTask(task.id);
+      setTasks(tasks.filter(t => t.id !== task.id));
+      showToast('success', 'Task deleted successfully');
+    } catch (error) {
+      console.error('Failed to delete task:', error);
+      showToast('error', 'Failed to delete task');
     }
   };
 
@@ -869,6 +882,18 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       }}
                     >
                       Advanced Filter
+                    </Button>
+                    <Button
+                      size="small"
+                      variant={showArchived ? 'contained' : 'outlined'}
+                      onClick={() => setShowArchived(!showArchived)}
+                      sx={{ 
+                        textTransform: 'none', 
+                        borderRadius: 2,
+                        border: '1px solid rgba(148, 163, 184, 0.3)',
+                      }}
+                    >
+                      {showArchived ? 'Show Active' : 'Show Archived'}
                     </Button>
                     <Button
                       size="small"
@@ -2396,6 +2421,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
         open={taskFormOpen}
         onClose={handleCloseTaskForm}
         onSave={handleSaveTask}
+        onDelete={handleDeleteTask}
         task={selectedTask}
         prefilledStage={prefilledStage}
         prefilledStatus={prefilledStatus}

@@ -170,10 +170,10 @@ function Dashboard({ user, workspace, onNavigate }) {
   }, [workspace]);
 
   return (
-    <Box sx={{ p: 4 }}>
+    <Box sx={{ p: 4, backgroundColor: '#f8fafc', minHeight: '100vh' }}>
       {/* Header */}
       <Box sx={{ mb: 4 }}>
-        <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
+        <Typography variant="h4" sx={{ fontWeight: 700, mb: 1, color: '#0f172a' }}>
           Welcome back, {user?.first_name} {user?.last_name}! 👋
         </Typography>
         <Typography variant="body1" color="text.secondary">
@@ -188,13 +188,15 @@ function Dashboard({ user, workspace, onNavigate }) {
             <Card
               elevation={0}
               sx={{
-                border: '1px solid rgba(148, 163, 184, 0.2)',
+                border: '1px solid rgba(148, 163, 184, 0.15)',
                 borderRadius: 3,
-                transition: 'all 0.2s ease',
+                transition: 'all 0.3s ease',
                 cursor: 'pointer',
+                background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
                 '&:hover': {
-                  transform: 'translateY(-4px)',
-                  boxShadow: '0 12px 40px rgba(15, 23, 42, 0.1)',
+                  transform: 'translateY(-6px)',
+                  boxShadow: '0 16px 48px rgba(15, 23, 42, 0.12)',
+                  borderColor: stat.color,
                 },
               }}
             >
@@ -202,9 +204,9 @@ function Dashboard({ user, workspace, onNavigate }) {
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
                   <Box
                     sx={{
-                      width: 48,
-                      height: 48,
-                      borderRadius: 2,
+                      width: 56,
+                      height: 56,
+                      borderRadius: 2.5,
                       backgroundColor: stat.bgColor,
                       display: 'flex',
                       alignItems: 'center',
@@ -214,14 +216,11 @@ function Dashboard({ user, workspace, onNavigate }) {
                   >
                     {stat.icon}
                   </Box>
-                  <IconButton size="small" sx={{ color: 'text.secondary' }}>
-                    <ArrowForwardIcon fontSize="small" />
-                  </IconButton>
                 </Box>
-                <Typography variant="h3" sx={{ fontWeight: 700, mb: 0.5 }}>
+                <Typography variant="h3" sx={{ fontWeight: 700, mb: 0.5, color: '#0f172a' }}>
                   {stat.value}
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
                   {stat.title}
                 </Typography>
               </CardContent>
@@ -237,16 +236,17 @@ function Dashboard({ user, workspace, onNavigate }) {
             elevation={0}
             sx={{
               p: 3,
-              border: '1px solid rgba(148, 163, 184, 0.2)',
+              border: '1px solid rgba(148, 163, 184, 0.15)',
               borderRadius: 3,
+              height: '100%',
             }}
           >
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-              <Typography variant="h6">Recent Tasks</Typography>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>Upcoming Tasks</Typography>
               <Chip
                 label="View all"
                 size="small"
-                onClick={() => onNavigate('tasks')}
+                onClick={() => onNavigate('projects')}
                 sx={{
                   cursor: 'pointer',
                   '&:hover': { backgroundColor: 'rgba(15, 118, 110, 0.1)' },
@@ -352,50 +352,80 @@ function Dashboard({ user, workspace, onNavigate }) {
 
         {/* Activity & Progress */}
         <Grid item xs={12} md={4}>
+          {/* Project Progress Widget */}
           <Paper
             elevation={0}
             sx={{
               p: 3,
-              border: '1px solid rgba(148, 163, 184, 0.2)',
+              border: '1px solid rgba(148, 163, 184, 0.15)',
               borderRadius: 3,
               mb: 3,
+              height: 'auto',
             }}
           >
-            <Typography variant="h6" sx={{ mb: 3 }}>
-              Project Progress
-            </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>Top Projects</Typography>
+              <Chip
+                icon={<TrendingUpIcon sx={{ fontSize: '1rem !important' }} />}
+                label="By tasks"
+                size="small"
+                sx={{
+                  backgroundColor: 'rgba(15, 118, 110, 0.1)',
+                  color: '#0f766e',
+                  fontWeight: 500,
+                }}
+              />
+            </Box>
             
             {topProjects.length === 0 ? (
-              <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 3 }}>
-                No projects yet
-              </Typography>
+              <Box sx={{ textAlign: 'center', py: 4 }}>
+                <FolderIcon sx={{ fontSize: 48, color: 'text.secondary', opacity: 0.3, mb: 1 }} />
+                <Typography variant="body2" color="text.secondary">
+                  No projects yet
+                </Typography>
+              </Box>
             ) : (
               topProjects.map((project, index) => {
                 const progress = project.taskCount > 0 
                   ? Math.round((project.completedCount / project.taskCount) * 100) 
                   : 0;
-                const colors = ['#0f766e', '#7c3aed', '#f59e0b'];
+                const colors = ['#0f766e', '#7c3aed', '#f59e0b', '#ef4444', '#06b6d4'];
                 const color = colors[index % colors.length];
                 
                 return (
                   <Box key={project.id} sx={{ mb: 3 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        {project.name}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Box
+                          sx={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: '50%',
+                            backgroundColor: color,
+                          }}
+                        />
+                        <Typography variant="body2" sx={{ fontWeight: 600, color: '#0f172a' }}>
+                          {project.name}
+                        </Typography>
+                      </Box>
+                      <Typography variant="body2" sx={{ fontWeight: 600, color: color }}>
                         {progress}%
+                      </Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        {project.completedCount} of {project.taskCount} tasks
                       </Typography>
                     </Box>
                     <LinearProgress
                       variant="determinate"
                       value={progress}
                       sx={{
-                        height: 8,
-                        borderRadius: 4,
+                        height: 6,
+                        borderRadius: 3,
                         backgroundColor: `${color}15`,
                         '& .MuiLinearProgress-bar': {
-                          borderRadius: 4,
+                          borderRadius: 3,
                           backgroundColor: color,
                         },
                       }}
@@ -406,27 +436,121 @@ function Dashboard({ user, workspace, onNavigate }) {
             )}
           </Paper>
 
+          {/* Quick Actions Widget */}
           <Paper
             elevation={0}
             sx={{
               p: 3,
-              border: '1px solid rgba(148, 163, 184, 0.2)',
+              border: '1px solid rgba(148, 163, 184, 0.15)',
               borderRadius: 3,
+              mb: 3,
             }}
           >
-            <Typography variant="h6" sx={{ mb: 2 }}>
-              Team Activity
+            <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
+              Quick Actions
             </Typography>
-            <AvatarGroup max={5} sx={{ justifyContent: 'flex-start', mb: 2 }}>
-              <Avatar sx={{ bgcolor: '#0f766e' }}>JD</Avatar>
-              <Avatar sx={{ bgcolor: '#7c3aed' }}>SM</Avatar>
-              <Avatar sx={{ bgcolor: '#f59e0b' }}>AK</Avatar>
-              <Avatar sx={{ bgcolor: '#ef4444' }}>PL</Avatar>
-              <Avatar sx={{ bgcolor: '#06b6d4' }}>MR</Avatar>
-            </AvatarGroup>
-            <Typography variant="body2" color="text.secondary">
-              5 team members active today
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Box
+                sx={{
+                  p: 2,
+                  borderRadius: 2,
+                  backgroundColor: '#f0fdf4',
+                  border: '1px solid #86efac',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  '&:hover': {
+                    backgroundColor: '#dcfce7',
+                    transform: 'translateX(4px)',
+                  },
+                }}
+                onClick={() => onNavigate('projects')}
+              >
+                <Typography variant="body2" sx={{ fontWeight: 600, color: '#166534' }}>
+                  📁 Create New Project
+                </Typography>
+              </Box>
+              <Box
+                sx={{
+                  p: 2,
+                  borderRadius: 2,
+                  backgroundColor: '#eff6ff',
+                  border: '1px solid #93c5fd',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  '&:hover': {
+                    backgroundColor: '#dbeafe',
+                    transform: 'translateX(4px)',
+                  },
+                }}
+                onClick={() => onNavigate('projects')}
+              >
+                <Typography variant="body2" sx={{ fontWeight: 600, color: '#1e40af' }}>
+                  ✅ Add New Task
+                </Typography>
+              </Box>
+              <Box
+                sx={{
+                  p: 2,
+                  borderRadius: 2,
+                  backgroundColor: '#fef3c7',
+                  border: '1px solid #fcd34d',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  '&:hover': {
+                    backgroundColor: '#fde68a',
+                    transform: 'translateX(4px)',
+                  },
+                }}
+                onClick={() => onNavigate('approvals')}
+              >
+                <Typography variant="body2" sx={{ fontWeight: 600, color: '#92400e' }}>
+                  ⏰ Pending Approvals
+                </Typography>
+              </Box>
+            </Box>
+          </Paper>
+
+          {/* Workspace Info Widget */}
+          <Paper
+            elevation={0}
+            sx={{
+              p: 3,
+              border: '1px solid rgba(148, 163, 184, 0.15)',
+              borderRadius: 3,
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              color: 'white',
+            }}
+          >
+            <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
+              {workspace?.name || 'My Workspace'}
             </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Avatar
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    bgcolor: 'rgba(255, 255, 255, 0.2)',
+                    fontSize: '0.875rem',
+                  }}
+                >
+                  {user?.first_name?.[0]}{user?.last_name?.[0]}
+                </Avatar>
+                <Box>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {user?.first_name} {user?.last_name}
+                  </Typography>
+                  <Typography variant="caption" sx={{ opacity: 0.9 }}>
+                    {user?.role || 'Member'}
+                  </Typography>
+                </Box>
+              </Box>
+              <Box sx={{ pt: 2, borderTop: '1px solid rgba(255, 255, 255, 0.2)' }}>
+                <Typography variant="caption" sx={{ opacity: 0.9 }}>
+                  License: {user?.license_type || 'Free'}
+                </Typography>
+              </Box>
+            </Box>
           </Paper>
         </Grid>
       </Grid>

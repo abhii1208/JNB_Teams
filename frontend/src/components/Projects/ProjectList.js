@@ -434,10 +434,6 @@ function ProjectList({ onSelectProject, workspace }) {
                         height: 20,
                       }}
                     />
-                        fontWeight: 500,
-                        fontSize: '0.7rem',
-                      }}
-                    />
                   </Box>
                 </Box>
               </CardContent>

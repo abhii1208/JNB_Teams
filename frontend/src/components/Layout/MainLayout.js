@@ -109,6 +109,7 @@ function MainLayout({ userId, onLogout }) {
               workspace={currentWorkspace}
               onBack={handleBack}
               onSelectTask={handleSelectTask}
+              user={user}
             />
           );
         }
