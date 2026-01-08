@@ -19,6 +19,8 @@ import GroupIcon from '@mui/icons-material/Group';
 import SettingsIcon from '@mui/icons-material/Settings';
 import LogoutIcon from '@mui/icons-material/Logout';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import RepeatIcon from '@mui/icons-material/Repeat';
+import AssignmentIcon from '@mui/icons-material/Assignment';
 import { getApprovalCount, getUserSettings } from '../../apiClient';
 
 const DRAWER_WIDTH = 260;
@@ -46,6 +48,8 @@ function Sidebar({ currentPage, onNavigate, onLogout, user, workspace }) {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
     { id: 'projects', label: 'Projects', icon: <FolderIcon /> },
+    { id: 'tasks', label: 'Tasks', icon: <AssignmentIcon /> },
+    { id: 'recurring', label: 'Recurring', icon: <RepeatIcon /> },
     { id: 'team', label: 'Team', icon: <GroupIcon /> },
     { id: 'approvals', label: 'Approvals', icon: <CheckCircleIcon />, badge: pendingCount },
   ];

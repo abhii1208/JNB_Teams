@@ -100,3 +100,29 @@ export const getUserSettings = () => api.get('/api/user/settings');
 export const updateUserProfile = (profileData) => api.put('/api/user/profile', profileData);
 export const changePassword = (currentPassword, newPassword) => 
   api.put('/api/user/password', { current_password: currentPassword, new_password: newPassword });
+
+// Workspace Tasks API (cross-project)
+export const getWorkspaceTasks = (workspaceId, params = {}) => 
+  api.get(`/api/tasks/workspace/${workspaceId}`, { params });
+export const getCalendarTasks = (workspaceId, params = {}) => 
+  api.get(`/api/tasks/workspace/${workspaceId}/calendar`, { params });
+export const bulkUpdateTasks = (taskIds, updates) => 
+  api.put('/api/tasks/bulk', { task_ids: taskIds, updates });
+
+// Workspace Projects (for TasksPage project filter)
+export const getWorkspaceProjects = (workspaceId) => 
+  api.get(`/api/projects/workspace/${workspaceId}`);
+
+// Saved Views API
+export const getSavedViews = (workspaceId) => 
+  api.get(`/api/views/workspace/${workspaceId}`);
+export const createSavedView = (workspaceId, viewData) => 
+  api.post(`/api/views/workspace/${workspaceId}`, viewData);
+export const updateSavedView = (viewId, viewData) => 
+  api.put(`/api/views/${viewId}`, viewData);
+export const deleteSavedView = (viewId) => 
+  api.delete(`/api/views/${viewId}`);
+export const getUserViewPreferences = (workspaceId) => 
+  api.get(`/api/views/workspace/${workspaceId}/preferences`);
+export const updateUserViewPreferences = (workspaceId, preferences) => 
+  api.put(`/api/views/workspace/${workspaceId}/preferences`, preferences);

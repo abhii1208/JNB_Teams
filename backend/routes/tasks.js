@@ -2,6 +2,456 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 
+// Get ALL tasks for a workspace (cross-project)
+// Supports filtering, sorting, pagination
+router.get('/workspace/:workspaceId', async (req, res) => {
+  const { workspaceId } = req.params;
+  const {
+    // Pagination
+    page = 1,
+    limit = 50,
+    // Filters
+    projects, // comma-separated project IDs
+    status, // comma-separated statuses
+    stage, // comma-separated stages
+    priority, // comma-separated priorities
+    assignee, // 'me', 'unassigned', or comma-separated user IDs
+    due_date_from,
+    due_date_to,
+    overdue, // 'true' or 'false'
+    recurring, // 'true' or 'false'
+    approval_status, // 'pending', 'approved', 'rejected'
+    created_by,
+    created_date_from,
+    created_date_to,
+    completed_date_from,
+    completed_date_to,
+    auto_closed, // 'true' or 'false'
+    has_reminders, // 'true' or 'false'
+    search,
+    include_archived,
+    // Sorting
+    sort_by = 'created_at',
+    sort_order = 'desc',
+    // Grouping (for metadata)
+    group_by
+  } = req.query;
+
+  try {
+    // First, get projects user has access to
+    const userProjectsResult = await pool.query(`
+      SELECT p.id 
+      FROM projects p
+      JOIN project_members pm ON p.id = pm.project_id
+      WHERE p.workspace_id = $1 AND pm.user_id = $2 AND p.archived_at IS NULL
+    `, [workspaceId, req.userId]);
+
+    const userProjectIds = userProjectsResult.rows.map(r => r.id);
+    
+    if (userProjectIds.length === 0) {
+      return res.json({ tasks: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
+    }
+
+    // Build query
+    let query = `
+      SELECT 
+        t.*,
+        p.name as project_name,
+        p.id as project_id,
+        u.first_name || ' ' || u.last_name as assignee_name,
+        u.email as assignee_email,
+        creator.first_name || ' ' || creator.last_name as created_by_name,
+        rs.id as series_id,
+        rs.title as series_title,
+        (SELECT json_agg(json_build_object('id', u2.id, 'name', u2.first_name || ' ' || u2.last_name, 'email', u2.email))
+         FROM task_collaborators tc
+         JOIN users u2 ON tc.user_id = u2.id
+         WHERE tc.task_id = t.id) as collaborators,
+        CASE WHEN t.due_date < CURRENT_DATE AND t.status NOT IN ('Closed', 'Completed') THEN true ELSE false END as is_overdue,
+        CASE WHEN rs.id IS NOT NULL THEN true ELSE false END as is_recurring,
+        (SELECT status FROM approvals WHERE task_id = t.id ORDER BY created_at DESC LIMIT 1) as latest_approval_status
+      FROM tasks t
+      JOIN projects p ON t.project_id = p.id
+      LEFT JOIN users u ON t.assignee_id = u.id
+      LEFT JOIN users creator ON t.created_by = creator.id
+      LEFT JOIN recurring_series rs ON t.series_id = rs.id
+      WHERE p.workspace_id = $1 
+        AND t.deleted_at IS NULL
+        AND t.project_id = ANY($2::int[])
+    `;
+
+    const params = [workspaceId, userProjectIds];
+    let paramIndex = 3;
+
+    // Apply filters
+    if (!include_archived || include_archived !== 'true') {
+      query += ` AND t.archived_at IS NULL`;
+    }
+
+    if (projects) {
+      const projectIds = projects.split(',').map(Number).filter(id => userProjectIds.includes(id));
+      if (projectIds.length > 0) {
+        query += ` AND t.project_id = ANY($${paramIndex}::int[])`;
+        params.push(projectIds);
+        paramIndex++;
+      }
+    }
+
+    if (status) {
+      const statuses = status.split(',');
+      query += ` AND t.status = ANY($${paramIndex}::text[])`;
+      params.push(statuses);
+      paramIndex++;
+    }
+
+    if (stage) {
+      const stages = stage.split(',');
+      query += ` AND t.stage = ANY($${paramIndex}::text[])`;
+      params.push(stages);
+      paramIndex++;
+    }
+
+    if (priority) {
+      const priorities = priority.split(',');
+      query += ` AND t.priority = ANY($${paramIndex}::text[])`;
+      params.push(priorities);
+      paramIndex++;
+    }
+
+    if (assignee) {
+      if (assignee === 'me') {
+        query += ` AND t.assignee_id = $${paramIndex}`;
+        params.push(req.userId);
+        paramIndex++;
+      } else if (assignee === 'unassigned') {
+        query += ` AND t.assignee_id IS NULL`;
+      } else {
+        const assigneeIds = assignee.split(',').map(Number);
+        query += ` AND t.assignee_id = ANY($${paramIndex}::int[])`;
+        params.push(assigneeIds);
+        paramIndex++;
+      }
+    }
+
+    if (due_date_from) {
+      query += ` AND t.due_date >= $${paramIndex}`;
+      params.push(due_date_from);
+      paramIndex++;
+    }
+
+    if (due_date_to) {
+      query += ` AND t.due_date <= $${paramIndex}`;
+      params.push(due_date_to);
+      paramIndex++;
+    }
+
+    if (overdue === 'true') {
+      query += ` AND t.due_date < CURRENT_DATE AND t.status NOT IN ('Closed', 'Completed')`;
+    }
+
+    if (recurring === 'true') {
+      query += ` AND t.series_id IS NOT NULL`;
+    } else if (recurring === 'false') {
+      query += ` AND t.series_id IS NULL`;
+    }
+
+    if (created_by) {
+      const creatorIds = created_by.split(',').map(Number);
+      query += ` AND t.created_by = ANY($${paramIndex}::int[])`;
+      params.push(creatorIds);
+      paramIndex++;
+    }
+
+    if (created_date_from) {
+      query += ` AND t.created_at >= $${paramIndex}`;
+      params.push(created_date_from);
+      paramIndex++;
+    }
+
+    if (created_date_to) {
+      query += ` AND t.created_at <= $${paramIndex}`;
+      params.push(created_date_to);
+      paramIndex++;
+    }
+
+    if (search) {
+      query += ` AND (t.name ILIKE $${paramIndex} OR t.description ILIKE $${paramIndex})`;
+      params.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    // Count total before pagination using subquery to avoid regex issues with nested SELECTs
+    const countQuery = `SELECT COUNT(*) as total FROM (${query}) as count_sub`;
+    const countResult = await pool.query(countQuery, params);
+    const total = parseInt(countResult.rows[0].total);
+
+    // Apply sorting
+    const validSortColumns = ['created_at', 'updated_at', 'due_date', 'name', 'priority', 'status', 'stage', 'project_name', 'assignee_name'];
+    const sortColumn = validSortColumns.includes(sort_by) ? sort_by : 'created_at';
+    const sortDir = sort_order.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+    
+    // Handle sorting for joined columns
+    let orderByClause;
+    if (sortColumn === 'project_name') {
+      orderByClause = `p.name ${sortDir}`;
+    } else if (sortColumn === 'assignee_name') {
+      orderByClause = `u.first_name ${sortDir} NULLS LAST`;
+    } else {
+      orderByClause = `t.${sortColumn} ${sortDir} NULLS LAST`;
+    }
+    
+    query += ` ORDER BY ${orderByClause}`;
+
+    // Apply pagination
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(parseInt(limit), offset);
+
+    const result = await pool.query(query, params);
+
+    // Get grouping metadata if requested
+    let groupMetadata = null;
+    if (group_by) {
+      groupMetadata = await getGroupMetadata(workspaceId, userProjectIds, group_by, pool);
+    }
+
+    res.json({
+      tasks: result.rows,
+      total,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalPages: Math.ceil(total / parseInt(limit)),
+      groupMetadata
+    });
+  } catch (err) {
+    console.error('Get workspace tasks error:', {
+      error: err.message,
+      stack: err.stack,
+      workspaceId,
+      userId: req.userId,
+      params,
+      query
+    });
+    res.status(500).json({ error: 'Failed to fetch tasks' });
+  }
+});
+
+// Helper function for group metadata
+async function getGroupMetadata(workspaceId, projectIds, groupBy, pool) {
+  const metadata = {};
+  
+  if (groupBy === 'project') {
+    const result = await pool.query(`
+      SELECT p.id, p.name, COUNT(t.id) as task_count
+      FROM projects p
+      LEFT JOIN tasks t ON p.id = t.project_id AND t.deleted_at IS NULL AND t.archived_at IS NULL
+      WHERE p.id = ANY($1::int[])
+      GROUP BY p.id, p.name
+      ORDER BY p.name
+    `, [projectIds]);
+    metadata.groups = result.rows;
+  } else if (groupBy === 'status') {
+    const result = await pool.query(`
+      SELECT t.status, COUNT(*) as task_count
+      FROM tasks t
+      WHERE t.project_id = ANY($1::int[]) AND t.deleted_at IS NULL AND t.archived_at IS NULL
+      GROUP BY t.status
+      ORDER BY t.status
+    `, [projectIds]);
+    metadata.groups = result.rows;
+  } else if (groupBy === 'assignee') {
+    const result = await pool.query(`
+      SELECT u.id, u.first_name || ' ' || u.last_name as name, COUNT(t.id) as task_count
+      FROM tasks t
+      LEFT JOIN users u ON t.assignee_id = u.id
+      WHERE t.project_id = ANY($1::int[]) AND t.deleted_at IS NULL AND t.archived_at IS NULL
+      GROUP BY u.id, u.first_name, u.last_name
+      ORDER BY u.first_name NULLS LAST
+    `, [projectIds]);
+    metadata.groups = result.rows;
+  } else if (groupBy === 'priority') {
+    const result = await pool.query(`
+      SELECT t.priority, COUNT(*) as task_count
+      FROM tasks t
+      WHERE t.project_id = ANY($1::int[]) AND t.deleted_at IS NULL AND t.archived_at IS NULL
+      GROUP BY t.priority
+      ORDER BY 
+        CASE t.priority 
+          WHEN 'Critical' THEN 1 
+          WHEN 'High' THEN 2 
+          WHEN 'Medium' THEN 3 
+          WHEN 'Low' THEN 4 
+          ELSE 5 
+        END
+    `, [projectIds]);
+    metadata.groups = result.rows;
+  } else if (groupBy === 'due_date') {
+    const result = await pool.query(`
+      SELECT 
+        CASE 
+          WHEN t.due_date IS NULL THEN 'No Due Date'
+          WHEN t.due_date < CURRENT_DATE THEN 'Overdue'
+          WHEN t.due_date = CURRENT_DATE THEN 'Today'
+          WHEN t.due_date = CURRENT_DATE + 1 THEN 'Tomorrow'
+          WHEN t.due_date <= CURRENT_DATE + 7 THEN 'This Week'
+          WHEN t.due_date <= CURRENT_DATE + 14 THEN 'Next Week'
+          ELSE 'Later'
+        END as bucket,
+        COUNT(*) as task_count
+      FROM tasks t
+      WHERE t.project_id = ANY($1::int[]) AND t.deleted_at IS NULL AND t.archived_at IS NULL
+      GROUP BY bucket
+    `, [projectIds]);
+    metadata.groups = result.rows;
+  }
+  
+  return metadata;
+}
+
+// Get tasks for calendar view (date-based)
+router.get('/workspace/:workspaceId/calendar', async (req, res) => {
+  const { workspaceId } = req.params;
+  const { start_date, end_date, projects } = req.query;
+
+  try {
+    // Get user's accessible projects
+    const userProjectsResult = await pool.query(`
+      SELECT p.id 
+      FROM projects p
+      JOIN project_members pm ON p.id = pm.project_id
+      WHERE p.workspace_id = $1 AND pm.user_id = $2 AND p.archived_at IS NULL
+    `, [workspaceId, req.userId]);
+
+    let projectIds = userProjectsResult.rows.map(r => r.id);
+    
+    // Filter by selected projects if specified
+    if (projects) {
+      const selectedIds = projects.split(',').map(Number);
+      projectIds = projectIds.filter(id => selectedIds.includes(id));
+    }
+
+    if (projectIds.length === 0) {
+      return res.json([]);
+    }
+
+    const result = await pool.query(`
+      SELECT 
+        t.id, t.name, t.due_date, t.target_date, t.status, t.stage, t.priority,
+        p.id as project_id, p.name as project_name,
+        u.first_name || ' ' || u.last_name as assignee_name,
+        CASE WHEN rs.id IS NOT NULL THEN true ELSE false END as is_recurring
+      FROM tasks t
+      JOIN projects p ON t.project_id = p.id
+      LEFT JOIN users u ON t.assignee_id = u.id
+      LEFT JOIN recurring_series rs ON t.series_id = rs.id
+      WHERE t.project_id = ANY($1::int[])
+        AND t.deleted_at IS NULL
+        AND t.archived_at IS NULL
+        AND (
+          (t.due_date >= $2 AND t.due_date <= $3)
+          OR (t.target_date >= $2 AND t.target_date <= $3)
+        )
+      ORDER BY t.due_date ASC NULLS LAST
+    `, [projectIds, start_date, end_date]);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Get calendar tasks error:', {
+      error: err.message,
+      stack: err.stack,
+      workspaceId,
+      userId: req.userId,
+      projectIds,
+      start_date,
+      end_date
+    });
+    res.status(500).json({ error: 'Failed to fetch calendar tasks' });
+  }
+});
+
+// Bulk update tasks
+router.put('/bulk', async (req, res) => {
+  const { task_ids, updates } = req.body;
+  
+  if (!task_ids || !Array.isArray(task_ids) || task_ids.length === 0) {
+    return res.status(400).json({ error: 'task_ids array is required' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Verify user has access to all tasks
+    const accessCheck = await client.query(`
+      SELECT t.id FROM tasks t
+      JOIN projects p ON t.project_id = p.id
+      JOIN project_members pm ON p.id = pm.project_id
+      WHERE t.id = ANY($1::int[]) AND pm.user_id = $2
+    `, [task_ids, req.userId]);
+
+    if (accessCheck.rows.length !== task_ids.length) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Access denied to one or more tasks' });
+    }
+
+    // Build update query
+    const updateFields = [];
+    const params = [task_ids];
+    let paramIndex = 2;
+
+    if (updates.status !== undefined) {
+      updateFields.push(`status = $${paramIndex}`);
+      params.push(updates.status);
+      paramIndex++;
+    }
+    if (updates.stage !== undefined) {
+      updateFields.push(`stage = $${paramIndex}`);
+      params.push(updates.stage);
+      paramIndex++;
+    }
+    if (updates.priority !== undefined) {
+      updateFields.push(`priority = $${paramIndex}`);
+      params.push(updates.priority);
+      paramIndex++;
+    }
+    if (updates.assignee_id !== undefined) {
+      updateFields.push(`assignee_id = $${paramIndex}`);
+      params.push(updates.assignee_id);
+      paramIndex++;
+    }
+    if (updates.due_date !== undefined) {
+      updateFields.push(`due_date = $${paramIndex}`);
+      params.push(updates.due_date);
+      paramIndex++;
+    }
+
+    if (updateFields.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'No valid updates provided' });
+    }
+
+    updateFields.push('updated_at = CURRENT_TIMESTAMP');
+
+    const updateQuery = `
+      UPDATE tasks 
+      SET ${updateFields.join(', ')}
+      WHERE id = ANY($1::int[])
+      RETURNING *
+    `;
+
+    const result = await client.query(updateQuery, params);
+
+    await client.query('COMMIT');
+    res.json({ updated: result.rows.length, tasks: result.rows });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Bulk update error:', err);
+    res.status(500).json({ error: 'Failed to bulk update tasks' });
+  } finally {
+    client.release();
+  }
+});
+
 // Get tasks for a project
 router.get('/project/:projectId', async (req, res) => {
   const includeArchived = req.query.include_archived === 'true';

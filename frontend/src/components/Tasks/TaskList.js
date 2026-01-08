@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Button,
@@ -16,6 +16,14 @@ import {
   TextField,
   Typography,
   Avatar,
+   Table,
+   TableHead,
+   TableRow,
+   TableCell,
+   TableBody,
+   TableContainer,
+   Paper,
+   TablePagination,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
@@ -23,6 +31,9 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 import PersonIcon from '@mui/icons-material/Person';
+import ViewModuleIcon from '@mui/icons-material/ViewModule';
+import TableRowsIcon from '@mui/icons-material/TableRows';
+import { getWorkspaceTasks } from '../../apiClient';
 
 // Mock data
 const mockTasks = [
@@ -35,6 +46,7 @@ const mockTasks = [
     stage: 'In-process',
     status: 'Open',
     dueDate: '2026-01-06',
+    targetDate: '2026-01-07',
     createdDate: '2026-01-02',
     createdBy: 'Sarah Miller',
     collaborators: ['SM', 'AK'],
@@ -74,6 +86,7 @@ const mockTasks = [
     stage: 'Planned',
     status: 'Open',
     dueDate: '2026-01-08',
+    targetDate: '2026-01-08',
     createdDate: '2026-01-03',
     createdBy: 'Mike Roberts',
     collaborators: [],
@@ -100,6 +113,7 @@ const mockTasks = [
     stage: 'On-hold',
     status: 'Open',
     dueDate: '2026-01-15',
+    targetDate: '2026-01-16',
     createdDate: '2026-01-04',
     createdBy: 'Alex Kim',
     collaborators: ['AK', 'PL'],
@@ -126,6 +140,7 @@ const mockTasks = [
     stage: 'Dropped',
     status: 'Open',
     dueDate: '2026-01-12',
+    targetDate: '2026-01-11',
     createdDate: '2025-12-30',
     createdBy: 'Sarah Miller',
     collaborators: [],
@@ -147,12 +162,17 @@ const statusColors = {
   'Rejected': { bg: '#fee2e2', text: '#991b1b' },
 };
 
-function TaskList({ onSelectTask }) {
+function TaskList({ onSelectTask, workspace }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStage, setFilterStage] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [anchorEl, setAnchorEl] = useState(null);
   const [selectedTask, setSelectedTask] = useState(null);
+  const [viewMode, setViewMode] = useState('board'); // 'board' or 'table'
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(50);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleMenuOpen = (event, task) => {
     event.stopPropagation();
@@ -174,8 +194,58 @@ function TaskList({ onSelectTask }) {
     return matchesSearch && matchesStage && matchesStatus;
   });
 
-  const pendingApprovalTasks = filteredTasks.filter(t => t.status === 'Pending Approval');
-  const otherTasks = filteredTasks.filter(t => t.status !== 'Pending Approval');
+  // Replace mockTasks with backend data when available
+  const [remoteTasks, setRemoteTasks] = useState(null);
+
+  useEffect(() => {
+    const fetchTasks = async () => {
+      const wsId = workspace?.id || Number(localStorage.getItem('currentWorkspaceId'));
+      if (!wsId) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const params = { page: 1, limit: 200 };
+        const res = await getWorkspaceTasks(wsId, params);
+        const items = (res.data && res.data.tasks) || [];
+
+        // Map backend task shape to component shape
+        const mapped = items.map(t => ({
+          id: t.id,
+          name: t.name,
+          project: t.project_name || (t.project && t.project.name) || '-',
+          assignee: t.assignee_name || null,
+          assigneeAvatar: t.assignee_name ? (t.assignee_name.split(' ').map(n=>n[0]).join('').slice(0,2)) : '',
+          stage: t.stage || t.stage || 'Planned',
+          status: t.status || 'Open',
+          dueDate: t.due_date ? t.due_date.split('T')[0] : null,
+          targetDate: t.target_date ? (t.target_date.split('T')[0] || t.target_date) : null,
+          createdDate: t.created_at ? t.created_at.split('T')[0] : null,
+          createdBy: t.created_by_name || (t.created_by || '-'),
+          collaborators: Array.isArray(t.collaborators) ? t.collaborators.map(c => c.name || c.email || c.id) : (t.collaborators ? [t.collaborators] : []),
+        }));
+
+        setRemoteTasks(mapped);
+      } catch (err) {
+        console.error('Failed to fetch tasks for TaskList:', err);
+        setError('Failed to load tasks');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchTasks();
+  }, [workspace]);
+
+  const tasksSource = remoteTasks || filteredTasks;
+
+  const isToday = (dateStr) => {
+    if (!dateStr) return false;
+    const today = new Date().toISOString().slice(0, 10);
+    return dateStr === today;
+  };
+
+  const pendingApprovalTasks = tasksSource.filter(t => t.status === 'Pending Approval');
+  const otherTasks = tasksSource.filter(t => t.status !== 'Pending Approval');
 
   return (
     <Box sx={{ p: 4 }}>
@@ -256,6 +326,22 @@ function TaskList({ onSelectTask }) {
             <MenuItem value="Closed">Closed</MenuItem>
           </Select>
         </FormControl>
+        <Box sx={{ display: 'flex', alignItems: 'center', ml: 'auto', gap: 1 }}>
+          <IconButton
+            color={viewMode === 'board' ? 'primary' : 'default'}
+            onClick={() => setViewMode('board')}
+            size="large"
+          >
+            <ViewModuleIcon />
+          </IconButton>
+          <IconButton
+            color={viewMode === 'table' ? 'primary' : 'default'}
+            onClick={() => setViewMode('table')}
+            size="large"
+          >
+            <TableRowsIcon />
+          </IconButton>
+        </Box>
       </Box>
 
       {/* Pending Approval Section */}
@@ -374,88 +460,149 @@ function TaskList({ onSelectTask }) {
         All Tasks ({otherTasks.length})
       </Typography>
 
-      <Grid container spacing={2}>
-        {otherTasks.map((task) => (
-          <Grid item xs={12} md={6} key={task.id}>
-            <Card
-              elevation={0}
-              onClick={() => onSelectTask(task)}
-              sx={{
-                border: '1px solid rgba(148, 163, 184, 0.2)',
-                borderRadius: 3,
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                '&:hover': {
-                  transform: 'translateY(-4px)',
-                  boxShadow: '0 12px 40px rgba(15, 23, 42, 0.1)',
-                  borderColor: '#0f766e',
-                },
-              }}
-            >
-              <CardContent sx={{ p: 3 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                  <Box sx={{ display: 'flex', gap: 2, flex: 1, minWidth: 0 }}>
-                    <Avatar sx={{ bgcolor: '#0f766e', width: 40, height: 40, fontWeight: 600 }}>
-                      {task.assigneeAvatar}
-                    </Avatar>
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography variant="body1" sx={{ fontWeight: 600, mb: 0.5 }}>
-                        {task.name}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {task.project}
+      {viewMode === 'board' ? (
+        <Grid container spacing={2}>
+          {otherTasks.map((task) => (
+            <Grid item xs={12} md={6} key={task.id}>
+              <Card
+                elevation={0}
+                onClick={() => onSelectTask(task)}
+                sx={{
+                  border: '1px solid rgba(148, 163, 184, 0.2)',
+                  borderRadius: 3,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  '&:hover': {
+                    transform: 'translateY(-4px)',
+                    boxShadow: '0 12px 40px rgba(15, 23, 42, 0.1)',
+                    borderColor: '#0f766e',
+                  },
+                }}
+              >
+                <CardContent sx={{ p: 3 }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                    <Box sx={{ display: 'flex', gap: 2, flex: 1, minWidth: 0 }}>
+                      <Avatar sx={{ bgcolor: '#0f766e', width: 40, height: 40, fontWeight: 600 }}>
+                        {task.assigneeAvatar}
+                      </Avatar>
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography variant="body1" sx={{ fontWeight: 600, mb: 0.5 }}>
+                          {task.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {task.project}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                          Created {task.createdDate} • By {task.createdBy}
+                        </Typography>
+                      </Box>
+                    </Box>
+                    <IconButton size="small" onClick={(e) => handleMenuOpen(e, task)}>
+                      <MoreVertIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
+
+                  <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
+                    <Chip
+                      label={task.stage}
+                      size="small"
+                      sx={{
+                        backgroundColor: stageColors[task.stage]?.bg,
+                        color: stageColors[task.stage]?.text,
+                        fontWeight: 500,
+                        fontSize: '0.75rem',
+                      }}
+                    />
+                    <Chip
+                      label={task.status}
+                      size="small"
+                      sx={{
+                        backgroundColor: statusColors[task.status]?.bg,
+                        color: statusColors[task.status]?.text,
+                        fontWeight: 500,
+                        fontSize: '0.75rem',
+                      }}
+                    />
+                    <Chip label={`Target: ${task.targetDate || '-'} `} size="small" />
+                  </Box>
+
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <CalendarTodayIcon sx={{ fontSize: 14, color: isToday(task.dueDate) ? 'error.main' : 'text.secondary' }} />
+                      <Typography variant="caption" color={isToday(task.dueDate) ? 'error.main' : 'text.secondary'}>
+                        Due {task.dueDate}{isToday(task.dueDate) ? ' • Today' : ''}
                       </Typography>
                     </Box>
-                  </Box>
-                  <IconButton size="small" onClick={(e) => handleMenuOpen(e, task)}>
-                    <MoreVertIcon fontSize="small" />
-                  </IconButton>
-                </Box>
-
-                <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
-                  <Chip
-                    label={task.stage}
-                    size="small"
-                    sx={{
-                      backgroundColor: stageColors[task.stage]?.bg,
-                      color: stageColors[task.stage]?.text,
-                      fontWeight: 500,
-                      fontSize: '0.75rem',
-                    }}
-                  />
-                  <Chip
-                    label={task.status}
-                    size="small"
-                    sx={{
-                      backgroundColor: statusColors[task.status]?.bg,
-                      color: statusColors[task.status]?.text,
-                      fontWeight: 500,
-                      fontSize: '0.75rem',
-                    }}
-                  />
-                </Box>
-
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <CalendarTodayIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                    <Typography variant="caption" color="text.secondary">
-                      Due {task.dueDate}
-                    </Typography>
-                  </Box>
-                  {task.collaborators.length > 0 && (
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                       <PersonIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
                       <Typography variant="caption" color="text.secondary">
                         +{task.collaborators.length}
                       </Typography>
                     </Box>
-                  )}
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
+                  </Box>
+                </CardContent>
+              </Card>
+            </Grid>
+          ))}
+        </Grid>
+      ) : (
+        <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>Task</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>Project</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>Stage</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', px: 1 }}>Status</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>Assignee</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>Collaborators</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>Target Date</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>Due Date</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>Created Date</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>Created By</TableCell>
+                  <TableCell />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {otherTasks.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage).map((task) => (
+                <TableRow key={task.id} hover onClick={() => onSelectTask(task)} sx={{ cursor: 'pointer' }}>
+                  <TableCell sx={{ maxWidth: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.name}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{task.project}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{task.stage}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', px: 1 }}>{task.status}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{task.assignee}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{(task.collaborators || []).join(', ') || '-'}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{task.targetDate || '-'}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <CalendarTodayIcon sx={{ fontSize: 16, color: isToday(task.dueDate) ? '#dc2626' : 'text.secondary' }} />
+                      <Typography variant="body2" sx={{ color: isToday(task.dueDate) ? '#dc2626' : 'text.secondary' }} noWrap>
+                        {task.dueDate}
+                      </Typography>
+                    </Box>
+                  </TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{task.createdDate}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{task.createdBy}</TableCell>
+                  <TableCell>
+                    <IconButton size="small" onClick={(e) => { e.stopPropagation(); handleMenuOpen(e, task); }}>
+                      <MoreVertIcon fontSize="small" />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <TablePagination
+            component="div"
+            count={otherTasks.length}
+            page={page}
+            onPageChange={(e, newPage) => setPage(newPage)}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={(e) => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }}
+            rowsPerPageOptions={[10, 25, 50]}
+          />
+        </TableContainer>
+      )}
 
       {/* Context Menu */}
       <Menu

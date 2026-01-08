@@ -10,6 +10,8 @@ import SettingsPage from '../Settings/SettingsPage';
 import ApprovalsPage from '../Approvals/ApprovalsPage';
 import ActivityLogPage from '../Activity/ActivityLogPage';
 import NotificationsPage from '../Notifications/NotificationsPage';
+import RecurringPage from '../Recurring/RecurringPage';
+import TasksPage from '../Tasks/TasksPage';
 import { getWorkspaces, getUserSettings } from '../../apiClient';
 
 const DRAWER_WIDTH = 260;
@@ -117,6 +119,22 @@ function MainLayout({ userId, onLogout }) {
           <ProjectList
             onSelectProject={handleSelectProject}
             workspace={currentWorkspace}
+          />
+        );
+      
+      case 'recurring':
+        return (
+          <RecurringPage
+            workspace={currentWorkspace}
+            user={user}
+          />
+        );
+      
+      case 'tasks':
+        return (
+          <TasksPage
+            workspace={currentWorkspace}
+            user={user}
           />
         );
       

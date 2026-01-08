@@ -19,8 +19,12 @@ import {
   IconButton,
   Snackbar,
   Alert,
+  FormControlLabel,
+  Switch,
+  Collapse,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import RepeatIcon from '@mui/icons-material/Repeat';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -49,7 +53,8 @@ function canEditTask(task, userRole, isAssignee) {
   if (!task) return true; // New task
   
   const status = task.status;
-  const isAdminOrOwner = userRole === 'admin' || userRole === 'owner';
+  const role = (userRole || '').toString().toLowerCase();
+  const isAdminOrOwner = role === 'admin' || role === 'owner';
   
   // Pending Approval or Closed: only admin/owner
   if (status === 'Pending Approval' || status === 'Closed') {
@@ -65,7 +70,7 @@ function canEditTask(task, userRole, isAssignee) {
   return true;
 }
 
-function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, prefilledStatus = null, projectId = null, userRole = null, currentUserId = null, onDelete }) {
+function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, prefilledStatus = null, projectId = null, userRole = null, currentUserId = null, onDelete, onCreateRecurring }) {
   const isEdit = Boolean(task);
   
   const [formData, setFormData] = useState({
@@ -79,6 +84,8 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
     collaborators: [],
     notes: '',
     priority: 'Medium',
+    isRecurring: false,
+    recurrencePattern: 'weekly',
   });
 
   const [projectMembers, setProjectMembers] = useState([]);
@@ -92,7 +99,8 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
   );
   
   // Check edit permission
-  const canEdit = canEditTask(task, userRole, isAssignee);
+  const normalizedRole = (userRole || '').toString().toLowerCase();
+  const canEdit = canEditTask(task, normalizedRole, isAssignee);
 
   useEffect(() => {
     if (task) {
@@ -123,6 +131,8 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
         collaborators: [],
         notes: '',
         priority: 'Medium',
+        isRecurring: false,
+        recurrencePattern: 'weekly',
       });
     }
   }, [task, prefilledStage, prefilledStatus, open]);
@@ -248,8 +258,9 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
         PaperProps={{ sx: { borderRadius: 3 } }}
       >
         <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 2 }}>
-          <Typography variant="h6" sx={{ fontWeight: 600 }}>
+          <Typography component="div" variant="h6" sx={{ fontWeight: 600 }}>
             {isEdit ? 'Edit Task' : 'Create New Task'}
+            <Chip label="UPDATED" size="small" color="success" sx={{ ml: 1 }} />
             {!canEdit && (
               <Chip 
                 label="Read Only" 
@@ -272,8 +283,9 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
             </Alert>
           )}
           <Grid container spacing={3}>
-            {/* Row 1: Name, Stage, Status */}
-            <Grid item xs={12} md={6}>
+            {/* UPDATED LAYOUT v3: Row 1: Task Name, Stage, Priority | Row 2: Assignee, Collab, Status | Row 3: Dates | Row 4: Notes/Desc */}
+            {/* ROW 1: Task Name, Stage, Priority */}
+            <Grid xs={12} md={6}>
               <TextField
                 fullWidth
                 label="Task Name"
@@ -282,9 +294,11 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
                 required
                 placeholder="Enter task name"
                 disabled={!canEdit}
+                inputProps={{ maxLength: 20 }}
+                helperText={`${formData.name.length}/20 characters`}
               />
             </Grid>
-            <Grid item xs={6} md={3}>
+            <Grid xs={12} md={3}>
               <FormControl fullWidth disabled={!canEdit}>
                 <InputLabel>Stage</InputLabel>
                 <Select
@@ -298,7 +312,7 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={6} md={3}>
+            <Grid xs={12} md={3}>
               <FormControl fullWidth disabled={!canEdit}>
                 <InputLabel>Priority</InputLabel>
                 <Select
@@ -314,11 +328,8 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
               </FormControl>
             </Grid>
 
-            {/* Description moved lower per new layout */}
-
-            {/* Row 3: Assignee, Collaborators, Dates */}
-
-            <Grid item xs={12} md={6}>
+            {/* ROW 2: Assignee, Collaborators, Status */}
+            <Grid xs={12} md={6}>
               <Autocomplete
                 disabled={!canEdit}
                 options={projectMembers}
@@ -326,7 +337,17 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
                 value={formData.assignee}
                 onChange={(e, value) => handleChange('assignee', value)}
                 renderInput={(params) => (
-                  <TextField {...params} label="Assignee" placeholder="Select assignee" fullWidth />
+                  <TextField
+                    {...params}
+                    label="Assignee"
+                    placeholder="Select assignee"
+                    fullWidth
+                    sx={{ '& .MuiInputBase-root': { minHeight: 64, fontSize: '1rem' } }}
+                    InputProps={{
+                      ...params.InputProps,
+                      sx: { alignItems: 'center' }
+                    }}
+                  />
                 )}
                 renderOption={(props, option) => (
                   <Box component="li" {...props} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -341,8 +362,7 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
                 )}
               />
             </Grid>
-
-            <Grid item xs={12} md={6}>
+            <Grid xs={12} md={3}>
               <Autocomplete
                 disabled={!canEdit}
                 multiple
@@ -351,52 +371,49 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
                 value={formData.collaborators}
                 onChange={(e, value) => handleChange('collaborators', value)}
                 renderInput={(params) => (
-                  <TextField {...params} label="Collaborators" placeholder="Add collaborators" fullWidth />
+                  <TextField {...params} label="Collaborators" placeholder="Add collaborators" fullWidth sx={{ '& .MuiInputBase-root': { minHeight: 56, fontSize: '0.95rem' } }} />
                 )}
                 renderTags={(value, getTagProps) =>
                   value.map((option, index) => (
                     <Chip
                       avatar={
-                        <Avatar sx={{ width: 24, height: 24, fontSize: '0.7rem', bgcolor: '#0f766e' }}>
+                        <Avatar sx={{ width: 32, height: 32, fontSize: '0.95rem', bgcolor: '#0f766e' }}>
                           {option.avatar || ((option.first_name || '').charAt(0) + (option.last_name || '').charAt(0))}
                         </Avatar>
                       }
                       label={option.first_name ? `${option.first_name} ${option.last_name || ''}`.trim() : option.username || option.email}
                       {...getTagProps({ index })}
-                      size="small"
+                      size="medium"
+                      sx={{ mr: 0.5, py: 0.5, fontSize: '0.95rem' }}
                     />
                   ))
                 }
               />
             </Grid>
-
-            <Grid item xs={12} md={6}>
+            <Grid xs={12} md={3}>
+              <TextField label="Status" value={formData.status} disabled fullWidth />
+            </Grid>
+            {/* ROW 3: Target Date, Due Date */}
+            <Grid xs={12} md={6}>
               <DatePicker
-                disabled={!canEdit}
+                disabled={!canEdit || (isEdit && normalizedRole !== 'owner' && normalizedRole !== 'admin')}
                 label="Target Date"
                 value={formData.targetDate}
                 onChange={(value) => handleChange('targetDate', value)}
                 inputFormat="dd-MMM-yy"
-                renderInput={(params) => <TextField {...params} fullWidth />}
-                slotProps={{ textField: { fullWidth: true } }}
+                slotProps={{ textField: { fullWidth: true, helperText: isEdit && userRole !== 'owner' && userRole !== 'admin' ? 'Only owner/admin can edit' : '' } }}
               />
             </Grid>
 
-            <Grid item xs={12} md={6}>
+            <Grid xs={12} md={6}>
               <DatePicker
-                disabled={!canEdit}
+                disabled={!canEdit || (isEdit && normalizedRole !== 'owner' && normalizedRole !== 'admin')}
                 label="Due Date"
                 value={formData.dueDate}
                 onChange={(value) => handleChange('dueDate', value)}
                 inputFormat="dd-MMM-yy"
-                renderInput={(params) => <TextField {...params} fullWidth />}
-                slotProps={{ textField: { fullWidth: true } }}
+                slotProps={{ textField: { fullWidth: true, helperText: isEdit && normalizedRole !== 'owner' && normalizedRole !== 'admin' ? 'Only owner/admin can edit' : '' } }}
               />
-            </Grid>
-
-            {/* Status display (auto-driven) */}
-            <Grid item xs={12} md={3}>
-              <TextField label="Status" value={formData.status} disabled fullWidth />
             </Grid>
 
             <Grid item xs={12} md={6}>
@@ -412,8 +429,7 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
               />
             </Grid>
 
-            {/* Description placed after notes as requested */}
-            <Grid item xs={12}>
+            <Grid item xs={12} md={6}>
               <TextField
                 disabled={!canEdit}
                 fullWidth
@@ -421,7 +437,7 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
                 value={formData.description}
                 onChange={(e) => handleChange('description', e.target.value)}
                 multiline
-                rows={3}
+                rows={4}
                 placeholder="Add task description"
               />
             </Grid>
@@ -438,6 +454,89 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
                 </Box>
               </Grid>
             )}
+
+            {/* Recurring Task Option - Only for new tasks */}
+            {!isEdit && onCreateRecurring && (
+              <Grid item xs={12}>
+                <Box 
+                  sx={{ 
+                    p: 2, 
+                    border: '1px solid', 
+                    borderColor: formData.isRecurring ? '#0f766e' : 'rgba(148, 163, 184, 0.3)',
+                    borderRadius: 2,
+                    bgcolor: formData.isRecurring ? 'rgba(15, 118, 110, 0.05)' : 'transparent',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={formData.isRecurring}
+                        onChange={(e) => handleChange('isRecurring', e.target.checked)}
+                        color="primary"
+                      />
+                    }
+                    label={
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <RepeatIcon sx={{ color: formData.isRecurring ? '#0f766e' : 'text.secondary' }} />
+                        <Typography variant="body1" sx={{ fontWeight: formData.isRecurring ? 600 : 400 }}>
+                          Make this a recurring task
+                        </Typography>
+                      </Box>
+                    }
+                  />
+                  
+                  <Collapse in={formData.isRecurring}>
+                    <Box sx={{ mt: 2, pl: 5 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        Set up automatic repetition for this task
+                      </Typography>
+                      <Grid container spacing={2} alignItems="center">
+                        <Grid item>
+                          <FormControl size="small" sx={{ minWidth: 150 }}>
+                            <InputLabel>Repeat</InputLabel>
+                            <Select
+                              value={formData.recurrencePattern}
+                              label="Repeat"
+                              onChange={(e) => handleChange('recurrencePattern', e.target.value)}
+                            >
+                              <MenuItem value="daily">Daily</MenuItem>
+                              <MenuItem value="weekly">Weekly</MenuItem>
+                              <MenuItem value="biweekly">Bi-weekly</MenuItem>
+                              <MenuItem value="monthly">Monthly</MenuItem>
+                            </Select>
+                          </FormControl>
+                        </Grid>
+                        <Grid item>
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            startIcon={<RepeatIcon />}
+                            onClick={() => {
+                              onCreateRecurring({
+                                title: formData.name,
+                                description: formData.description,
+                                project_id: projectId,
+                                assignee: formData.assignee,
+                                priority: formData.priority,
+                                recurrencePattern: formData.recurrencePattern,
+                              });
+                              onClose();
+                            }}
+                            sx={{ borderRadius: 2, textTransform: 'none' }}
+                          >
+                            Set up recurring series
+                          </Button>
+                        </Grid>
+                      </Grid>
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                        This will open the recurring series editor for advanced options
+                      </Typography>
+                    </Box>
+                  </Collapse>
+                </Box>
+              </Grid>
+            )}
           </Grid>
         </DialogContent>
 
@@ -445,10 +544,8 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
           {isEdit && onDelete && (
             <Button
               onClick={() => {
-                if (window.confirm('Are you sure you want to delete this task?')) {
-                  onDelete(task);
-                  onClose();
-                }
+                onDelete(task);
+                onClose();
               }}
               color="error"
               variant="outlined"

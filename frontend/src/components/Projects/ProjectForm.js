@@ -14,6 +14,7 @@ import {
   Typography,
   IconButton,
   Grid,
+  Paper,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import FolderIcon from '@mui/icons-material/Folder';
@@ -22,6 +23,25 @@ import CodeIcon from '@mui/icons-material/Code';
 import DesignServicesIcon from '@mui/icons-material/DesignServices';
 import BugReportIcon from '@mui/icons-material/BugReport';
 import CampaignIcon from '@mui/icons-material/Campaign';
+import LightbulbIcon from '@mui/icons-material/Lightbulb';
+import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import StarIcon from '@mui/icons-material/Star';
+import AnalyticsIcon from '@mui/icons-material/Analytics';
+import SettingsIcon from '@mui/icons-material/Settings';
+import BuildIcon from '@mui/icons-material/Build';
+import ScienceIcon from '@mui/icons-material/Science';
+import SchoolIcon from '@mui/icons-material/School';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import LocalOfferIcon from '@mui/icons-material/LocalOffer';
+import StorefrontIcon from '@mui/icons-material/Storefront';
+import ShoppingCartIcon from '@mui/icons-material/ShoppingCart';
+import RestaurantIcon from '@mui/icons-material/Restaurant';
+import FlightIcon from '@mui/icons-material/Flight';
+import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
+import HotelIcon from '@mui/icons-material/Hotel';
+import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
+import PetsIcon from '@mui/icons-material/Pets';
+import SportsEsportsIcon from '@mui/icons-material/SportsEsports';
 
 const projectIcons = [
   { value: 'folder', label: 'Folder', icon: <FolderIcon /> },
@@ -30,6 +50,25 @@ const projectIcons = [
   { value: 'design', label: 'Design', icon: <DesignServicesIcon /> },
   { value: 'bug', label: 'Bug', icon: <BugReportIcon /> },
   { value: 'campaign', label: 'Campaign', icon: <CampaignIcon /> },
+  { value: 'lightbulb', label: 'Idea', icon: <LightbulbIcon /> },
+  { value: 'rocket', label: 'Rocket', icon: <RocketLaunchIcon /> },
+  { value: 'star', label: 'Star', icon: <StarIcon /> },
+  { value: 'analytics', label: 'Analytics', icon: <AnalyticsIcon /> },
+  { value: 'settings', label: 'Settings', icon: <SettingsIcon /> },
+  { value: 'build', label: 'Build', icon: <BuildIcon /> },
+  { value: 'science', label: 'Science', icon: <ScienceIcon /> },
+  { value: 'school', label: 'School', icon: <SchoolIcon /> },
+  { value: 'psychology', label: 'AI/Brain', icon: <PsychologyIcon /> },
+  { value: 'offer', label: 'Offer', icon: <LocalOfferIcon /> },
+  { value: 'store', label: 'Store', icon: <StorefrontIcon /> },
+  { value: 'cart', label: 'Cart', icon: <ShoppingCartIcon /> },
+  { value: 'restaurant', label: 'Restaurant', icon: <RestaurantIcon /> },
+  { value: 'flight', label: 'Flight', icon: <FlightIcon /> },
+  { value: 'car', label: 'Car', icon: <DirectionsCarIcon /> },
+  { value: 'hotel', label: 'Hotel', icon: <HotelIcon /> },
+  { value: 'health', label: 'Health', icon: <HealthAndSafetyIcon /> },
+  { value: 'pets', label: 'Pets', icon: <PetsIcon /> },
+  { value: 'gaming', label: 'Gaming', icon: <SportsEsportsIcon /> },
 ];
 
 const projectColors = [
@@ -48,6 +87,7 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
   const [description, setDescription] = useState('');
   const [icon, setIcon] = useState('folder');
   const [color, setColor] = useState('#0f766e');
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
 
   useEffect(() => {
     if (project) {
@@ -109,7 +149,7 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
         </Box>
       </DialogTitle>
 
-      <DialogContent sx={{ p: 3, pt: 1 }}>
+      <DialogContent sx={{ p: 3, pt: 4 }}>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {/* Project Name */}
           <TextField
@@ -118,6 +158,7 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Enter project name"
+            InputLabelProps={{ shrink: true }}
             sx={{
               '& .MuiOutlinedInput-root': {
                 borderRadius: 2,
@@ -144,24 +185,29 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
           {/* Icon and Color Selection */}
           <Grid container spacing={2}>
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Project Icon</InputLabel>
-                <Select
-                  value={icon}
-                  onChange={(e) => setIcon(e.target.value)}
-                  label="Project Icon"
-                  sx={{ borderRadius: 2 }}
-                >
-                  {projectIcons.map((iconOption) => (
-                    <MenuItem key={iconOption.value} value={iconOption.value}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        {iconOption.icon}
-                        <Typography>{iconOption.label}</Typography>
-                      </Box>
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                Project Icon
+              </Typography>
+              <Button
+                fullWidth
+                variant="outlined"
+                onClick={() => setIconPickerOpen(true)}
+                sx={{
+                  justifyContent: 'flex-start',
+                  p: 1.5,
+                  borderRadius: 2,
+                  textTransform: 'none',
+                }}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                  <Box sx={{ fontSize: '1.5rem', display: 'flex', alignItems: 'center' }}>
+                    {projectIcons.find(i => i.value === icon)?.icon}
+                  </Box>
+                  <Typography>
+                    {projectIcons.find(i => i.value === icon)?.label || 'Select Icon'}
+                  </Typography>
+                </Box>
+              </Button>
             </Grid>
 
             <Grid item xs={12} md={6}>
@@ -273,6 +319,77 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
           {project ? 'Save Changes' : 'Create Project'}
         </Button>
       </DialogActions>
+
+      {/* Icon Picker Dialog */}
+      <Dialog
+        open={iconPickerOpen}
+        onClose={() => setIconPickerOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>Select Project Icon</Typography>
+            <IconButton onClick={() => setIconPickerOpen(false)} size="small">
+              <CloseIcon />
+            </IconButton>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Grid container spacing={1.5}>
+            {projectIcons.map((iconOption) => (
+              <Grid item xs={2.4} key={iconOption.value}>
+                <Box
+                  onClick={() => {
+                    setIcon(iconOption.value);
+                    setIconPickerOpen(false);
+                  }}
+                  sx={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    p: 1.5,
+                    borderRadius: 2,
+                    cursor: 'pointer',
+                    border: icon === iconOption.value ? '2px solid #0f766e' : '2px solid transparent',
+                    backgroundColor: icon === iconOption.value ? 'rgba(15, 118, 110, 0.1)' : 'transparent',
+                    transition: 'all 0.2s',
+                    '&:hover': {
+                      backgroundColor: icon === iconOption.value ? 'rgba(15, 118, 110, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+                      transform: 'scale(1.05)',
+                    },
+                  }}
+                >
+                  <Box sx={{ 
+                    color: icon === iconOption.value ? '#0f766e' : 'text.secondary', 
+                    mb: 0.5,
+                    fontSize: '1.2rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    '& .MuiSvgIcon-root': {
+                      fontSize: '1.2rem'
+                    }
+                  }}>
+                    {iconOption.icon}
+                  </Box>
+                  <Typography 
+                    variant="caption" 
+                    sx={{ 
+                      fontSize: '0.65rem',
+                      textAlign: 'center',
+                      color: icon === iconOption.value ? '#0f766e' : 'text.secondary',
+                      fontWeight: icon === iconOption.value ? 600 : 400,
+                    }}
+                  >
+                    {iconOption.label}
+                  </Typography>
+                </Box>
+              </Grid>
+            ))}
+          </Grid>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }

@@ -43,6 +43,7 @@ import {
   Collapse,
   Slide,
   InputAdornment,
+  Tooltip,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import AddIcon from '@mui/icons-material/Add';
@@ -94,7 +95,32 @@ const statusColors = {
   'Rejected': { bg: '#fee2e2', text: '#991b1b' },
 };
 
+// Helper function to generate theme colors based on project color
+const getProjectTheme = (projectColor) => {
+  const color = projectColor || '#0f766e';
+  
+  // Convert hex to RGB for generating lighter shades
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+      r: parseInt(result[1], 16),
+      g: parseInt(result[2], 16),
+      b: parseInt(result[3], 16)
+    } : { r: 15, g: 118, b: 110 };
+  };
+  
+  const rgb = hexToRgb(color);
+  
+  return {
+    primary: color,
+    primaryLight: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.1)`,
+    primaryMedium: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.2)`,
+    primaryDark: color,
+  };
+};
+
 function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
+  const projectTheme = getProjectTheme(project?.color);
   const [activeTab, setActiveTab] = useState(0);
   const [taskView, setTaskView] = useState('table'); // 'table', 'list', 'board', 'calendar'
   const [addMemberOpen, setAddMemberOpen] = useState(false);
@@ -118,6 +144,8 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   const [showArchived, setShowArchived] = useState(false);
   const [draggedTaskId, setDraggedTaskId] = useState(null);
   const [dragOverStage, setDragOverStage] = useState(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [taskToDelete, setTaskToDelete] = useState(null);
   
   // Advanced filter state
   const [advancedFilters, setAdvancedFilters] = useState({
@@ -217,6 +245,10 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     onlyOwnerApproves: false,
     requireRejectionReason: true,
     autoCloseAfterDays: 0,
+    memberTaskApproval: false,
+    adminTaskApproval: true,
+    showSettingsToAdmin: true,
+    freezeColumns: [],
   });
 
   // Fetch project members
@@ -307,54 +339,127 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   // Apply advanced filters to tasks
   const filterTasks = (tasksToFilter) => {
     return tasksToFilter.filter(task => {
-      // Name filter
-      if (advancedFilters.name && !task.name?.toLowerCase().includes(advancedFilters.name.toLowerCase())) {
-        return false;
+      const searchTerm = advancedFilters.name.toLowerCase();
+      
+      if (!searchTerm) return true;
+      
+      // Search in task name
+      if (task.name?.toLowerCase().includes(searchTerm)) return true;
+      
+      // Search in assignee
+      if (task.assignee_name?.toLowerCase().includes(searchTerm)) return true;
+      
+      // Search in collaborators
+      if (task.collaborators && Array.isArray(task.collaborators)) {
+        const collabMatch = task.collaborators.some(collab => {
+          const collabName = collab.name || collab.first_name + ' ' + collab.last_name || '';
+          return collabName.toLowerCase().includes(searchTerm);
+        });
+        if (collabMatch) return true;
       }
       
-      // Assignee filter
-      if (advancedFilters.assignee && !task.assignee_name?.toLowerCase().includes(advancedFilters.assignee.toLowerCase())) {
-        return false;
+      // Search in stage
+      if (task.stage?.toLowerCase().includes(searchTerm)) return true;
+      
+      // Search in status
+      if (task.status?.toLowerCase().includes(searchTerm)) return true;
+      
+      // Search in priority
+      if (task.priority?.toLowerCase().includes(searchTerm)) return true;
+      
+      // Search in created by
+      if (task.created_by_name?.toLowerCase().includes(searchTerm)) return true;
+      
+      // Search in notes
+      if (task.notes?.toLowerCase().includes(searchTerm)) return true;
+      
+      // Search in dates (month or year)
+      const isMonthSearch = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(searchTerm);
+      const isYearSearch = /^(19|20)\d{2}$/.test(searchTerm);
+      
+      if (isMonthSearch || isYearSearch) {
+        const dates = [
+          task.due_date,
+          task.target_date,
+          task.created_at
+        ].filter(Boolean);
+        
+        for (const dateStr of dates) {
+          const date = new Date(dateStr);
+          if (isYearSearch && date.getFullYear().toString() === searchTerm) return true;
+          if (isMonthSearch) {
+            const monthName = date.toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
+            if (monthName.startsWith(searchTerm.substring(0, 3))) return true;
+          }
+        }
       }
       
-      // Status filter (multiple selection)
-      if (advancedFilters.status.length > 0 && !advancedFilters.status.includes(task.status)) {
-        return false;
-      }
-      
-      // Stage filter (multiple selection)
-      if (advancedFilters.stage.length > 0 && !advancedFilters.stage.includes(task.stage)) {
-        return false;
-      }
-      
-      // Priority filter (multiple selection)
-      if (advancedFilters.priority.length > 0 && !advancedFilters.priority.includes(task.priority)) {
-        return false;
-      }
-      
-      // Due date range filter
-      if (advancedFilters.dueDateFrom && task.due_date) {
-        const taskDate = new Date(task.due_date);
-        const fromDate = new Date(advancedFilters.dueDateFrom);
-        if (taskDate < fromDate) return false;
-      }
-      
-      if (advancedFilters.dueDateTo && task.due_date) {
-        const taskDate = new Date(task.due_date);
-        const toDate = new Date(advancedFilters.dueDateTo);
-        if (taskDate > toDate) return false;
-      }
-      
-      return true;
+      return false;
     });
   };
   
   // Get filtered and sorted tasks
   const getProcessedTasks = () => {
-    return sortTasks(filterTasks(tasks));
+    const filtered = filterTasks(tasks);
+    const sorted = sortTasks(filtered);
+    
+    // Apply grouping if enabled
+    if (groupBy === 'none') {
+      return sorted;
+    }
+    
+    // Group tasks
+    const grouped = {};
+    sorted.forEach(task => {
+      let groupKey;
+      if (groupBy === 'status') {
+        groupKey = task.status || 'No Status';
+      } else if (groupBy === 'stage') {
+        groupKey = task.stage || 'No Stage';
+      } else if (groupBy === 'assignee') {
+        groupKey = task.assignee_name || 'Unassigned';
+      }
+      
+      if (!grouped[groupKey]) {
+        grouped[groupKey] = [];
+      }
+      grouped[groupKey].push(task);
+    });
+    
+    // Return grouped tasks with headers
+    const result = [];
+    Object.keys(grouped).sort().forEach(groupKey => {
+      result.push({ isGroupHeader: true, groupKey, count: grouped[groupKey].length });
+      result.push(...grouped[groupKey]);
+    });
+    
+    return result;
   };
 
-  const hasProjectSettingsPermission = project?.role === 'Owner' || project?.role === 'Admin';
+  // Helper function to get frozen column styles
+  const getFrozenColumnStyle = (columnName, index) => {
+    if (!projectSettings.freezeColumns?.includes(columnName)) return {};
+    
+    const leftOffset = {
+      'Task Name': 0,
+      'Assignee': projectSettings.freezeColumns.includes('Task Name') ? 240 : 0,
+      'Stage': (projectSettings.freezeColumns.includes('Task Name') ? 240 : 0) + 
+               (projectSettings.freezeColumns.includes('Assignee') ? 150 : 0),
+      'Status': (projectSettings.freezeColumns.includes('Task Name') ? 240 : 0) + 
+                (projectSettings.freezeColumns.includes('Assignee') ? 150 : 0) +
+                (projectSettings.freezeColumns.includes('Stage') ? 120 : 0),
+    };
+    
+    return {
+      position: 'sticky',
+      left: leftOffset[columnName] || 0,
+      backgroundColor: '#fff',
+      zIndex: 100,
+      boxShadow: '2px 0 4px rgba(0,0,0,0.05)',
+    };
+  };
+
+  const hasProjectSettingsPermission = project?.role === 'Owner' || (project?.role === 'Admin' && projectSettings.showSettingsToAdmin);
   const tabList = [
     { key: 'overview', label: 'Overview' },
     { key: 'tasks', label: `Tasks (${tasks.length})` },
@@ -454,13 +559,22 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   };
 
   const handleDeleteTask = async (task) => {
+    setTaskToDelete(task);
+    setDeleteDialogOpen(true);
+  };
+  
+  const confirmDelete = async () => {
+    if (!taskToDelete) return;
     try {
-      await deleteTask(task.id);
-      setTasks(tasks.filter(t => t.id !== task.id));
+      await deleteTask(taskToDelete.id);
+      setTasks(tasks.filter(t => t.id !== taskToDelete.id));
       showToast('success', 'Task deleted successfully');
     } catch (error) {
       console.error('Failed to delete task:', error);
       showToast('error', 'Failed to delete task');
+    } finally {
+      setDeleteDialogOpen(false);
+      setTaskToDelete(null);
     }
   };
 
@@ -543,7 +657,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
       <CardContent sx={{ p: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
           {task.assignee_name || task.assignee_username ? (
-            <Avatar sx={{ bgcolor: '#0f766e', width: 32, height: 32, fontSize: '0.8rem', fontWeight: 600 }}>
+            <Avatar sx={{ bgcolor: projectTheme.primary, width: 32, height: 32, fontSize: '0.8rem', fontWeight: 600 }}>
               {(() => {
                 const name = task.assignee_name || task.assignee_username || '';
                 const parts = name.split(' ').filter(Boolean);
@@ -1282,9 +1396,16 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                     <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2, overflowX: 'auto' }}>
                       <Table sx={{ minWidth: 1200 }}>
                         <TableHead>
-                          <TableRow sx={{ backgroundColor: 'rgba(15, 118, 110, 0.05)' }}>
+                          <TableRow sx={{ backgroundColor: projectTheme.primaryLight }}>
                             <TableCell 
-                              sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}
+                              sx={{ 
+                                fontWeight: 600, 
+                                cursor: 'pointer', 
+                                userSelect: 'none', 
+                                width: '24%', 
+                                minWidth: '240px',
+                                ...getFrozenColumnStyle('Task Name', 0)
+                              }}
                               onClick={() => handleSort('name')}
                             >
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -1295,7 +1416,12 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                               </Box>
                             </TableCell>
                             <TableCell 
-                              sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}
+                              sx={{ 
+                                fontWeight: 600, 
+                                cursor: 'pointer', 
+                                userSelect: 'none',
+                                ...getFrozenColumnStyle('Assignee', 1)
+                              }}
                               onClick={() => handleSort('assignee_name')}
                             >
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -1307,7 +1433,12 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                             </TableCell>
                             <TableCell sx={{ fontWeight: 600 }}>Collaborators</TableCell>
                             <TableCell 
-                              sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}
+                              sx={{ 
+                                fontWeight: 600, 
+                                cursor: 'pointer', 
+                                userSelect: 'none',
+                                ...getFrozenColumnStyle('Stage', 3)
+                              }}
                               onClick={() => handleSort('stage')}
                             >
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -1318,7 +1449,12 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                               </Box>
                             </TableCell>
                             <TableCell 
-                              sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}
+                              sx={{ 
+                                fontWeight: 600, 
+                                cursor: 'pointer', 
+                                userSelect: 'none',
+                                ...getFrozenColumnStyle('Status', 4)
+                              }}
                               onClick={() => handleSort('status')}
                             >
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -1387,15 +1523,30 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {getProcessedTasks().map((task, index) => (
-                            <TableRow 
+                          {getProcessedTasks().map((item, index) => {
+                            // Render group header if grouping is enabled
+                            if (item.isGroupHeader) {
+                              return (
+                                <TableRow key={`group-${item.groupKey}`}>
+                                  <TableCell colSpan={11} sx={{ bgcolor: '#f8fafc', py: 1.5 }}>
+                                    <Typography variant="subtitle2" sx={{ fontWeight: 700, color: projectTheme.primary }}>
+                                      {item.groupKey} ({item.count})
+                                    </Typography>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            }
+
+                            const task = item;
+                            return (
+                              <TableRow
                               key={task.id}
                               onClick={() => handleOpenTaskForm(task)}
                               sx={{ 
                                 cursor: 'pointer',
                                 transition: 'all 0.2s ease',
                                 '&:hover': { 
-                                  backgroundColor: 'rgba(15, 118, 110, 0.05)',
+                                  backgroundColor: projectTheme.primaryLight,
                                 },
                                 animation: `slideIn 0.3s ease ${index * 0.05}s both`,
                                 '@keyframes slideIn': {
@@ -1410,24 +1561,26 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                 },
                               }}
                             >
-                              <TableCell>
+                              <TableCell sx={getFrozenColumnStyle('Task Name', 0)}>
                                 <Typography variant="body2" sx={{ fontWeight: 500 }}>
                                   {task.name}
                                 </Typography>
                               </TableCell>
-                              <TableCell>
+                              <TableCell sx={getFrozenColumnStyle('Assignee', 1)}>
                                 {task.assignee_name || task.assignee_username ? (
-                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem', bgcolor: '#0f766e' }}>
-                                      {(() => {
-                                        const name = task.assignee_name || task.assignee_username || '';
-                                        const parts = name.split(' ').filter(Boolean);
-                                        if (parts.length === 0) return (task.assignee_username || 'U').slice(0,2).toUpperCase();
-                                        return (parts[0][0] || '') + (parts[1]?.[0] || '');
-                                      })()}
-                                    </Avatar>
-                                    <Typography variant="body2" sx={{ fontSize: '0.875rem' }}>{task.assignee_name || task.assignee_username}</Typography>
-                                  </Box>
+                                  <Tooltip title={task.assignee_name || task.assignee_username} arrow placement="top">
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer' }}>
+                                      <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem', bgcolor: projectTheme.primary }}>
+                                        {(() => {
+                                          const name = task.assignee_name || task.assignee_username || '';
+                                          const parts = name.split(' ').filter(Boolean);
+                                          if (parts.length === 0) return (task.assignee_username || 'U').slice(0,2).toUpperCase();
+                                          return (parts[0][0] || '') + (parts[1]?.[0] || '');
+                                        })()}
+                                      </Avatar>
+                                      <Typography variant="body2" sx={{ fontSize: '0.875rem' }}>{task.assignee_name || task.assignee_username}</Typography>
+                                    </Box>
+                                  </Tooltip>
                                 ) : (
                                   <Typography variant="body2" sx={{ fontSize: '0.875rem' }} color="text.secondary">-</Typography>
                                 )}
@@ -1435,17 +1588,22 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                               <TableCell>
                                 <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                                   {task.collaborators && task.collaborators.length > 0 ? (
-                                    task.collaborators.map((collab, idx) => (
-                                      <Avatar key={idx} sx={{ width: 20, height: 20, fontSize: '0.65rem', bgcolor: '#7c3aed' }}>
-                                        { (collab.name || '').split(' ').map(p=>p[0]).slice(0,2).join('') }
-                                      </Avatar>
-                                    ))
+                                    task.collaborators.map((collab, idx) => {
+                                      const collabName = collab.name || (collab.first_name + ' ' + collab.last_name).trim() || 'Unknown';
+                                      return (
+                                        <Tooltip key={idx} title={collabName} arrow placement="top">
+                                          <Avatar sx={{ width: 20, height: 20, fontSize: '0.65rem', bgcolor: '#7c3aed', cursor: 'pointer' }}>
+                                            { (collab.name || '').split(' ').map(p=>p[0]).slice(0,2).join('') }
+                                          </Avatar>
+                                        </Tooltip>
+                                      );
+                                    })
                                   ) : (
                                     <Typography variant="caption" color="text.secondary">-</Typography>
                                   )}
                                 </Box>
                               </TableCell>
-                              <TableCell>
+                              <TableCell sx={getFrozenColumnStyle('Stage', 3)}>
                                 <Chip
                                   label={task.stage}
                                   size="small"
@@ -1457,7 +1615,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                   }}
                                 />
                               </TableCell>
-                              <TableCell>
+                              <TableCell sx={getFrozenColumnStyle('Status', 4)}>
                                 <Chip
                                   label={task.status}
                                   size="small"
@@ -1523,7 +1681,8 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                 </Typography>
                               </TableCell>
                             </TableRow>
-                          ))}
+                            );
+                          })}
                         </TableBody>
                       </Table>
                     </TableContainer>
@@ -2058,7 +2217,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                             bgcolor: '#f8fafc',
                             color: '#0f172a',
                             '&:hover': {
-                              bgcolor: '#0f766e',
+                              bgcolor: projectTheme.primary,
                               color: '#fff',
                             }
                           }}
@@ -2104,10 +2263,10 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                             fontWeight: 600,
                             color: '#475569',
                             '&.Mui-selected': {
-                              backgroundColor: '#0f766e',
+                              backgroundColor: projectTheme.primary,
                               color: '#fff',
                               '&:hover': {
-                                backgroundColor: '#0f766e',
+                                backgroundColor: projectTheme.primary,
                               },
                             },
                           },
@@ -2262,7 +2421,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                       minWidth: dayInfo.isToday ? 28 : 'auto',
                                       height: dayInfo.isToday ? 28 : 'auto',
                                       borderRadius: '50%',
-                                      bgcolor: dayInfo.isToday ? '#0f766e' : 'transparent',
+                                      bgcolor: dayInfo.isToday ? projectTheme.primary : 'transparent',
                                       px: dayInfo.isToday ? 0 : 0.5,
                                     }}
                                   >
@@ -2285,7 +2444,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                         height: 20,
                                         fontSize: '0.65rem',
                                         fontWeight: 700,
-                                        bgcolor: '#0f766e',
+                                        bgcolor: projectTheme.primary,
                                         color: '#fff',
                                         '& .MuiChip-label': { px: 1 },
                                       }}
@@ -2358,7 +2517,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                       onClick={() => handleOpenTaskForm(null, null, null)}
                                       sx={{
                                         fontSize: '0.7rem',
-                                        color: '#0f766e',
+                                        color: projectTheme.primary,
                                         fontWeight: 600,
                                         cursor: 'pointer',
                                         pl: 0.5,
@@ -2441,7 +2600,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                     }}
                   >
                     <ListItemAvatar>
-                      <Avatar sx={{ bgcolor: '#0f766e', fontWeight: 600 }}>
+                      <Avatar sx={{ bgcolor: projectTheme.primary, fontWeight: 600 }}>
                         {member.avatar || initials}
                       </Avatar>
                     </ListItemAvatar>
@@ -2649,6 +2808,105 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                   }
                   sx={{ mb: 2, alignItems: 'flex-start' }}
                 />
+
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={projectSettings.memberTaskApproval}
+                      onChange={(e) => setProjectSettings({ ...projectSettings, memberTaskApproval: e.target.checked })}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        Task approval for members
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Member-created tasks require approval before being active
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{ mb: 2, alignItems: 'flex-start' }}
+                />
+
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={projectSettings.adminTaskApproval}
+                      onChange={(e) => setProjectSettings({ ...projectSettings, adminTaskApproval: e.target.checked })}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        Task approval for admin
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Admin-created tasks require approval before being active
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{ mb: 2, alignItems: 'flex-start' }}
+                />
+              </Box>
+
+              <Divider sx={{ my: 3 }} />
+
+              <Typography variant="h6" sx={{ mb: 3 }}>Permissions & Visibility</Typography>
+
+              <Box sx={{ mb: 3 }}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={projectSettings.showSettingsToAdmin}
+                      onChange={(e) => setProjectSettings({ ...projectSettings, showSettingsToAdmin: e.target.checked })}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        Show project settings to admin
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Allow project admins to view and modify settings (Owner always has access)
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{ mb: 2, alignItems: 'flex-start' }}
+                />
+              </Box>
+
+              <Divider sx={{ my: 3 }} />
+
+              <Typography variant="h6" sx={{ mb: 3 }}>Column Management</Typography>
+
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="body2" sx={{ fontWeight: 500, mb: 1 }}>
+                  Freeze Columns
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                  Select columns to freeze (remain visible when scrolling horizontally)
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                  {['Task Name', 'Assignee', 'Stage', 'Status'].map((col) => (
+                    <FormControlLabel
+                      key={col}
+                      control={
+                        <Switch
+                          size="small"
+                          checked={projectSettings.freezeColumns?.includes(col)}
+                          onChange={(e) => {
+                            const newFrozen = e.target.checked
+                              ? [...(projectSettings.freezeColumns || []), col]
+                              : (projectSettings.freezeColumns || []).filter(c => c !== col);
+                            setProjectSettings({ ...projectSettings, freezeColumns: newFrozen });
+                          }}
+                        />
+                      }
+                      label={<Typography variant="body2">{col}</Typography>}
+                    />
+                  ))}
+                </Box>
               </Box>
 
               <TextField
@@ -2747,7 +3005,36 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
         projectId={project?.id}
         userRole={userRole}
         currentUserId={user?.id}
+        projectRole={project?.role}
       />
+      
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+        PaperProps={{ sx: { borderRadius: 3 } }}
+      >
+        <DialogTitle sx={{ fontWeight: 600 }}>Delete Task</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to delete <strong>{taskToDelete?.name}</strong>? This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, pt: 0 }}>
+          <Button onClick={() => setDeleteDialogOpen(false)} sx={{ textTransform: 'none' }}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={confirmDelete} 
+            color="error" 
+            variant="contained"
+            sx={{ textTransform: 'none' }}
+          >
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
       <Snackbar
         open={toast.open}
         autoHideDuration={4000}

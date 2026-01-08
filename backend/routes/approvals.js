@@ -96,23 +96,63 @@ router.put('/:approvalId/approve', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    
+
+    // Load approval with project context
+    const apprRes = await client.query(
+      `SELECT a.*, p.created_by AS project_owner, p.admins_can_approve, p.only_owner_approves
+       FROM approvals a
+       LEFT JOIN projects p ON a.project_id = p.id
+       WHERE a.id = $1`,
+      [req.params.approvalId]
+    );
+
+    if (apprRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Approval not found' });
+    }
+
+    const approvalRow = apprRes.rows[0];
+
+    // Only allow approver, project owner, or (when enabled) project admin to approve
+    const isExplicitApprover = approvalRow.approver_id && approvalRow.approver_id === req.userId;
+    const isProjectOwner = approvalRow.project_owner && approvalRow.project_owner === req.userId;
+
+    // Check project member role
+    const pmRes = await client.query('SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2', [approvalRow.project_id, req.userId]);
+    const userProjectRole = pmRes.rows.length > 0 ? pmRes.rows[0].role : null;
+    const isProjectAdmin = userProjectRole === 'Admin' || userProjectRole === 'Owner';
+
+    const adminsCanApprove = approvalRow.admins_can_approve !== null ? approvalRow.admins_can_approve : true;
+    const onlyOwnerApproves = approvalRow.only_owner_approves !== null ? approvalRow.only_owner_approves : false;
+
+    let allowed = false;
+    if (isExplicitApprover) allowed = true;
+    else if (isProjectOwner) allowed = true;
+    else if (!onlyOwnerApproves && adminsCanApprove && isProjectAdmin) allowed = true;
+
+    if (!allowed) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Insufficient permissions to approve this request' });
+    }
+
+    // Now perform the status update only if still pending
     const result = await client.query(
       'UPDATE approvals SET status = $1, reviewed_by = $2, reviewed_at = CURRENT_TIMESTAMP WHERE id = $3 AND status = $4 RETURNING *',
       ['Approved', req.userId, req.params.approvalId, 'Pending']
     );
-    
+
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Approval not found or already reviewed' });
     }
-    
+
     const approval = result.rows[0];
-    
+
     await client.query(
       'INSERT INTO notifications (user_id, type, title, message, task_id, project_id) VALUES ($1, $2, $3, $4, $5, $6)',
       [approval.requester_id, 'Approval', 'Approval Approved', `Your ${approval.type} approval request has been approved`, approval.task_id, approval.project_id]
     );
+    
     // If this approval relates to a task, update the task status/stage
     if (approval.task_id) {
       try {
@@ -124,9 +164,9 @@ router.put('/:approvalId/approve', async (req, res) => {
         console.error('Failed to update task after approval:', err);
       }
     }
-    
+
     await client.query('COMMIT');
-    
+
     res.json(approval);
   } catch (err) {
     await client.query('ROLLBACK');
@@ -144,19 +184,57 @@ router.put('/:approvalId/reject', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    
+
+    // Load approval with project context
+    const apprRes = await client.query(
+      `SELECT a.*, p.created_by AS project_owner, p.admins_can_approve, p.only_owner_approves
+       FROM approvals a
+       LEFT JOIN projects p ON a.project_id = p.id
+       WHERE a.id = $1`,
+      [req.params.approvalId]
+    );
+
+    if (apprRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Approval not found' });
+    }
+
+    const approvalRow = apprRes.rows[0];
+
+    // Only allow explicit approver, project owner, or (when enabled) project admin to reject
+    const isExplicitApprover = approvalRow.approver_id && approvalRow.approver_id === req.userId;
+    const isProjectOwner = approvalRow.project_owner && approvalRow.project_owner === req.userId;
+
+    // Check project member role
+    const pmRes = await client.query('SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2', [approvalRow.project_id, req.userId]);
+    const userProjectRole = pmRes.rows.length > 0 ? pmRes.rows[0].role : null;
+    const isProjectAdmin = userProjectRole === 'Admin' || userProjectRole === 'Owner';
+
+    const adminsCanApprove = approvalRow.admins_can_approve !== null ? approvalRow.admins_can_approve : true;
+    const onlyOwnerApproves = approvalRow.only_owner_approves !== null ? approvalRow.only_owner_approves : false;
+
+    let allowed = false;
+    if (isExplicitApprover) allowed = true;
+    else if (isProjectOwner) allowed = true;
+    else if (!onlyOwnerApproves && adminsCanApprove && isProjectAdmin) allowed = true;
+
+    if (!allowed) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Insufficient permissions to reject this request' });
+    }
+
     const result = await client.query(
       'UPDATE approvals SET status = $1, reject_reason = $2, reviewed_by = $3, reviewed_at = CURRENT_TIMESTAMP WHERE id = $4 AND status = $5 RETURNING *',
       ['Rejected', reject_reason, req.userId, req.params.approvalId, 'Pending']
     );
-    
+
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Approval not found or already reviewed' });
     }
-    
+
     const approval = result.rows[0];
-    
+
     await client.query(
       'INSERT INTO notifications (user_id, type, title, message, task_id, project_id) VALUES ($1, $2, $3, $4, $5, $6)',
       [approval.requester_id, 'Approval', 'Approval Rejected', `Your ${approval.type} approval request has been rejected${reject_reason ? ': ' + reject_reason : ''}`, approval.task_id, approval.project_id]
@@ -172,9 +250,9 @@ router.put('/:approvalId/reject', async (req, res) => {
         console.error('Failed to update task after rejection:', err);
       }
     }
-    
+
     await client.query('COMMIT');
-    
+
     res.json(approval);
   } catch (err) {
     await client.query('ROLLBACK');

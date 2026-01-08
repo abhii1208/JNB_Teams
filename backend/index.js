@@ -18,6 +18,11 @@ const approvalsRouter = require('./routes/approvals');
 const activityRouter = require('./routes/activity');
 const notificationsRouter = require('./routes/notifications');
 const userRouter = require('./routes/user');
+const recurringRouter = require('./routes/recurring');
+const savedViewsRouter = require('./routes/savedViews');
+
+// Import background jobs
+const { initializeJobs, startJobs, stopJobs } = require('./jobs');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -394,9 +399,24 @@ app.use('/api/approvals', authenticateToken, approvalsRouter);
 app.use('/api/activity', authenticateToken, activityRouter);
 app.use('/api/notifications', authenticateToken, notificationsRouter);
 app.use('/api/user', authenticateToken, userRouter);
+app.use('/api/recurring', authenticateToken, recurringRouter);
+app.use('/api/views', authenticateToken, savedViewsRouter);
 
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  
+  // Initialize and start background jobs
+  try {
+    initializeJobs();
+    if (process.env.ENABLE_BACKGROUND_JOBS !== 'false') {
+      startJobs();
+      console.log('✅ Background jobs started');
+    } else {
+      console.log('⏸️ Background jobs disabled via ENABLE_BACKGROUND_JOBS=false');
+    }
+  } catch (err) {
+    console.error('Failed to initialize background jobs:', err);
+  }
 });
 
 // Global error handlers - prevent crashes from unhandled errors
@@ -413,6 +433,7 @@ process.on('unhandledRejection', (reason, promise) => {
 // Graceful shutdown handlers - only exit when explicitly terminated
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
+  stopJobs();
   server.close(() => {
     pool.end(() => {
       console.log('Database pool closed');
@@ -423,6 +444,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully');
+  stopJobs();
   server.close(() => {
     pool.end(() => {
       console.log('Database pool closed');
