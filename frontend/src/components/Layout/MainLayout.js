@@ -139,12 +139,13 @@ function MainLayout({ userId, onLogout }) {
         );
       
       case 'team':
-        // Team page visible only to licensed_admin users
-        if (!user || user.license_type !== 'licensed_admin') {
+        if (!currentWorkspace || (currentWorkspace.role !== 'Owner' && currentWorkspace.role !== 'Admin')) {
           return (
             <Box sx={{ p: 6 }}>
               <Typography variant="h6">Access restricted</Typography>
-              <Typography variant="body2" color="text.secondary">The Team page is only available to licensed administrators.</Typography>
+              <Typography variant="body2" color="text.secondary">
+                The Team page is only available to workspace Owners and Admins.
+              </Typography>
             </Box>
           );
         }

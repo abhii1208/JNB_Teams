@@ -260,7 +260,7 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
         <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 2 }}>
           <Typography component="div" variant="h6" sx={{ fontWeight: 600 }}>
             {isEdit ? 'Edit Task' : 'Create New Task'}
-            <Chip label="UPDATED" size="small" color="success" sx={{ ml: 1 }} />
+            <Chip label="UPDATED2" size="small" color="success" sx={{ ml: 1 }} />
             {!canEdit && (
               <Chip 
                 label="Read Only" 

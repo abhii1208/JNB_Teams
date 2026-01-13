@@ -19,6 +19,30 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import FolderIcon from '@mui/icons-material/Folder';
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import CodeIcon from '@mui/icons-material/Code';
+import DesignServicesIcon from '@mui/icons-material/DesignServices';
+import BugReportIcon from '@mui/icons-material/BugReport';
+import CampaignIcon from '@mui/icons-material/Campaign';
+import LightbulbIcon from '@mui/icons-material/Lightbulb';
+import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import StarIcon from '@mui/icons-material/Star';
+import AnalyticsIcon from '@mui/icons-material/Analytics';
+import SettingsIcon from '@mui/icons-material/Settings';
+import BuildIcon from '@mui/icons-material/Build';
+import ScienceIcon from '@mui/icons-material/Science';
+import SchoolIcon from '@mui/icons-material/School';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import LocalOfferIcon from '@mui/icons-material/LocalOffer';
+import StorefrontIcon from '@mui/icons-material/Storefront';
+import ShoppingCartIcon from '@mui/icons-material/ShoppingCart';
+import RestaurantIcon from '@mui/icons-material/Restaurant';
+import FlightIcon from '@mui/icons-material/Flight';
+import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
+import HotelIcon from '@mui/icons-material/Hotel';
+import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
+import PetsIcon from '@mui/icons-material/Pets';
+import SportsEsportsIcon from '@mui/icons-material/SportsEsports';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import ArchiveIcon from '@mui/icons-material/Archive';
@@ -97,12 +121,14 @@ function ProjectList({ onSelectProject, workspace }) {
         // Update existing project
         const response = await updateProject(editingProject.id, projectData);
         const updatedProject = {
+          // merge server response with local projectData to preserve icon/color when server doesn't return them
           ...response.data,
-          members: response.data.members || [],
-          openTasks: response.data.openTasks || 0,
-          pendingApproval: response.data.pendingApproval || 0,
-          completedTasks: response.data.completedTasks || 0,
-          taskCount: response.data.taskCount || 0,
+          ...projectData,
+          members: (response.data && (response.data.members || response.data.members === []) ) ? response.data.members : (projectData.members || []),
+          openTasks: response.data.openTasks || response.data.open_tasks || 0,
+          pendingApproval: response.data.pendingApproval || response.data.pending_approval || 0,
+          completedTasks: response.data.completedTasks || response.data.completed_tasks || 0,
+          taskCount: response.data.taskCount || response.data.task_count || 0,
           status: response.data.status || 'Active'
         };
         setProjects(projects.map(p => p.id === editingProject.id ? updatedProject : p));
@@ -110,12 +136,14 @@ function ProjectList({ onSelectProject, workspace }) {
         // Add new project
         const response = await createProject({ ...projectData, workspace_id: workspace.id });
         const newProject = {
+          // merge server response with projectData to keep icon/color even if server omits them
           ...response.data,
-          members: response.data.members || [],
-          openTasks: 0,
-          pendingApproval: 0,
-          completedTasks: 0,
-          taskCount: 0,
+          ...projectData,
+          members: response.data.members || projectData.members || [],
+          openTasks: response.data.openTasks || response.data.open_tasks || 0,
+          pendingApproval: response.data.pendingApproval || response.data.pending_approval || 0,
+          completedTasks: response.data.completedTasks || response.data.completed_tasks || 0,
+          taskCount: response.data.taskCount || response.data.task_count || 0,
           status: response.data.status || 'Active'
         };
         setProjects([...projects, newProject]);
@@ -286,14 +314,45 @@ function ProjectList({ onSelectProject, workspace }) {
                       width: 40,
                       height: 40,
                       borderRadius: 2,
-                      backgroundColor: 'rgba(15, 118, 110, 0.1)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      color: '#0f766e',
+                      backgroundColor: project.color || 'rgba(15, 118, 110, 0.1)',
                     }}
                   >
-                    <FolderIcon />
+                        {/* Render selected project icon if present */}
+                        {(() => {
+                          const iconValue = project.icon || 'folder';
+                          const iconMap = {
+                            folder: FolderIcon,
+                            dashboard: DashboardIcon,
+                            code: CodeIcon,
+                            design: DesignServicesIcon,
+                            bug: BugReportIcon,
+                            campaign: CampaignIcon,
+                            lightbulb: LightbulbIcon,
+                            rocket: RocketLaunchIcon,
+                            star: StarIcon,
+                            analytics: AnalyticsIcon,
+                            settings: SettingsIcon,
+                            build: BuildIcon,
+                            science: ScienceIcon,
+                            school: SchoolIcon,
+                            psychology: PsychologyIcon,
+                            offer: LocalOfferIcon,
+                            store: StorefrontIcon,
+                            cart: ShoppingCartIcon,
+                            restaurant: RestaurantIcon,
+                            flight: FlightIcon,
+                            car: DirectionsCarIcon,
+                            hotel: HotelIcon,
+                            health: HealthAndSafetyIcon,
+                            pets: PetsIcon,
+                            gaming: SportsEsportsIcon,
+                          };
+                          const IconComp = iconMap[iconValue] || FolderIcon;
+                          return <IconComp sx={{ color: '#fff', fontSize: 20 }} />;
+                        })()}
                   </Box>
                   <IconButton
                     size="small"

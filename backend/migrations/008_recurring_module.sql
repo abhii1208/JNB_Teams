@@ -78,8 +78,71 @@ CREATE TABLE IF NOT EXISTS recurring_series (
 -- 2. EXTEND EXISTING TASKS TABLE
 -- Add recurring-related columns without breaking existing functionality
 -- ============================================
+ALTER TABLE recurring_series
+    ADD COLUMN IF NOT EXISTS workspace_id INTEGER,
+    ADD COLUMN IF NOT EXISTS project_id INTEGER,
+    ADD COLUMN IF NOT EXISTS title VARCHAR(200),
+    ADD COLUMN IF NOT EXISTS description TEXT,
+    ADD COLUMN IF NOT EXISTS template JSONB DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS recurrence_rule JSONB,
+    ADD COLUMN IF NOT EXISTS timezone VARCHAR(50) DEFAULT 'UTC',
+    ADD COLUMN IF NOT EXISTS start_date DATE,
+    ADD COLUMN IF NOT EXISTS end_date DATE,
+    ADD COLUMN IF NOT EXISTS paused_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS last_generated_at DATE,
+    ADD COLUMN IF NOT EXISTS auto_close_after_days INTEGER,
+    ADD COLUMN IF NOT EXISTS backfill_policy VARCHAR(20) DEFAULT 'skip',
+    ADD COLUMN IF NOT EXISTS max_future_instances INTEGER DEFAULT 10,
+    ADD COLUMN IF NOT EXISTS assignment_strategy VARCHAR(20) DEFAULT 'static',
+    ADD COLUMN IF NOT EXISTS static_assignee_id INTEGER,
+    ADD COLUMN IF NOT EXISTS requires_approval BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS approver_id INTEGER,
+    ADD COLUMN IF NOT EXISTS reminder_offsets JSONB DEFAULT '[]'::jsonb,
+    ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS generation_lock_until TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS generation_lock_by VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS created_by INTEGER,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+DO $$
+DECLARE
+    series_id_type TEXT;
+    tasks_series_type TEXT;
+    non_null_count INTEGER;
+BEGIN
+    SELECT CASE WHEN data_type = 'USER-DEFINED' THEN udt_name ELSE data_type END
+      INTO series_id_type
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'recurring_series'
+       AND column_name = 'id';
+
+    IF series_id_type IS NULL THEN
+        series_id_type := 'integer';
+    END IF;
+
+    SELECT CASE WHEN data_type = 'USER-DEFINED' THEN udt_name ELSE data_type END
+      INTO tasks_series_type
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'tasks'
+       AND column_name = 'series_id';
+
+    IF tasks_series_type IS NULL THEN
+        EXECUTE format('ALTER TABLE tasks ADD COLUMN series_id %s REFERENCES recurring_series(id) ON DELETE SET NULL', series_id_type);
+    ELSIF tasks_series_type <> series_id_type THEN
+        EXECUTE 'SELECT COUNT(*) FROM tasks WHERE series_id IS NOT NULL' INTO non_null_count;
+        IF non_null_count = 0 THEN
+            EXECUTE format('ALTER TABLE tasks ALTER COLUMN series_id TYPE %s USING NULL::%s', series_id_type, series_id_type);
+        ELSE
+            RAISE NOTICE 'tasks.series_id type (%) does not match recurring_series.id (%); manual migration required.', tasks_series_type, series_id_type;
+        END IF;
+    END IF;
+END $$;
+
 ALTER TABLE tasks 
-ADD COLUMN IF NOT EXISTS series_id INTEGER REFERENCES recurring_series(id) ON DELETE SET NULL,
 ADD COLUMN IF NOT EXISTS is_exception BOOLEAN NOT NULL DEFAULT false,
 ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ,
 ADD COLUMN IF NOT EXISTS timezone VARCHAR(50) DEFAULT 'UTC',
@@ -97,41 +160,87 @@ ALTER TABLE tasks ADD CONSTRAINT tasks_status_check
 -- 3. RECURRENCE EXCEPTIONS
 -- Handles skipped or moved occurrences without corrupting the series
 -- ============================================
-CREATE TABLE IF NOT EXISTS recurrence_exceptions (
-    id SERIAL PRIMARY KEY,
-    series_id INTEGER NOT NULL REFERENCES recurring_series(id) ON DELETE CASCADE,
-    
-    -- The original computed date
-    original_date DATE NOT NULL,
-    -- For 'move' exceptions, the new date
-    new_date DATE,
-    
-    exception_type VARCHAR(10) NOT NULL CHECK (exception_type IN ('skip', 'move')),
-    reason TEXT,
-    
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    
-    -- Ensure one exception per date per series
-    UNIQUE(series_id, original_date)
-);
-
 -- ============================================
 -- 4. ASSIGNMENT ROTATION (Round Robin Support)
 -- Determines next assignee at generation time
 -- ============================================
-CREATE TABLE IF NOT EXISTS assignment_rotation (
-    id SERIAL PRIMARY KEY,
-    series_id INTEGER NOT NULL REFERENCES recurring_series(id) ON DELETE CASCADE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    
-    order_index INTEGER NOT NULL,
-    last_assigned_at TIMESTAMPTZ,
-    active BOOLEAN DEFAULT true,
-    
-    UNIQUE (series_id, user_id),
-    UNIQUE (series_id, order_index)
-);
+DO $$
+DECLARE
+    series_id_type TEXT;
+BEGIN
+    SELECT CASE WHEN data_type = 'USER-DEFINED' THEN udt_name ELSE data_type END
+      INTO series_id_type
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'recurring_series'
+       AND column_name = 'id';
+
+    IF series_id_type IS NULL THEN
+        series_id_type := 'integer';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_name = 'recurrence_exceptions'
+    ) THEN
+        EXECUTE format($sql$
+            CREATE TABLE recurrence_exceptions (
+                id SERIAL PRIMARY KEY,
+                series_id %1$s NOT NULL REFERENCES recurring_series(id) ON DELETE CASCADE,
+                
+                -- The original computed date
+                original_date DATE NOT NULL,
+                -- For 'move' exceptions, the new date
+                new_date DATE,
+                
+                exception_type VARCHAR(10) NOT NULL CHECK (exception_type IN ('skip', 'move')),
+                reason TEXT,
+                
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                
+                -- Ensure one exception per date per series
+                UNIQUE(series_id, original_date)
+            )
+        $sql$, series_id_type);
+    END IF;
+
+    EXECUTE format('ALTER TABLE recurrence_exceptions ADD COLUMN IF NOT EXISTS series_id %s', series_id_type);
+    ALTER TABLE recurrence_exceptions ADD COLUMN IF NOT EXISTS original_date DATE;
+    ALTER TABLE recurrence_exceptions ADD COLUMN IF NOT EXISTS new_date DATE;
+    ALTER TABLE recurrence_exceptions ADD COLUMN IF NOT EXISTS exception_type VARCHAR(10);
+    ALTER TABLE recurrence_exceptions ADD COLUMN IF NOT EXISTS reason TEXT;
+    ALTER TABLE recurrence_exceptions ADD COLUMN IF NOT EXISTS created_by INTEGER;
+    ALTER TABLE recurrence_exceptions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_name = 'assignment_rotation'
+    ) THEN
+        EXECUTE format($sql$
+            CREATE TABLE assignment_rotation (
+                id SERIAL PRIMARY KEY,
+                series_id %1$s NOT NULL REFERENCES recurring_series(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                
+                order_index INTEGER NOT NULL,
+                last_assigned_at TIMESTAMPTZ,
+                active BOOLEAN DEFAULT true,
+                
+                UNIQUE (series_id, user_id),
+                UNIQUE (series_id, order_index)
+            )
+        $sql$, series_id_type);
+    END IF;
+
+    EXECUTE format('ALTER TABLE assignment_rotation ADD COLUMN IF NOT EXISTS series_id %s', series_id_type);
+    ALTER TABLE assignment_rotation ADD COLUMN IF NOT EXISTS user_id INTEGER;
+    ALTER TABLE assignment_rotation ADD COLUMN IF NOT EXISTS order_index INTEGER;
+    ALTER TABLE assignment_rotation ADD COLUMN IF NOT EXISTS last_assigned_at TIMESTAMPTZ;
+    ALTER TABLE assignment_rotation ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true;
+END $$;
 
 -- ============================================
 -- 5. TASK REMINDERS (Materialized)
@@ -155,57 +264,115 @@ CREATE TABLE IF NOT EXISTS task_reminders (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE task_reminders
+    ADD COLUMN IF NOT EXISTS task_id INTEGER,
+    ADD COLUMN IF NOT EXISTS remind_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS notification_type VARCHAR(50) DEFAULT 'reminder',
+    ADD COLUMN IF NOT EXISTS notification_channel VARCHAR(50) DEFAULT 'in_app',
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+
 -- ============================================
 -- 6. GENERATION LOG (For Idempotency & Debugging)
 -- Critical for understanding what happened during generation
 -- ============================================
-CREATE TABLE IF NOT EXISTS generation_log (
-    id SERIAL PRIMARY KEY,
-    series_id INTEGER NOT NULL REFERENCES recurring_series(id) ON DELETE CASCADE,
-    
-    -- The date being processed
-    generated_date DATE NOT NULL,
-    
-    -- The resulting task (if created)
-    task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
-    
-    -- What happened
-    status VARCHAR(20) NOT NULL CHECK (status IN ('created', 'skipped', 'moved', 'failed', 'already_exists')),
-    
-    -- Error tracking
-    error_message TEXT,
-    
-    -- Metadata
-    assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    execution_time_ms INTEGER,
-    
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    
-    -- Prevent duplicate processing
-    UNIQUE(series_id, generated_date)
-);
-
 -- ============================================
 -- 7. SERIES AUDIT LOG (Specific to Recurring)
 -- More detailed than general activity_logs
 -- ============================================
-CREATE TABLE IF NOT EXISTS series_audit_log (
-    id SERIAL PRIMARY KEY,
-    series_id INTEGER NOT NULL REFERENCES recurring_series(id) ON DELETE CASCADE,
-    
-    action VARCHAR(50) NOT NULL,
-    -- Actions: created, updated, paused, resumed, ended, split, deleted
-    
-    -- What changed
-    old_values JSONB,
-    new_values JSONB,
-    
-    -- Context
-    task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
-    
-    performed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    performed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+DO $$
+DECLARE
+    series_id_type TEXT;
+BEGIN
+    SELECT CASE WHEN data_type = 'USER-DEFINED' THEN udt_name ELSE data_type END
+      INTO series_id_type
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'recurring_series'
+       AND column_name = 'id';
+
+    IF series_id_type IS NULL THEN
+        series_id_type := 'integer';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_name = 'generation_log'
+    ) THEN
+        EXECUTE format($sql$
+            CREATE TABLE generation_log (
+                id SERIAL PRIMARY KEY,
+                series_id %1$s NOT NULL REFERENCES recurring_series(id) ON DELETE CASCADE,
+                
+                -- The date being processed
+                generated_date DATE NOT NULL,
+                
+                -- The resulting task (if created)
+                task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+                
+                -- What happened
+                status VARCHAR(20) NOT NULL CHECK (status IN ('created', 'skipped', 'moved', 'failed', 'already_exists')),
+                
+                -- Error tracking
+                error_message TEXT,
+                
+                -- Metadata
+                assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                execution_time_ms INTEGER,
+                
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                
+                -- Prevent duplicate processing
+                UNIQUE(series_id, generated_date)
+            )
+        $sql$, series_id_type);
+    END IF;
+
+    EXECUTE format('ALTER TABLE generation_log ADD COLUMN IF NOT EXISTS series_id %s', series_id_type);
+    ALTER TABLE generation_log ADD COLUMN IF NOT EXISTS generated_date DATE;
+    ALTER TABLE generation_log ADD COLUMN IF NOT EXISTS task_id INTEGER;
+    ALTER TABLE generation_log ADD COLUMN IF NOT EXISTS status VARCHAR(20);
+    ALTER TABLE generation_log ADD COLUMN IF NOT EXISTS error_message TEXT;
+    ALTER TABLE generation_log ADD COLUMN IF NOT EXISTS assigned_to INTEGER;
+    ALTER TABLE generation_log ADD COLUMN IF NOT EXISTS execution_time_ms INTEGER;
+    ALTER TABLE generation_log ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_name = 'series_audit_log'
+    ) THEN
+        EXECUTE format($sql$
+            CREATE TABLE series_audit_log (
+                id SERIAL PRIMARY KEY,
+                series_id %1$s NOT NULL REFERENCES recurring_series(id) ON DELETE CASCADE,
+                
+                action VARCHAR(50) NOT NULL,
+                -- Actions: created, updated, paused, resumed, ended, split, deleted
+                
+                -- What changed
+                old_values JSONB,
+                new_values JSONB,
+                
+                -- Context
+                task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+                
+                performed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                performed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        $sql$, series_id_type);
+    END IF;
+
+    EXECUTE format('ALTER TABLE series_audit_log ADD COLUMN IF NOT EXISTS series_id %s', series_id_type);
+    ALTER TABLE series_audit_log ADD COLUMN IF NOT EXISTS action VARCHAR(50);
+    ALTER TABLE series_audit_log ADD COLUMN IF NOT EXISTS old_values JSONB;
+    ALTER TABLE series_audit_log ADD COLUMN IF NOT EXISTS new_values JSONB;
+    ALTER TABLE series_audit_log ADD COLUMN IF NOT EXISTS task_id INTEGER;
+    ALTER TABLE series_audit_log ADD COLUMN IF NOT EXISTS performed_by INTEGER;
+    ALTER TABLE series_audit_log ADD COLUMN IF NOT EXISTS performed_at TIMESTAMPTZ DEFAULT NOW();
+END $$;
 
 -- ============================================
 -- 8. INDEXES (Performance Critical)
@@ -244,73 +411,93 @@ CREATE INDEX IF NOT EXISTS idx_series_audit_action ON series_audit_log(action);
 -- 9. HELPER FUNCTIONS
 -- ============================================
 
--- Function to count future instances for a series
-CREATE OR REPLACE FUNCTION count_future_instances(p_series_id INTEGER)
-RETURNS INTEGER AS $$
-BEGIN
-    RETURN (
-        SELECT COUNT(*)::INTEGER
-        FROM tasks
-        WHERE series_id = p_series_id
-        AND due_date >= CURRENT_DATE
-        AND deleted_at IS NULL
-    );
-END;
-$$ LANGUAGE plpgsql;
-
--- Function to check if date is an exception
-CREATE OR REPLACE FUNCTION is_exception_date(p_series_id INTEGER, p_date DATE)
-RETURNS BOOLEAN AS $$
-BEGIN
-    RETURN EXISTS (
-        SELECT 1 FROM recurrence_exceptions
-        WHERE series_id = p_series_id
-        AND original_date = p_date
-    );
-END;
-$$ LANGUAGE plpgsql;
-
--- Function to get exception for a date
-CREATE OR REPLACE FUNCTION get_exception(p_series_id INTEGER, p_date DATE)
-RETURNS TABLE (
-    exception_type VARCHAR(10),
-    new_date DATE,
-    reason TEXT
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT e.exception_type, e.new_date, e.reason
-    FROM recurrence_exceptions e
-    WHERE e.series_id = p_series_id
-    AND e.original_date = p_date;
-END;
-$$ LANGUAGE plpgsql;
-
--- Function to get next round-robin assignee
-CREATE OR REPLACE FUNCTION get_next_assignee(p_series_id INTEGER)
-RETURNS INTEGER AS $$
+DO $$
 DECLARE
-    v_user_id INTEGER;
+    series_id_type TEXT;
 BEGIN
-    -- Get user with oldest last_assigned_at (or never assigned)
-    SELECT user_id INTO v_user_id
-    FROM assignment_rotation
-    WHERE series_id = p_series_id
-    AND active = true
-    ORDER BY last_assigned_at NULLS FIRST, order_index
-    LIMIT 1
-    FOR UPDATE SKIP LOCKED;
-    
-    -- Update last assigned time
-    IF v_user_id IS NOT NULL THEN
-        UPDATE assignment_rotation
-        SET last_assigned_at = NOW()
-        WHERE series_id = p_series_id AND user_id = v_user_id;
+    SELECT CASE WHEN data_type = 'USER-DEFINED' THEN udt_name ELSE data_type END
+      INTO series_id_type
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'recurring_series'
+       AND column_name = 'id';
+
+    IF series_id_type IS NULL THEN
+        series_id_type := 'integer';
     END IF;
-    
-    RETURN v_user_id;
-END;
-$$ LANGUAGE plpgsql;
+
+    EXECUTE format($sql$
+        CREATE OR REPLACE FUNCTION count_future_instances(p_series_id %1$s)
+        RETURNS INTEGER AS $func$
+        BEGIN
+            RETURN (
+                SELECT COUNT(*)::INTEGER
+                FROM tasks
+                WHERE series_id = p_series_id
+                AND due_date >= CURRENT_DATE
+                AND deleted_at IS NULL
+            );
+        END;
+        $func$ LANGUAGE plpgsql;
+    $sql$, series_id_type);
+
+    EXECUTE format($sql$
+        CREATE OR REPLACE FUNCTION is_exception_date(p_series_id %1$s, p_date DATE)
+        RETURNS BOOLEAN AS $func$
+        BEGIN
+            RETURN EXISTS (
+                SELECT 1 FROM recurrence_exceptions
+                WHERE series_id = p_series_id
+                AND original_date = p_date
+            );
+        END;
+        $func$ LANGUAGE plpgsql;
+    $sql$, series_id_type);
+
+    EXECUTE format($sql$
+        CREATE OR REPLACE FUNCTION get_exception(p_series_id %1$s, p_date DATE)
+        RETURNS TABLE (
+            exception_type VARCHAR(10),
+            new_date DATE,
+            reason TEXT
+        ) AS $func$
+        BEGIN
+            RETURN QUERY
+            SELECT e.exception_type, e.new_date, e.reason
+            FROM recurrence_exceptions e
+            WHERE e.series_id = p_series_id
+            AND e.original_date = p_date;
+        END;
+        $func$ LANGUAGE plpgsql;
+    $sql$, series_id_type);
+
+    EXECUTE format($sql$
+        CREATE OR REPLACE FUNCTION get_next_assignee(p_series_id %1$s)
+        RETURNS INTEGER AS $func$
+        DECLARE
+            v_user_id INTEGER;
+        BEGIN
+            -- Get user with oldest last_assigned_at (or never assigned)
+            SELECT user_id INTO v_user_id
+            FROM assignment_rotation
+            WHERE series_id = p_series_id
+            AND active = true
+            ORDER BY last_assigned_at NULLS FIRST, order_index
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED;
+            
+            -- Update last assigned time
+            IF v_user_id IS NOT NULL THEN
+                UPDATE assignment_rotation
+                SET last_assigned_at = NOW()
+                WHERE series_id = p_series_id AND user_id = v_user_id;
+            END IF;
+            
+            RETURN v_user_id;
+        END;
+        $func$ LANGUAGE plpgsql;
+    $sql$, series_id_type);
+END $$;
 
 -- ============================================
 -- 10. AUTO-CLOSE FUNCTION (Called by cron)

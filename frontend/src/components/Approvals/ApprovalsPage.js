@@ -148,11 +148,12 @@ function ApprovalsPage({ user, workspace }) {
     setRejectDialogOpen(true);
   };
 
-  const handleReject = async (approvalId) => {
+  const handleReject = async () => {
+    if (!selectedApproval?.id) return;
     try {
-      await rejectApproval(approvalId, rejectReason);
+      await rejectApproval(selectedApproval.id, rejectReason);
       setApprovals(approvals.map(a => 
-        a.id === approvalId ? { ...a, status: 'Rejected', reject_reason: rejectReason } : a
+        a.id === selectedApproval.id ? { ...a, status: 'Rejected', reject_reason: rejectReason } : a
       ));
       setRejectDialogOpen(false);
       setRejectReason('');
@@ -324,7 +325,7 @@ function ApprovalsPage({ user, workspace }) {
                         >
                           <InfoIcon fontSize="small" />
                         </IconButton>
-                        {approval.status === 'Pending' && (
+                        {approval.status === 'Pending' && approval.can_review && (
                           <>
                             <IconButton
                               size="small"

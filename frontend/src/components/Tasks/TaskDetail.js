@@ -1,9 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Button,
-  Card,
-  CardContent,
   Chip,
   Dialog,
   DialogActions,
@@ -11,13 +9,9 @@ import {
   DialogContentText,
   DialogTitle,
   Divider,
-  FormControl,
   Grid,
   IconButton,
-  InputLabel,
-  MenuItem,
   Paper,
-  Select,
   TextField,
   Typography,
   Avatar,
@@ -31,11 +25,8 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import EditIcon from '@mui/icons-material/Edit';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import CancelIcon from '@mui/icons-material/Cancel';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
-import PersonIcon from '@mui/icons-material/Person';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
-import CommentIcon from '@mui/icons-material/Comment';
 import { approveApproval, rejectApproval, getApprovals, updateTask } from '../../apiClient';
 import { formatShortDate } from '../../utils/date';
 
@@ -82,15 +73,16 @@ const mockActivity = [
   },
 ];
 
-function TaskDetail({ task, onBack }) {
-  const [isEditing, setIsEditing] = useState(false);
+function TaskDetail({ task, onBack, user, onEdit }) {
   const [closureDialogOpen, setClosureDialogOpen] = useState(false);
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
   const [rejectionDialogOpen, setRejectionDialogOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
   const [comment, setComment] = useState('');
+  const [pendingApproval, setPendingApproval] = useState(null);
+  const [approvalLoading, setApprovalLoading] = useState(false);
 
-  const [taskData, setTaskData] = useState({
+  const taskData = {
     name: task.name,
     description: 'This task involves creating comprehensive user documentation for the new features. The documentation should be clear, concise, and include screenshots where appropriate.',
     stage: task.stage,
@@ -102,14 +94,41 @@ function TaskDetail({ task, onBack }) {
     createdDate: task.created_at || task.createdDate || null,
     createdBy: task.created_by_name || task.createdBy || null,
     project: task.project,
-  });
+  };
 
-  // Determine if current user can approve (mock logic - in real app, check user's role)
-  const canApprove = true; // Mock: current user is project owner/admin
-  const isTaskOwner = true; // Mock: current user is the assignee
   const isPendingApproval = task.status === 'Pending Approval';
+  const assigneeId = task.assignee_id || task.assignee?.id || task.assignee;
+  const isTaskOwner = user?.id && assigneeId && String(assigneeId) === String(user.id);
+  const canApprove = Boolean(pendingApproval?.can_review);
   const isClosed = task.status === 'Closed';
   const canRequestClosure = task.status === 'Open' && task.stage === 'Completed' && isTaskOwner;
+  const canEditTask = Boolean(onEdit) && !isClosed && !isPendingApproval;
+
+  const resolvePendingApproval = async () => {
+    if (!task?.id || !isPendingApproval) return null;
+    try {
+      setApprovalLoading(true);
+      const res = await getApprovals({ status: 'Pending', task_id: task.id });
+      const approvals = res.data || res.rows || [];
+      const approval = approvals.find((a) => Number(a.task_id) === Number(task.id));
+      setPendingApproval(approval || null);
+      return approval || null;
+    } catch (err) {
+      console.error('Failed to fetch pending approval', err);
+      setPendingApproval(null);
+      return null;
+    } finally {
+      setApprovalLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isPendingApproval) {
+      setPendingApproval(null);
+      return;
+    }
+    resolvePendingApproval();
+  }, [task?.id, isPendingApproval]);
 
   const handleRequestClosure = () => setClosureDialogOpen(true);
 
@@ -130,12 +149,14 @@ function TaskDetail({ task, onBack }) {
 
   const confirmApproval = async () => {
     try {
-      // Find pending approval for this task
-      const res = await getApprovals({ status: 'Pending' });
-      const approvals = res.data || res.rows || [];
-      const approval = approvals.find((a) => Number(a.task_id) === Number(task.id));
+      const approval = pendingApproval || await resolvePendingApproval();
       if (!approval) {
         window.alert('No pending approval found for this task');
+        setApprovalDialogOpen(false);
+        return;
+      }
+      if (!approval.can_review) {
+        window.alert('You do not have permission to approve this task');
         setApprovalDialogOpen(false);
         return;
       }
@@ -154,11 +175,14 @@ function TaskDetail({ task, onBack }) {
   const confirmRejection = async () => {
     if (!rejectionReason.trim()) return;
     try {
-      const res = await getApprovals({ status: 'Pending' });
-      const approvals = res.data || res.rows || [];
-      const approval = approvals.find((a) => Number(a.task_id) === Number(task.id));
+      const approval = pendingApproval || await resolvePendingApproval();
       if (!approval) {
         window.alert('No pending approval found for this task');
+        setRejectionDialogOpen(false);
+        return;
+      }
+      if (!approval.can_review) {
+        window.alert('You do not have permission to reject this task');
         setRejectionDialogOpen(false);
         return;
       }
@@ -213,14 +237,14 @@ function TaskDetail({ task, onBack }) {
             {taskData.project}
           </Typography>
         </Box>
-        {!isClosed && !isPendingApproval && (
+        {canEditTask && (
           <Button
             variant="outlined"
             startIcon={<EditIcon />}
-            onClick={() => setIsEditing(!isEditing)}
+            onClick={() => onEdit(task)}
             sx={{ textTransform: 'none', borderRadius: 2 }}
           >
-            {isEditing ? 'Cancel Edit' : 'Edit Task'}
+            Edit Task
           </Button>
         )}
       </Box>
@@ -264,6 +288,16 @@ function TaskDetail({ task, onBack }) {
           </Typography>
         </Alert>
       )}
+      {isPendingApproval && !canApprove && !approvalLoading && (
+        <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            This task is pending approval
+          </Typography>
+          <Typography variant="caption">
+            Only the project owner or approved admins can review this request.
+          </Typography>
+        </Alert>
+      )}
 
       {/* Closed Alert */}
       {isClosed && (
@@ -293,73 +327,35 @@ function TaskDetail({ task, onBack }) {
               Task Details
             </Typography>
 
-            {isEditing ? (
-              <>
-                <TextField
-                  fullWidth
-                  label="Task Name"
-                  value={taskData.name}
-                  onChange={(e) => setTaskData({ ...taskData, name: e.target.value })}
-                  sx={{ mb: 3 }}
-                />
-                <TextField
-                  fullWidth
-                  label="Description"
-                  value={taskData.description}
-                  onChange={(e) => setTaskData({ ...taskData, description: e.target.value })}
-                  multiline
-                  rows={4}
-                  sx={{ mb: 3 }}
-                />
-                <FormControl fullWidth sx={{ mb: 3 }}>
-                  <InputLabel>Stage</InputLabel>
-                  <Select
-                    value={taskData.stage}
-                    label="Stage"
-                    onChange={(e) => setTaskData({ ...taskData, stage: e.target.value })}
+            <>
+              <Typography variant="body1" paragraph>
+                {taskData.description}
+              </Typography>
+              
+              {canRequestClosure && (
+                <Box sx={{ mt: 3, p: 2, borderRadius: 2, backgroundColor: '#f8fafc', border: '1px solid rgba(148, 163, 184, 0.2)' }}>
+                  <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>
+                    Task Completed?
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" paragraph>
+                    Once you request closure, this task will be sent to the project owner/admin for approval.
+                    You won't be able to edit it unless it's rejected.
+                  </Typography>
+                  <Button
+                    variant="contained"
+                    startIcon={<CheckCircleIcon />}
+                    onClick={handleRequestClosure}
+                    sx={{
+                      textTransform: 'none',
+                      bgcolor: '#0f766e',
+                      '&:hover': { bgcolor: '#115e59' },
+                    }}
                   >
-                    <MenuItem value="Planned">Planned</MenuItem>
-                    <MenuItem value="In-process">In-process</MenuItem>
-                    <MenuItem value="Completed">Completed</MenuItem>
-                    <MenuItem value="On-hold">On-hold</MenuItem>
-                    <MenuItem value="Dropped">Dropped</MenuItem>
-                  </Select>
-                </FormControl>
-                <Button variant="contained" sx={{ textTransform: 'none', px: 4 }}>
-                  Save Changes
-                </Button>
-              </>
-            ) : (
-              <>
-                <Typography variant="body1" paragraph>
-                  {taskData.description}
-                </Typography>
-                
-                {canRequestClosure && (
-                  <Box sx={{ mt: 3, p: 2, borderRadius: 2, backgroundColor: '#f8fafc', border: '1px solid rgba(148, 163, 184, 0.2)' }}>
-                    <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>
-                      Task Completed?
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" paragraph>
-                      Once you request closure, this task will be sent to the project owner/admin for approval.
-                      You won't be able to edit it unless it's rejected.
-                    </Typography>
-                    <Button
-                      variant="contained"
-                      startIcon={<CheckCircleIcon />}
-                      onClick={handleRequestClosure}
-                      sx={{
-                        textTransform: 'none',
-                        bgcolor: '#0f766e',
-                        '&:hover': { bgcolor: '#115e59' },
-                      }}
-                    >
-                      Request Task Closure
-                    </Button>
-                  </Box>
-                )}
-              </>
-            )}
+                    Request Task Closure
+                  </Button>
+                </Box>
+              )}
+            </>
           </Paper>
 
           {/* Activity & Comments */}

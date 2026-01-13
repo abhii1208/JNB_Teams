@@ -81,7 +81,6 @@ function TeamPage({ user, workspace }) {
   }, [workspace]);
 
   const isOwnerOrAdmin = ['Owner','Admin'].includes(workspace?.role);
-  const isLicensedAdmin = user?.license_type === 'licensed_admin';
 
   const handleMenuOpen = (event, member) => {
     event.stopPropagation();
@@ -169,7 +168,7 @@ function TeamPage({ user, workspace }) {
             Manage workspace members and their roles
           </Typography>
         </Box>
-        {isLicensedAdmin && (
+        {isOwnerOrAdmin && (
           <Button
             variant="contained"
             startIcon={<PersonAddIcon />}

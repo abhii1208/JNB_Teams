@@ -394,6 +394,36 @@ router.put('/bulk', async (req, res) => {
       return res.status(403).json({ error: 'Access denied to one or more tasks' });
     }
 
+    const requestedStatus = typeof updates.status === 'string' ? updates.status.toLowerCase() : null;
+    const isApprovalStatus = requestedStatus === 'closed' || requestedStatus === 'rejected';
+    if (isApprovalStatus) {
+      const permRes = await client.query(`
+        SELECT t.id,
+          p.created_by AS project_owner,
+          p.admins_can_approve,
+          p.only_owner_approves,
+          pm.role as user_project_role
+        FROM tasks t
+        JOIN projects p ON t.project_id = p.id
+        LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
+        WHERE t.id = ANY($1::int[])
+      `, [task_ids, req.userId]);
+
+      const notAllowed = permRes.rows.some((row) => {
+        const isProjectOwner = Number(row.project_owner) === Number(req.userId);
+        const isProjectAdmin = row.user_project_role === 'Admin' || row.user_project_role === 'Owner';
+        const adminsCanApprove = row.admins_can_approve !== null ? row.admins_can_approve : true;
+        const onlyOwnerApproves = row.only_owner_approves !== null ? row.only_owner_approves : false;
+        const canApprove = isProjectOwner || (!onlyOwnerApproves && adminsCanApprove && isProjectAdmin);
+        return !canApprove;
+      });
+
+      if (notAllowed) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Insufficient permissions to approve or reject tasks' });
+      }
+    }
+
     // Build update query
     const updateFields = [];
     const params = [task_ids];
@@ -566,6 +596,44 @@ router.put('/:taskId', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    const accessRes = await client.query(
+      `SELECT t.id, t.project_id, t.assignee_id,
+        p.created_by AS project_owner,
+        p.admins_can_approve,
+        p.only_owner_approves,
+        pm.role as user_project_role
+       FROM tasks t
+       JOIN projects p ON t.project_id = p.id
+       LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
+       WHERE t.id = $1`,
+      [req.params.taskId, req.userId]
+    );
+
+    if (accessRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    const access = accessRes.rows[0];
+    const isProjectOwner = Number(access.project_owner) === Number(req.userId);
+    const userProjectRole = access.user_project_role;
+    const isProjectAdmin = userProjectRole === 'Admin' || userProjectRole === 'Owner';
+    const adminsCanApprove = access.admins_can_approve !== null ? access.admins_can_approve : true;
+    const onlyOwnerApproves = access.only_owner_approves !== null ? access.only_owner_approves : false;
+    const canApprove = isProjectOwner || (!onlyOwnerApproves && adminsCanApprove && isProjectAdmin);
+
+    if (!isProjectOwner && !userProjectRole) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Access denied to this task' });
+    }
+
+    const requestedStatus = typeof status === 'string' ? status.toLowerCase() : null;
+    const isApprovalStatus = requestedStatus === 'closed' || requestedStatus === 'rejected';
+    if (isApprovalStatus && !canApprove) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Insufficient permissions to approve or reject this task' });
+    }
     
     // Auto-archive when task is closed
     const shouldArchive = status && status.toLowerCase() === 'closed';

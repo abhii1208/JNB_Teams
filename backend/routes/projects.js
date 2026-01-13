@@ -102,9 +102,28 @@ router.post('/', async (req, res) => {
 
 // Update project
 router.put('/:projectId', async (req, res) => {
-  const { name, description, icon, color, status } = req.body;
+  const {
+    name,
+    description,
+    icon,
+    color,
+    status,
+    members_can_create_tasks,
+    members_can_close_tasks,
+    admins_can_approve,
+    only_owner_approves,
+    require_rejection_reason,
+    auto_close_after_days,
+    member_task_approval,
+    admin_task_approval,
+    show_settings_to_admin,
+    freeze_columns,
+  } = req.body;
   
   try {
+    const normalizedFreezeColumns = freeze_columns !== undefined && freeze_columns !== null && typeof freeze_columns === 'object'
+      ? JSON.stringify(freeze_columns)
+      : freeze_columns;
     const result = await pool.query(
       `UPDATE projects 
        SET name = COALESCE($1, name), 
@@ -112,10 +131,37 @@ router.put('/:projectId', async (req, res) => {
            icon = COALESCE($3, icon),
            color = COALESCE($4, color),
            status = COALESCE($5, status),
+           members_can_create_tasks = COALESCE($6, members_can_create_tasks),
+           members_can_close_tasks = COALESCE($7, members_can_close_tasks),
+           admins_can_approve = COALESCE($8, admins_can_approve),
+           only_owner_approves = COALESCE($9, only_owner_approves),
+           require_rejection_reason = COALESCE($10, require_rejection_reason),
+           auto_close_after_days = COALESCE($11, auto_close_after_days),
+           member_task_approval = COALESCE($12, member_task_approval),
+           admin_task_approval = COALESCE($13, admin_task_approval),
+           show_settings_to_admin = COALESCE($14, show_settings_to_admin),
+           freeze_columns = COALESCE($15::jsonb, freeze_columns),
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $6 
+       WHERE id = $16 
        RETURNING *`,
-      [name, description, icon, color, status, req.params.projectId]
+      [
+        name,
+        description,
+        icon,
+        color,
+        status,
+        members_can_create_tasks,
+        members_can_close_tasks,
+        admins_can_approve,
+        only_owner_approves,
+        require_rejection_reason,
+        auto_close_after_days,
+        member_task_approval,
+        admin_task_approval,
+        show_settings_to_admin,
+        normalizedFreezeColumns,
+        req.params.projectId,
+      ]
     );
     
     if (result.rows.length === 0) {
@@ -208,21 +254,26 @@ router.put('/:projectId/members/:userId', async (req, res) => {
     const workspaceId = projRes.rows[0].workspace_id;
 
     const pmRes = await pool.query('SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, req.userId]);
-    let allowed = false;
-    if (pmRes.rows.length > 0) {
-      const r = pmRes.rows[0].role;
-      if (r === 'Owner' || r === 'Admin') allowed = true;
-    }
+    const requesterProjectRole = pmRes.rows[0]?.role;
+    const isRequesterProjectOwner = requesterProjectRole === 'Owner';
+    const isRequesterProjectAdmin = requesterProjectRole === 'Owner' || requesterProjectRole === 'Admin';
 
-    if (!allowed) {
-      const wmRes = await pool.query('SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [workspaceId, req.userId]);
-      if (wmRes.rows.length > 0) {
-        const wr = wmRes.rows[0].role;
-        if (['Owner','Admin','ProjectAdmin'].includes(wr)) allowed = true;
-      }
-    }
+    const wmRes = await pool.query('SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [workspaceId, req.userId]);
+    const requesterWorkspaceRole = wmRes.rows[0]?.role;
+    const hasWorkspaceAccess = ['Owner','Admin','ProjectAdmin'].includes(requesterWorkspaceRole);
+    const isRequesterWorkspaceOwner = requesterWorkspaceRole === 'Owner';
 
+    const allowed = isRequesterProjectAdmin || hasWorkspaceAccess;
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions to update project member' });
+
+    const targetRes = await pool.query('SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, userId]);
+    if (targetRes.rows.length === 0) return res.status(404).json({ error: 'Project member not found' });
+    const targetRole = targetRes.rows[0].role;
+
+    const canManageOwner = isRequesterProjectOwner || isRequesterWorkspaceOwner;
+    if ((targetRole === 'Owner' || role === 'Owner') && !canManageOwner) {
+      return res.status(403).json({ error: 'Only project owners can modify owner access' });
+    }
 
     await pool.query('UPDATE project_members SET role = $1 WHERE project_id = $2 AND user_id = $3', [role, projectId, userId]);
     res.json({ message: 'Project member updated' });
@@ -242,21 +293,26 @@ router.delete('/:projectId/members/:userId', async (req, res) => {
     const workspaceId = projRes.rows[0].workspace_id;
 
     const pmRes = await pool.query('SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, req.userId]);
-    let allowed = false;
-    if (pmRes.rows.length > 0) {
-      const r = pmRes.rows[0].role;
-      if (r === 'Owner' || r === 'Admin') allowed = true;
-    }
+    const requesterProjectRole = pmRes.rows[0]?.role;
+    const isRequesterProjectOwner = requesterProjectRole === 'Owner';
+    const isRequesterProjectAdmin = requesterProjectRole === 'Owner' || requesterProjectRole === 'Admin';
 
-    if (!allowed) {
-      const wmRes = await pool.query('SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [workspaceId, req.userId]);
-      if (wmRes.rows.length > 0) {
-        const wr = wmRes.rows[0].role;
-        if (['Owner','Admin','ProjectAdmin'].includes(wr)) allowed = true;
-      }
-    }
+    const wmRes = await pool.query('SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [workspaceId, req.userId]);
+    const requesterWorkspaceRole = wmRes.rows[0]?.role;
+    const hasWorkspaceAccess = ['Owner','Admin','ProjectAdmin'].includes(requesterWorkspaceRole);
+    const isRequesterWorkspaceOwner = requesterWorkspaceRole === 'Owner';
 
+    const allowed = isRequesterProjectAdmin || hasWorkspaceAccess;
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions to remove project member' });
+
+    const targetRes = await pool.query('SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, userId]);
+    if (targetRes.rows.length === 0) return res.status(404).json({ error: 'Project member not found' });
+    const targetRole = targetRes.rows[0].role;
+
+    const canManageOwner = isRequesterProjectOwner || isRequesterWorkspaceOwner;
+    if (targetRole === 'Owner' && !canManageOwner) {
+      return res.status(403).json({ error: 'Only project owners can modify owner access' });
+    }
 
     await pool.query('DELETE FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, userId]);
     res.json({ message: 'Project member removed' });

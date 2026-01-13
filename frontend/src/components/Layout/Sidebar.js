@@ -27,6 +27,7 @@ const DRAWER_WIDTH = 260;
 
 function Sidebar({ currentPage, onNavigate, onLogout, user, workspace }) {
   const [pendingCount, setPendingCount] = useState(0);
+  const canViewTeam = workspace?.role === 'Owner' || workspace?.role === 'Admin';
 
   useEffect(() => {
     const fetchPendingCount = async () => {
@@ -50,7 +51,7 @@ function Sidebar({ currentPage, onNavigate, onLogout, user, workspace }) {
     { id: 'projects', label: 'Projects', icon: <FolderIcon /> },
     { id: 'tasks', label: 'Tasks', icon: <AssignmentIcon /> },
     { id: 'recurring', label: 'Recurring', icon: <RepeatIcon /> },
-    { id: 'team', label: 'Team', icon: <GroupIcon /> },
+    ...(canViewTeam ? [{ id: 'team', label: 'Team', icon: <GroupIcon /> }] : []),
     { id: 'approvals', label: 'Approvals', icon: <CheckCircleIcon />, badge: pendingCount },
   ];
 

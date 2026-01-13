@@ -65,7 +65,6 @@ import TasksTableView from './TasksTableView';
 import TasksCalendarView from './TasksCalendarView';
 import TasksBoardView from './TasksBoardView';
 import TaskFormWithProjectSelect from './TaskFormWithProjectSelect';
-import TaskDetail from '../Tasks/TaskDetail';
 
 import {
   getWorkspaceTasks,
@@ -159,7 +158,6 @@ function TasksPage({ workspace, user }) {
   const [selectedTasks, setSelectedTasks] = useState([]);
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
-  const [viewingTask, setViewingTask] = useState(null);
   const [selectedProject, setSelectedProject] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   
@@ -407,7 +405,8 @@ function TasksPage({ workspace, user }) {
 
   // Task actions
   const handleTaskClick = (task) => {
-    setViewingTask(task);
+    setEditingTask(task);
+    setShowTaskForm(true);
   };
 
   const handleTaskEdit = (task) => {
@@ -418,11 +417,6 @@ function TasksPage({ workspace, user }) {
   const handleTaskCreated = () => {
     setShowTaskForm(false);
     setEditingTask(null);
-    fetchTasks();
-  };
-
-  const handleTaskUpdated = () => {
-    setViewingTask(null);
     fetchTasks();
   };
 
@@ -1043,26 +1037,6 @@ function TasksPage({ workspace, user }) {
           selectedProject={selectedProject}
           onProjectSelect={setSelectedProject}
         />
-      )}
-
-      {/* Task Detail Dialog */}
-      {viewingTask && (
-        <Dialog
-          open={Boolean(viewingTask)}
-          onClose={() => setViewingTask(null)}
-          maxWidth="md"
-          fullWidth
-        >
-          <Box sx={{ p: 2 }}>
-            <TaskDetail
-              task={viewingTask}
-              onBack={() => {
-                setViewingTask(null);
-                fetchTasks();
-              }}
-            />
-          </Box>
-        </Dialog>
       )}
 
       {/* Snackbar */}

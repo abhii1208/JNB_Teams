@@ -147,6 +147,10 @@ router.put('/:workspaceId/members/:userId', checkWorkspaceMember, async (req, re
   if (!role) return res.status(400).json({ error: 'Role is required' });
 
   try {
+    if (role === 'Owner' && req.workspaceRole !== 'Owner') {
+      return res.status(403).json({ error: 'Only Owner can assign Owner role' });
+    }
+
     // Prevent changing the owner by non-owner
     const targetRes = await pool.query('SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [req.params.workspaceId, userId]);
     if (targetRes.rows.length === 0) return res.status(404).json({ error: 'Member not found' });

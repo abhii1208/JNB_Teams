@@ -68,7 +68,7 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import CloseIcon from '@mui/icons-material/Close';
 import TaskForm from '../Tasks/TaskForm';
-import { getTasks, createTask, updateTask, deleteTask, getProjectMembers, getWorkspaceMembers, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator } from '../../apiClient';
+import { getTasks, createTask, updateTask, deleteTask, updateProject, getProjectMembers, getWorkspaceMembers, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator } from '../../apiClient';
 import { formatShortDate } from '../../utils/date';
 
 // member list is loaded from API
@@ -250,6 +250,45 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     showSettingsToAdmin: true,
     freezeColumns: [],
   });
+  const [settingsSaving, setSettingsSaving] = useState(false);
+
+  const normalizeProjectSettings = (source) => {
+    if (!source) return null;
+    const onlyOwnerApproves = source.only_owner_approves ?? false;
+    const adminsCanApprove = onlyOwnerApproves ? false : (source.admins_can_approve ?? true);
+    let freezeColumns = [];
+    if (Array.isArray(source.freeze_columns)) {
+      freezeColumns = source.freeze_columns;
+    } else if (typeof source.freeze_columns === 'string') {
+      try {
+        const parsed = JSON.parse(source.freeze_columns);
+        if (Array.isArray(parsed)) freezeColumns = parsed;
+      } catch (err) {
+        // Ignore malformed data and keep defaults.
+      }
+    }
+
+    return {
+      membersCanCreateTasks: source.members_can_create_tasks ?? true,
+      membersCanCloseTasks: source.members_can_close_tasks ?? true,
+      adminsCanApprove,
+      onlyOwnerApproves,
+      requireRejectionReason: source.require_rejection_reason ?? true,
+      autoCloseAfterDays: Number.isFinite(source.auto_close_after_days) ? source.auto_close_after_days : 0,
+      memberTaskApproval: source.member_task_approval ?? false,
+      adminTaskApproval: source.admin_task_approval ?? true,
+      showSettingsToAdmin: source.show_settings_to_admin ?? true,
+      freezeColumns,
+    };
+  };
+
+  useEffect(() => {
+    if (!project?.id) return;
+    const normalized = normalizeProjectSettings(project);
+    if (normalized) {
+      setProjectSettings(normalized);
+    }
+  }, [project?.id]);
 
   // Fetch project members
   useEffect(() => {
@@ -270,6 +309,8 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   // Determine current user's role in this project
   const currentUserMember = members.find(m => m.id === user?.id || m.user_id === user?.id);
   const userRole = currentUserMember?.role || 'member';
+  const isProjectOwner = project?.role === 'Owner';
+  const canManageMembers = isProjectOwner || project?.role === 'Admin';
 
   // Fetch workspace members for Add Member dialog
   useEffect(() => {
@@ -291,6 +332,38 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
 
   const showToast = (severity, message) => {
     setToast({ open: true, severity, message });
+  };
+
+  const handleSaveSettings = async () => {
+    if (!project?.id || settingsSaving) return;
+    setSettingsSaving(true);
+    try {
+      const payload = {
+        members_can_create_tasks: projectSettings.membersCanCreateTasks,
+        members_can_close_tasks: projectSettings.membersCanCloseTasks,
+        admins_can_approve: projectSettings.onlyOwnerApproves ? false : projectSettings.adminsCanApprove,
+        only_owner_approves: projectSettings.onlyOwnerApproves,
+        require_rejection_reason: projectSettings.requireRejectionReason,
+        auto_close_after_days: Number.isFinite(projectSettings.autoCloseAfterDays)
+          ? projectSettings.autoCloseAfterDays
+          : 0,
+        member_task_approval: projectSettings.memberTaskApproval,
+        admin_task_approval: projectSettings.adminTaskApproval,
+        show_settings_to_admin: projectSettings.showSettingsToAdmin,
+        freeze_columns: projectSettings.freezeColumns || [],
+      };
+      const response = await updateProject(project.id, payload);
+      if (response?.data) {
+        const normalized = normalizeProjectSettings(response.data);
+        if (normalized) setProjectSettings(normalized);
+      }
+      showToast('success', 'Settings saved');
+    } catch (err) {
+      console.error('Failed to save project settings:', err);
+      showToast('error', 'Failed to save settings. Please try again.');
+    } finally {
+      setSettingsSaving(false);
+    }
   };
 
   // Handle column sorting
@@ -1476,10 +1549,10 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                               </Box>
                             </TableCell>
                             <TableCell 
-                              sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}
+                              sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
                               onClick={() => handleSort('due_date')}
                             >
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
                                 Due Date
                                 {sortColumn === 'due_date' && (
                                   sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
@@ -1487,10 +1560,10 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                               </Box>
                             </TableCell>
                             <TableCell 
-                              sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}
+                              sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
                               onClick={() => handleSort('target_date')}
                             >
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
                                 Target Date
                                 {sortColumn === 'target_date' && (
                                   sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
@@ -1498,10 +1571,10 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                               </Box>
                             </TableCell>
                             <TableCell 
-                              sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}
+                              sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
                               onClick={() => handleSort('created_by_name')}
                             >
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
                                 Created By
                                 {sortColumn === 'created_by_name' && (
                                   sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
@@ -1509,10 +1582,10 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                               </Box>
                             </TableCell>
                             <TableCell 
-                              sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}
+                              sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
                               onClick={() => handleSort('created_at')}
                             >
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
                                 Created Date
                                 {sortColumn === 'created_at' && (
                                   sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
@@ -1566,10 +1639,10 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                   {task.name}
                                 </Typography>
                               </TableCell>
-                              <TableCell sx={getFrozenColumnStyle('Assignee', 1)}>
+                              <TableCell sx={{ ...getFrozenColumnStyle('Assignee', 1), whiteSpace: 'nowrap' }}>
                                 {task.assignee_name || task.assignee_username ? (
                                   <Tooltip title={task.assignee_name || task.assignee_username} arrow placement="top">
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer' }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer', minWidth: 0, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
                                       <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem', bgcolor: projectTheme.primary }}>
                                         {(() => {
                                           const name = task.assignee_name || task.assignee_username || '';
@@ -1578,11 +1651,11 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                           return (parts[0][0] || '') + (parts[1]?.[0] || '');
                                         })()}
                                       </Avatar>
-                                      <Typography variant="body2" sx={{ fontSize: '0.875rem' }}>{task.assignee_name || task.assignee_username}</Typography>
+                                      <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem' }}>{task.assignee_name || task.assignee_username}</Typography>
                                     </Box>
                                   </Tooltip>
                                 ) : (
-                                  <Typography variant="body2" sx={{ fontSize: '0.875rem' }} color="text.secondary">-</Typography>
+                                  <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem' }} color="text.secondary">-</Typography>
                                 )}
                               </TableCell>
                               <TableCell>
@@ -1645,13 +1718,13 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                   }}
                                 />
                               </TableCell>
-                              <TableCell>
-                                <Typography variant="body2" sx={{ fontSize: '0.875rem' }} color="text.secondary">
+                              <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                                <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem' }} color="text.secondary">
                                   {task.due_date ? formatShortDate(task.due_date) : '-'}
                                 </Typography>
                               </TableCell>
-                              <TableCell>
-                                <Typography variant="body2" sx={{ fontSize: '0.875rem' }} color="text.secondary">
+                              <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                                <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem' }} color="text.secondary">
                                   {task.target_date ? formatShortDate(task.target_date) : '-'}
                                 </Typography>
                               </TableCell>
@@ -1660,19 +1733,17 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                   {task.created_by_name || '-'}
                                 </Typography>
                               </TableCell>
-                              <TableCell>
-                                <Typography variant="body2" sx={{ fontSize: '0.875rem' }} color="text.secondary">
+                              <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                                <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem' }} color="text.secondary">
                                   {task.created_at ? formatShortDate(task.created_at) : '-'}
                                 </Typography>
                               </TableCell>
-                              <TableCell sx={{ maxWidth: 200 }}>
+                              <TableCell sx={{ maxWidth: 200, whiteSpace: 'nowrap' }}>
                                 <Typography 
                                   variant="caption" 
                                   color="text.secondary"
+                                  noWrap
                                   sx={{
-                                    display: '-webkit-box',
-                                    WebkitLineClamp: 2,
-                                    WebkitBoxOrient: 'vertical',
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
                                   }}
@@ -2570,7 +2641,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
               <Box>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                 <Typography variant="h6">Project Members ({members.length})</Typography>
-                  {(project.role === 'Owner' || project.role === 'Admin') && (
+                {canManageMembers && (
                   <Button
                     variant="contained"
                     size="small"
@@ -2588,6 +2659,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                   const name = (member.first_name || '') + (member.last_name ? ' ' + member.last_name : '');
                   const initials = (member.first_name ? member.first_name.charAt(0) : '') + (member.last_name ? member.last_name.charAt(0) : '');
                   const role = member.role || 'Member';
+                  const canManageMember = canManageMembers && (isProjectOwner || role !== 'Owner');
                   return (
                   <ListItem
                     key={member.id}
@@ -2617,15 +2689,16 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                         color: roleColors[role]?.text,
                         fontWeight: 500,
                         fontSize: '0.75rem',
+                        mr: 1,
                       }}
                     />
-                    {(project.role === 'Owner' || project.role === 'Admin') && (
-                      <Box>
+                    <Box sx={{ width: 32, display: 'flex', justifyContent: 'flex-end' }}>
+                      {canManageMember && (
                         <IconButton size="small" onClick={(e) => { setMemberActionAnchor(e.currentTarget); setMemberActionTarget(member); }}>
                           <MoreVertIcon />
                         </IconButton>
-                      </Box>
-                    )}
+                      )}
+                    </Box>
                   </ListItem>
                   );
                 })}
@@ -2919,8 +2992,13 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                 sx={{ mb: 3 }}
               />
 
-              <Button variant="contained" sx={{ textTransform: 'none', px: 4 }}>
-                Save Settings
+              <Button
+                variant="contained"
+                sx={{ textTransform: 'none', px: 4 }}
+                onClick={handleSaveSettings}
+                disabled={settingsSaving}
+              >
+                {settingsSaving ? 'Saving...' : 'Save Settings'}
               </Button>
             </Box>
           </Fade>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -8,15 +8,14 @@ import {
   TextField,
   Box,
   FormControl,
-  InputLabel,
   Select,
   MenuItem,
   Typography,
   IconButton,
   Grid,
-  Paper,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+
 import FolderIcon from '@mui/icons-material/Folder';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import CodeIcon from '@mui/icons-material/Code';
@@ -82,6 +81,30 @@ const projectColors = [
   { value: '#16a34a', label: 'Green' },
 ];
 
+// --- helpers ---
+function getCreatedDateValue(p) {
+  if (!p) return null;
+  return (
+    p.createdDate ??
+    p.created_at ??
+    p.createdAt ??
+    p.created_on ??
+    p.createdOn ??
+    null
+  );
+}
+
+function formatDateSafe(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(d);
+}
+
 function ProjectForm({ open, onClose, onSave, project, workspace }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -91,13 +114,11 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
 
   useEffect(() => {
     if (project) {
-      // Editing existing project
-      setName(project.name || '');
-      setDescription(project.description || '');
-      setIcon(project.icon || 'folder');
-      setColor(project.color || '#0f766e');
+      setName(project.name ?? project.project_name ?? '');
+      setDescription(project.description ?? project.project_description ?? '');
+      setIcon(project.icon ?? project.project_icon ?? 'folder');
+      setColor(project.color ?? project.project_color ?? '#0f766e');
     } else {
-      // Creating new project
       setName('');
       setDescription('');
       setIcon('folder');
@@ -105,26 +126,38 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
     }
   }, [project, open]);
 
+  const createdOnLabel = useMemo(() => {
+    const raw = getCreatedDateValue(project);
+    const formatted = formatDateSafe(raw);
+    return formatted ? `Created on ${formatted}` : 'Created on —';
+  }, [project]);
+
   const handleSubmit = () => {
+    const created = getCreatedDateValue(project) || new Date().toISOString();
+
     const projectData = {
       id: project?.id || Date.now(),
-      name,
+      name: name.trim(),
       description,
       icon,
       color,
       workspace: workspace?.name || 'Current Workspace',
-      createdDate: project?.createdDate || new Date().toISOString(),
+      createdDate: created, // keep this for your app usage
       status: project?.status || 'Active',
       members: project?.members || [],
       tasks: project?.tasks || [],
+      // keep original backend field if it exists (no harm)
+      ...(project?.created_at ? { created_at: project.created_at } : {}),
     };
+
     onSave(projectData);
     onClose();
   };
 
-  const handleClose = () => {
-    onClose();
-  };
+  const handleClose = () => onClose();
+
+  const selectedIcon = projectIcons.find((i) => i.value === icon);
+  const selectedColor = projectColors.find((c) => c.value === color);
 
   return (
     <Dialog
@@ -132,11 +165,7 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
       onClose={handleClose}
       maxWidth="md"
       fullWidth
-      PaperProps={{
-        sx: {
-          borderRadius: 3,
-        },
-      }}
+      PaperProps={{ sx: { borderRadius: 3 } }}
     >
       <DialogTitle sx={{ p: 3, pb: 2 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -149,45 +178,50 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
         </Box>
       </DialogTitle>
 
-      <DialogContent sx={{ p: 3, pt: 4 }}>
+      <DialogContent sx={{ p: 3, pt: 2.5 }}>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {/* Project Name */}
-          <TextField
-            fullWidth
-            label="Project Name *"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Enter project name"
-            InputLabelProps={{ shrink: true }}
-            sx={{
-              '& .MuiOutlinedInput-root': {
-                borderRadius: 2,
-              },
-            }}
-          />
+          {/* Project Name (fixed label clipping by using external label) */}
+          <Box>
+            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+              Project Name <Box component="span" sx={{ color: 'error.main' }}>*</Box>
+            </Typography>
+            <TextField
+              fullWidth
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Enter project name"
+              autoFocus
+              sx={{
+                '& .MuiOutlinedInput-root': { borderRadius: 2 },
+              }}
+            />
+          </Box>
 
           {/* Description */}
-          <TextField
-            fullWidth
-            label="Description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="What's this project about?"
-            multiline
-            rows={3}
-            sx={{
-              '& .MuiOutlinedInput-root': {
-                borderRadius: 2,
-              },
-            }}
-          />
+          <Box>
+            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+              Description
+            </Typography>
+            <TextField
+              fullWidth
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What's this project about?"
+              multiline
+              rows={3}
+              sx={{
+                '& .MuiOutlinedInput-root': { borderRadius: 2 },
+              }}
+            />
+          </Box>
 
-          {/* Icon and Color Selection */}
-          <Grid container spacing={2}>
+          {/* Icon + Color (aligned) */}
+          <Grid container spacing={2} alignItems="flex-end">
             <Grid item xs={12} md={6}>
               <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
                 Project Icon
               </Typography>
+
               <Button
                 fullWidth
                 variant="outlined"
@@ -197,41 +231,72 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
                   p: 1.5,
                   borderRadius: 2,
                   textTransform: 'none',
+                  height: 52,
                 }}
               >
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                  <Box sx={{ fontSize: '1.5rem', display: 'flex', alignItems: 'center' }}>
-                    {projectIcons.find(i => i.value === icon)?.icon}
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    {selectedIcon?.icon}
                   </Box>
-                  <Typography>
-                    {projectIcons.find(i => i.value === icon)?.label || 'Select Icon'}
+                  <Typography sx={{ fontWeight: 500 }}>
+                    {selectedIcon?.label || 'Select Icon'}
                   </Typography>
                 </Box>
               </Button>
             </Grid>
 
             <Grid item xs={12} md={6}>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                Project Color
+              </Typography>
+
               <FormControl fullWidth>
-                <InputLabel>Project Color</InputLabel>
                 <Select
                   value={color}
                   onChange={(e) => setColor(e.target.value)}
-                  label="Project Color"
-                  sx={{ borderRadius: 2 }}
-                >
-                  {projectColors.map((colorOption) => (
-                    <MenuItem key={colorOption.value} value={colorOption.value}>
+                  displayEmpty
+                  sx={{
+                    borderRadius: 2,
+                    height: 52,
+                    '& .MuiSelect-select': {
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1,
+                    },
+                  }}
+                  renderValue={(selected) => {
+                    const opt = projectColors.find((c) => c.value === selected);
+                    return (
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <Box
                           sx={{
-                            width: 20,
-                            height: 20,
+                            width: 18,
+                            height: 18,
                             borderRadius: 1,
-                            backgroundColor: colorOption.value,
-                            border: '1px solid rgba(148, 163, 184, 0.2)',
+                            backgroundColor: selected,
+                            border: '1px solid rgba(148, 163, 184, 0.25)',
                           }}
                         />
-                        <Typography>{colorOption.label}</Typography>
+                        <Typography sx={{ fontWeight: 500 }}>
+                          {opt?.label || 'Select color'}
+                        </Typography>
+                      </Box>
+                    );
+                  }}
+                >
+                  {projectColors.map((c) => (
+                    <MenuItem key={c.value} value={c.value}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Box
+                          sx={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: 1,
+                            backgroundColor: c.value,
+                            border: '1px solid rgba(148, 163, 184, 0.25)',
+                          }}
+                        />
+                        <Typography>{c.label}</Typography>
                       </Box>
                     </MenuItem>
                   ))}
@@ -252,6 +317,7 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
             <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
               Preview
             </Typography>
+
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <Box
                 sx={{
@@ -263,10 +329,12 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
                   alignItems: 'center',
                   justifyContent: 'center',
                   color: '#fff',
+                  '& .MuiSvgIcon-root': { color: '#fff' },
                 }}
               >
-                {projectIcons.find((i) => i.value === icon)?.icon}
+                {selectedIcon?.icon}
               </Box>
+
               <Box>
                 <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                   {name || 'Project Name'}
@@ -278,6 +346,7 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
             </Box>
           </Box>
 
+          {/* Created date (safe) */}
           {project && (
             <Box
               sx={{
@@ -288,7 +357,7 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
               }}
             >
               <Typography variant="caption" color="text.secondary">
-                Created on {new Date(project.createdDate).toLocaleDateString()}
+                {createdOnLabel}
               </Typography>
             </Box>
           )}
@@ -298,23 +367,16 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
       <DialogActions sx={{ p: 3, pt: 2 }}>
         <Button
           onClick={handleClose}
-          sx={{
-            textTransform: 'none',
-            borderRadius: 2,
-            px: 3,
-          }}
+          sx={{ textTransform: 'none', borderRadius: 2, px: 3 }}
         >
           Cancel
         </Button>
+
         <Button
           onClick={handleSubmit}
           variant="contained"
           disabled={!name.trim()}
-          sx={{
-            textTransform: 'none',
-            borderRadius: 2,
-            px: 3,
-          }}
+          sx={{ textTransform: 'none', borderRadius: 2, px: 3 }}
         >
           {project ? 'Save Changes' : 'Create Project'}
         </Button>
@@ -326,22 +388,26 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
         onClose={() => setIconPickerOpen(false)}
         maxWidth="sm"
         fullWidth
+        PaperProps={{ sx: { borderRadius: 3 } }}
       >
         <DialogTitle>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="h6" sx={{ fontWeight: 600 }}>Select Project Icon</Typography>
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+              Select Project Icon
+            </Typography>
             <IconButton onClick={() => setIconPickerOpen(false)} size="small">
               <CloseIcon />
             </IconButton>
           </Box>
         </DialogTitle>
+
         <DialogContent>
           <Grid container spacing={1.5}>
-            {projectIcons.map((iconOption) => (
-              <Grid item xs={2.4} key={iconOption.value}>
+            {projectIcons.map((opt) => (
+              <Grid item xs={3} sm={2.4} key={opt.value}>
                 <Box
                   onClick={() => {
-                    setIcon(iconOption.value);
+                    setIcon(opt.value);
                     setIconPickerOpen(false);
                   }}
                   sx={{
@@ -352,37 +418,40 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
                     p: 1.5,
                     borderRadius: 2,
                     cursor: 'pointer',
-                    border: icon === iconOption.value ? '2px solid #0f766e' : '2px solid transparent',
-                    backgroundColor: icon === iconOption.value ? 'rgba(15, 118, 110, 0.1)' : 'transparent',
+                    border: icon === opt.value ? '2px solid #0f766e' : '2px solid transparent',
+                    backgroundColor: icon === opt.value ? 'rgba(15, 118, 110, 0.1)' : 'transparent',
                     transition: 'all 0.2s',
                     '&:hover': {
-                      backgroundColor: icon === iconOption.value ? 'rgba(15, 118, 110, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+                      backgroundColor:
+                        icon === opt.value
+                          ? 'rgba(15, 118, 110, 0.15)'
+                          : 'rgba(148, 163, 184, 0.1)',
                       transform: 'scale(1.05)',
                     },
                   }}
                 >
-                  <Box sx={{ 
-                    color: icon === iconOption.value ? '#0f766e' : 'text.secondary', 
-                    mb: 0.5,
-                    fontSize: '1.2rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    '& .MuiSvgIcon-root': {
-                      fontSize: '1.2rem'
-                    }
-                  }}>
-                    {iconOption.icon}
-                  </Box>
-                  <Typography 
-                    variant="caption" 
-                    sx={{ 
-                      fontSize: '0.65rem',
-                      textAlign: 'center',
-                      color: icon === iconOption.value ? '#0f766e' : 'text.secondary',
-                      fontWeight: icon === iconOption.value ? 600 : 400,
+                  <Box
+                    sx={{
+                      color: icon === opt.value ? '#0f766e' : 'text.secondary',
+                      mb: 0.5,
+                      display: 'flex',
+                      alignItems: 'center',
+                      '& .MuiSvgIcon-root': { fontSize: '1.2rem' },
                     }}
                   >
-                    {iconOption.label}
+                    {opt.icon}
+                  </Box>
+
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      fontSize: '0.65rem',
+                      textAlign: 'center',
+                      color: icon === opt.value ? '#0f766e' : 'text.secondary',
+                      fontWeight: icon === opt.value ? 600 : 400,
+                    }}
+                  >
+                    {opt.label}
                   </Typography>
                 </Box>
               </Grid>

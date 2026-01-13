@@ -4,8 +4,11 @@ const { pool } = require('../db');
 
 // Get approvals (filter by status, workspace, or all)
 router.get('/', async (req, res) => {
-  const { status, workspace_id } = req.query;
-  
+  const { status, workspace_id, task_id } = req.query;
+
+  const reviewableClause = `(p.created_by = $1 OR ((pm.role = 'Admin' OR pm.role = 'Owner') AND COALESCE(p.only_owner_approves, false) = false AND COALESCE(p.admins_can_approve, true) = true))`;
+  const visibilityClause = `(a.requester_id = $1 OR ${reviewableClause})`;
+
   try {
     let query = `
       SELECT a.*,
@@ -13,29 +16,44 @@ router.get('/', async (req, res) => {
         u.username as requester_username,
         reviewer.first_name || ' ' || reviewer.last_name as reviewer_name,
         p.name as project_name,
-        t.name as task_name
+        t.name as task_name,
+        p.created_by AS project_owner,
+        p.admins_can_approve,
+        p.only_owner_approves,
+        pm.role as user_project_role,
+        CASE
+          WHEN p.created_by = $1 THEN true
+          WHEN (pm.role = 'Admin' OR pm.role = 'Owner') AND COALESCE(p.only_owner_approves, false) = false AND COALESCE(p.admins_can_approve, true) = true THEN true
+          ELSE false
+        END as can_review
       FROM approvals a
       JOIN users u ON a.requester_id = u.id
       LEFT JOIN users reviewer ON a.reviewed_by = reviewer.id
       LEFT JOIN projects p ON a.project_id = p.id
       LEFT JOIN tasks t ON a.task_id = t.id
-      WHERE 1=1
+      LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $1
+      WHERE ${visibilityClause}
     `;
-    
-    const params = [];
-    
+
+    const params = [req.userId];
+
     if (status) {
       params.push(status);
       query += ` AND a.status = $${params.length}`;
     }
-    
+
     if (workspace_id) {
       params.push(workspace_id);
       query += ` AND p.workspace_id = $${params.length}`;
     }
-    
+
+    if (task_id) {
+      params.push(task_id);
+      query += ` AND a.task_id = $${params.length}`;
+    }
+
     query += ' ORDER BY a.created_at DESC';
-    
+
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
@@ -47,21 +65,25 @@ router.get('/', async (req, res) => {
 // Get pending approval count
 router.get('/count', async (req, res) => {
   const { workspace_id } = req.query;
-  
+
+  const reviewableClause = `(p.created_by = $1 OR ((pm.role = 'Admin' OR pm.role = 'Owner') AND COALESCE(p.only_owner_approves, false) = false AND COALESCE(p.admins_can_approve, true) = true))`;
+
   try {
     let query = `
       SELECT COUNT(*) as count
       FROM approvals a
       LEFT JOIN projects p ON a.project_id = p.id
+      LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $1
       WHERE a.status = 'Pending'
+        AND ${reviewableClause}
     `;
-    
-    const params = [];
+
+    const params = [req.userId];
     if (workspace_id) {
       params.push(workspace_id);
       query += ` AND p.workspace_id = $${params.length}`;
     }
-    
+
     const result = await pool.query(query, params);
     res.json({ count: parseInt(result.rows[0].count) });
   } catch (err) {
