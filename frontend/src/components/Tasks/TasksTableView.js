@@ -37,10 +37,15 @@ const getPriorityColor = (priority) => {
 const getStatusColor = (status) => {
   switch (status) {
     case 'Open': return { bg: '#eff6ff', color: '#2563eb' };
-    case 'In Progress': return { bg: '#fef3c7', color: '#d97706' };
+    case 'In Progress':
+    case 'In-process': return { bg: '#fef3c7', color: '#d97706' };
     case 'Under Review': return { bg: '#f3e8ff', color: '#9333ea' };
+    case 'Pending Approval': return { bg: '#fee2e2', color: '#991b1b' };
+    case 'Rejected': return { bg: '#fee2e2', color: '#991b1b' };
+    case 'Blocked': return { bg: '#fef3c7', color: '#92400e' };
     case 'Completed': return { bg: '#dcfce7', color: '#16a34a' };
     case 'Closed': return { bg: '#f1f5f9', color: '#64748b' };
+    case 'Not started': return { bg: '#e2e8f0', color: '#475569' };
     default: return { bg: '#f8fafc', color: '#64748b' };
   }
 };
@@ -84,6 +89,15 @@ const NOWRAP_SX = {
   hyphens: 'none',
 };
 
+const CHECKBOX_CELL_SX = {
+  width: 96,
+  minWidth: 96,
+  maxWidth: 96,
+  px: 2,
+  boxSizing: 'border-box',
+  overflow: 'visible',
+};
+
 // ✅ Table-level "hard lock" to prevent wrapping even if theme overrides
 const TABLE_NOWRAP_SX = {
   minWidth: 1800,
@@ -106,10 +120,10 @@ const TABLE_NOWRAP_SX = {
 };
 
 const COLUMNS = [
-  { id: 'name', label: 'Task', width: '20%', sortable: true },
+  { id: 'name', label: 'Task', width: '14%', sortable: true },
   { id: 'project_name', label: 'Project', width: '12%', sortable: true },
-  { id: 'stage', label: 'Stage', width: '8%', sortable: true },
-  { id: 'status', label: 'Status', width: '9%', sortable: true },
+  { id: 'stage', label: 'Stage', width: '9.2%', sortable: true },
+  { id: 'status', label: 'Status', width: '10.35%', sortable: true },
   { id: 'priority', label: 'Priority', width: '9%', sortable: true },
   { id: 'assignee_name', label: 'Assignee', width: '12%', sortable: true },
   { id: 'collaborators', label: 'Collaborators', width: '10%', sortable: false },
@@ -207,8 +221,10 @@ function TasksTableView({
         onClick={() => onTaskClick(task)}
         sx={{ cursor: 'pointer', '&:hover': { bgcolor: '#f8fafc' } }}
       >
-        <TableCell padding="checkbox" onClick={(e) => e.stopPropagation()} sx={NOWRAP_SX}>
-          <Checkbox checked={selected} onChange={() => handleSelectTask(task.id)} size="small" />
+        <TableCell padding="none" onClick={(e) => e.stopPropagation()} sx={{ ...NOWRAP_SX, ...CHECKBOX_CELL_SX }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Checkbox checked={selected} onChange={() => handleSelectTask(task.id)} size="small" sx={{ p: 0.5, m: 0 }} />
+          </Box>
         </TableCell>
 
         {/* Task */}
@@ -438,13 +454,16 @@ function TasksTableView({
         <Table stickyHeader size="small" sx={TABLE_NOWRAP_SX}>
           <TableHead>
             <TableRow>
-              <TableCell padding="checkbox" sx={{ bgcolor: '#f8fafc', ...NOWRAP_SX }}>
-                <Checkbox
-                  indeterminate={selectedTasks.length > 0 && selectedTasks.length < tasks.length}
-                  checked={tasks.length > 0 && selectedTasks.length === tasks.length}
-                  onChange={handleSelectAll}
-                  size="small"
-                />
+              <TableCell padding="none" sx={{ bgcolor: '#f8fafc', ...NOWRAP_SX, ...CHECKBOX_CELL_SX }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Checkbox
+                    indeterminate={selectedTasks.length > 0 && selectedTasks.length < tasks.length}
+                    checked={tasks.length > 0 && selectedTasks.length === tasks.length}
+                    onChange={handleSelectAll}
+                    size="small"
+                    sx={{ p: 0.5, m: 0 }}
+                  />
+                </Box>
               </TableCell>
 
               {COLUMNS.map((col) => (

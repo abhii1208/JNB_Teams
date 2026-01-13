@@ -38,6 +38,10 @@ function TaskFormWithProjectSelect({
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [internalProject, setInternalProject] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const effectiveProjectRole = internalProject?.role
+    || projects.find((p) => String(p.id) === String(task?.project_id || selectedProject?.id))?.role
+    || user?.role
+    || 'Member';
 
   // When editing a task, find the project from the task data
   useEffect(() => {
@@ -117,7 +121,7 @@ function TaskFormWithProjectSelect({
         onSave={handleTaskSave}
         task={task}
         projectId={internalProject.id}
-        userRole={user?.role || 'Member'}
+        userRole={effectiveProjectRole}
         currentUserId={user?.id}
       />
     );

@@ -423,9 +423,9 @@ function TasksPage({ workspace, user }) {
   // Task context indicators
   const getTaskIndicators = (task) => {
     const indicators = [];
-    if (task.is_recurring) indicators.push({ type: 'recurring', icon: <RepeatIcon fontSize="small" />, label: 'Recurring' });
-    if (task.latest_approval_status === 'pending') indicators.push({ type: 'approval', icon: <CheckCircleIcon fontSize="small" />, label: 'Pending Approval' });
-    if (task.is_overdue) indicators.push({ type: 'overdue', icon: <WarningIcon fontSize="small" />, label: 'Overdue' });
+    if (task.is_recurring) indicators.push({ type: 'recurring', icon: <RepeatIcon fontSize="small" />, label: 'Recurring', color: '#7c3aed' });
+    if (task.latest_approval_status === 'pending') indicators.push({ type: 'approval', icon: <CheckCircleIcon fontSize="small" />, label: 'Pending Approval', color: '#2563eb' });
+    if (task.is_overdue) indicators.push({ type: 'overdue', icon: <WarningIcon fontSize="small" />, label: 'Overdue', color: '#dc2626' });
     return indicators;
   };
 
@@ -704,24 +704,33 @@ function TasksPage({ workspace, user }) {
       anchorEl={bulkActionAnchor}
       open={Boolean(bulkActionAnchor)}
       onClose={() => setBulkActionAnchor(null)}
+      PaperProps={{ sx: { width: 360, maxWidth: 'calc(100vw - 32px)' } }}
     >
       <MenuItem disabled>
         <Typography variant="caption">{selectedTasks.length} tasks selected</Typography>
       </MenuItem>
       <Divider />
-      <MenuItem onClick={() => setBulkActionAnchor(null)}>
-        <Typography variant="body2" sx={{ mr: 2 }}>Change Status</Typography>
-        <Box>
-          {STATUS_OPTIONS.map(s => (
-            <Chip key={s} label={s} size="small" sx={{ mr: 0.5, mb: 0.5 }} onClick={() => handleBulkUpdate({ status: s })} />
+      <MenuItem
+        disableRipple
+        disableTouchRipple
+        sx={{ alignItems: 'flex-start', flexDirection: 'column', gap: 1, px: 2, py: 1.5 }}
+      >
+        <Typography variant="body2">Change Status</Typography>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+          {STATUS_OPTIONS.map((s) => (
+            <Chip key={s} label={s} size="small" onClick={() => handleBulkUpdate({ status: s })} />
           ))}
         </Box>
       </MenuItem>
-      <MenuItem onClick={() => setBulkActionAnchor(null)}>
-        <Typography variant="body2" sx={{ mr: 2 }}>Change Priority</Typography>
-        <Box>
-          {PRIORITY_OPTIONS.map(p => (
-            <Chip key={p} label={p} size="small" sx={{ mr: 0.5, mb: 0.5 }} onClick={() => handleBulkUpdate({ priority: p })} />
+      <MenuItem
+        disableRipple
+        disableTouchRipple
+        sx={{ alignItems: 'flex-start', flexDirection: 'column', gap: 1, px: 2, py: 1.5 }}
+      >
+        <Typography variant="body2">Change Priority</Typography>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+          {PRIORITY_OPTIONS.map((p) => (
+            <Chip key={p} label={p} size="small" onClick={() => handleBulkUpdate({ priority: p })} />
           ))}
         </Box>
       </MenuItem>
