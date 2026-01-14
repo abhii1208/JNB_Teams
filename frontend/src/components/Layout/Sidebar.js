@@ -27,7 +27,9 @@ const DRAWER_WIDTH = 260;
 
 function Sidebar({ currentPage, onNavigate, onLogout, user, workspace }) {
   const [pendingCount, setPendingCount] = useState(0);
-  const canViewTeam = workspace?.role === 'Owner' || workspace?.role === 'Admin';
+  const isPersonalWorkspace = Boolean(workspace?.is_personal)
+    || (workspace?.name === 'Personal' && Number(workspace?.created_by) === Number(user?.id));
+  const canViewTeam = !isPersonalWorkspace && (workspace?.role === 'Owner' || workspace?.role === 'Admin');
 
   useEffect(() => {
     const fetchPendingCount = async () => {

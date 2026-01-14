@@ -26,7 +26,8 @@ router.get('/', async (req, res) => {
     const result = await pool.query(`
       SELECT w.*, wm.role,
         (SELECT COUNT(*) FROM workspace_members WHERE workspace_id = w.id) as members,
-        (SELECT COUNT(*) FROM projects WHERE workspace_id = w.id) as projects
+        (SELECT COUNT(*) FROM projects WHERE workspace_id = w.id) as projects,
+        CASE WHEN w.name = 'Personal' AND w.created_by = $1 THEN true ELSE false END as is_personal
       FROM workspaces w
       JOIN workspace_members wm ON w.id = wm.workspace_id
       WHERE wm.user_id = $1

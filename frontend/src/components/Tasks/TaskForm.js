@@ -101,6 +101,8 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
   // Check edit permission
   const normalizedRole = (userRole || '').toString().toLowerCase();
   const canEdit = canEditTask(task, normalizedRole, isAssignee);
+  const isAdminOrOwner = normalizedRole === 'admin' || normalizedRole === 'owner';
+  const canDelete = isEdit && onDelete && isAdminOrOwner;
 
   useEffect(() => {
     if (task) {
@@ -541,7 +543,7 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
         </DialogContent>
 
         <DialogActions sx={{ p: 2.5 }}>
-          {isEdit && onDelete && (
+          {canDelete && (
             <Button
               onClick={() => {
                 onDelete(task);

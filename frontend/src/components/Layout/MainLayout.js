@@ -92,6 +92,10 @@ function MainLayout({ userId, onLogout }) {
     }
   };
 
+  const isPersonalWorkspace = Boolean(currentWorkspace?.is_personal)
+    || (currentWorkspace?.name === 'Personal' && Number(currentWorkspace?.created_by) === Number(user?.id));
+  const canViewTeam = !isPersonalWorkspace && (currentWorkspace?.role === 'Owner' || currentWorkspace?.role === 'Admin');
+
   const renderContent = () => {
     switch (currentPage) {
       case 'dashboard':
@@ -139,12 +143,14 @@ function MainLayout({ userId, onLogout }) {
         );
       
       case 'team':
-        if (!currentWorkspace || (currentWorkspace.role !== 'Owner' && currentWorkspace.role !== 'Admin')) {
+        if (!currentWorkspace || !canViewTeam) {
           return (
             <Box sx={{ p: 6 }}>
               <Typography variant="h6">Access restricted</Typography>
               <Typography variant="body2" color="text.secondary">
-                The Team page is only available to workspace Owners and Admins.
+                {isPersonalWorkspace
+                  ? 'Team management is not available for personal workspaces.'
+                  : 'The Team page is only available to workspace Owners and Admins.'}
               </Typography>
             </Box>
           );

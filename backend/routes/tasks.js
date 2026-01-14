@@ -371,11 +371,27 @@ router.get('/workspace/:workspaceId/calendar', async (req, res) => {
 
 // Bulk update tasks
 router.put('/bulk', async (req, res) => {
-  const { task_ids, updates } = req.body;
+  const { task_ids, updates: rawUpdates } = req.body;
+  const updates = rawUpdates || {};
   
   if (!task_ids || !Array.isArray(task_ids) || task_ids.length === 0) {
     return res.status(400).json({ error: 'task_ids array is required' });
   }
+  if (typeof updates !== 'object') {
+    return res.status(400).json({ error: 'updates object is required' });
+  }
+
+  const normalizedUpdates = {
+    status: updates.status,
+    stage: updates.stage,
+    priority: updates.priority,
+    assignee_id: updates.assignee_id ?? updates.assigneeId,
+    due_date: updates.due_date ?? updates.dueDate,
+    target_date: updates.target_date ?? updates.targetDate,
+  };
+
+  if (normalizedUpdates.due_date === '') normalizedUpdates.due_date = null;
+  if (normalizedUpdates.target_date === '') normalizedUpdates.target_date = null;
 
   const client = await pool.connect();
   try {
@@ -394,7 +410,9 @@ router.put('/bulk', async (req, res) => {
       return res.status(403).json({ error: 'Access denied to one or more tasks' });
     }
 
-    const requestedStatus = typeof updates.status === 'string' ? updates.status.toLowerCase() : null;
+    const requestedStatus = typeof normalizedUpdates.status === 'string'
+      ? normalizedUpdates.status.toLowerCase()
+      : null;
     const isApprovalStatus = requestedStatus === 'closed' || requestedStatus === 'rejected';
     if (isApprovalStatus) {
       const permRes = await client.query(`
@@ -429,29 +447,34 @@ router.put('/bulk', async (req, res) => {
     const params = [task_ids];
     let paramIndex = 2;
 
-    if (updates.status !== undefined) {
+    if (normalizedUpdates.status !== undefined) {
       updateFields.push(`status = $${paramIndex}`);
-      params.push(updates.status);
+      params.push(normalizedUpdates.status);
       paramIndex++;
     }
-    if (updates.stage !== undefined) {
+    if (normalizedUpdates.stage !== undefined) {
       updateFields.push(`stage = $${paramIndex}`);
-      params.push(updates.stage);
+      params.push(normalizedUpdates.stage);
       paramIndex++;
     }
-    if (updates.priority !== undefined) {
+    if (normalizedUpdates.priority !== undefined) {
       updateFields.push(`priority = $${paramIndex}`);
-      params.push(updates.priority);
+      params.push(normalizedUpdates.priority);
       paramIndex++;
     }
-    if (updates.assignee_id !== undefined) {
+    if (normalizedUpdates.assignee_id !== undefined) {
       updateFields.push(`assignee_id = $${paramIndex}`);
-      params.push(updates.assignee_id);
+      params.push(normalizedUpdates.assignee_id);
       paramIndex++;
     }
-    if (updates.due_date !== undefined) {
+    if (normalizedUpdates.due_date !== undefined) {
       updateFields.push(`due_date = $${paramIndex}`);
-      params.push(updates.due_date);
+      params.push(normalizedUpdates.due_date);
+      paramIndex++;
+    }
+    if (normalizedUpdates.target_date !== undefined) {
+      updateFields.push(`target_date = $${paramIndex}`);
+      params.push(normalizedUpdates.target_date);
       paramIndex++;
     }
 
@@ -707,6 +730,29 @@ router.put('/:taskId', async (req, res) => {
 // Delete task (soft delete)
 router.delete('/:taskId', async (req, res) => {
   try {
+    const accessRes = await pool.query(
+      `SELECT t.id,
+        p.created_by AS project_owner,
+        pm.role as user_project_role
+       FROM tasks t
+       JOIN projects p ON t.project_id = p.id
+       LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
+       WHERE t.id = $1 AND t.deleted_at IS NULL`,
+      [req.params.taskId, req.userId]
+    );
+
+    if (accessRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Task not found or already deleted' });
+    }
+
+    const access = accessRes.rows[0];
+    const isProjectOwner = Number(access.project_owner) === Number(req.userId);
+    const isProjectAdmin = access.user_project_role === 'Admin' || access.user_project_role === 'Owner';
+
+    if (!isProjectOwner && !isProjectAdmin) {
+      return res.status(403).json({ error: 'Only project owners and admins can delete tasks' });
+    }
+
     const result = await pool.query(
       'UPDATE tasks SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND deleted_at IS NULL RETURNING *', 
       [req.params.taskId]

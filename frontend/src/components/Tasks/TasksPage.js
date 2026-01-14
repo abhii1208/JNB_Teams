@@ -69,8 +69,10 @@ import TaskFormWithProjectSelect from './TaskFormWithProjectSelect';
 import {
   getWorkspaceTasks,
   getWorkspaceProjects,
+  getWorkspaceMembers,
   getCalendarTasks,
   bulkUpdateTasks,
+  updateTask,
   getSavedViews,
   createSavedView,
   updateSavedView,
@@ -87,6 +89,7 @@ const VIEW_TYPES = [
 
 const STATUS_OPTIONS = ['Open', 'In Progress', 'Under Review', 'Completed', 'Closed'];
 const STAGE_OPTIONS = ['Not Started', 'Planning', 'In Development', 'Testing', 'Done'];
+const BULK_STAGE_OPTIONS = ['Planned', 'In-process', 'Completed', 'On-hold', 'Dropped'];
 const PRIORITY_OPTIONS = ['Critical', 'High', 'Medium', 'Low'];
 const GROUP_BY_OPTIONS = [
   { id: null, label: 'None' },
@@ -167,6 +170,10 @@ function TasksPage({ workspace, user }) {
   const [groupAnchor, setGroupAnchor] = useState(null);
   const [savedViewsAnchor, setSavedViewsAnchor] = useState(null);
   const [bulkActionAnchor, setBulkActionAnchor] = useState(null);
+  const [bulkDueDate, setBulkDueDate] = useState('');
+  const [bulkTargetDate, setBulkTargetDate] = useState('');
+  const [bulkAssigneeId, setBulkAssigneeId] = useState('');
+  const [workspaceMembers, setWorkspaceMembers] = useState([]);
   
   // Calendar state
   const [calendarDate, setCalendarDate] = useState(new Date());
@@ -186,6 +193,23 @@ function TasksPage({ workspace, user }) {
     };
     
     fetchProjects();
+  }, [workspace?.id]);
+
+  // Fetch workspace members
+  useEffect(() => {
+    if (!workspace?.id) return;
+    
+    const fetchWorkspaceMembers = async () => {
+      try {
+        const res = await getWorkspaceMembers(workspace.id);
+        setWorkspaceMembers(res.data || []);
+      } catch (err) {
+        console.error('Failed to fetch workspace members:', err);
+        setWorkspaceMembers([]);
+      }
+    };
+    
+    fetchWorkspaceMembers();
   }, [workspace?.id]);
 
   // Fetch saved views
@@ -388,6 +412,17 @@ function TasksPage({ workspace, user }) {
   };
 
   // Bulk actions
+  const resetBulkInputs = () => {
+    setBulkDueDate('');
+    setBulkTargetDate('');
+    setBulkAssigneeId('');
+  };
+
+  const handleCloseBulkMenu = () => {
+    setBulkActionAnchor(null);
+    resetBulkInputs();
+  };
+
   const handleBulkUpdate = async (updates) => {
     if (selectedTasks.length === 0) return;
     
@@ -395,12 +430,35 @@ function TasksPage({ workspace, user }) {
       await bulkUpdateTasks(selectedTasks, updates);
       setSelectedTasks([]);
       setBulkActionAnchor(null);
+      resetBulkInputs();
       fetchTasks();
       setSnackbar({ open: true, message: `${selectedTasks.length} tasks updated`, severity: 'success' });
     } catch (err) {
       console.error('Failed to bulk update:', err);
       setSnackbar({ open: true, message: 'Failed to update tasks', severity: 'error' });
     }
+  };
+
+  const getMemberLabel = (member) => {
+    if (!member) return 'Unknown';
+    const fullName = `${member.first_name || ''} ${member.last_name || ''}`.trim();
+    return fullName || member.username || member.email || 'Unknown';
+  };
+
+  const applyBulkDueDate = () => {
+    if (!bulkDueDate) return;
+    handleBulkUpdate({ due_date: bulkDueDate });
+  };
+
+  const applyBulkTargetDate = () => {
+    if (!bulkTargetDate) return;
+    handleBulkUpdate({ target_date: bulkTargetDate });
+  };
+
+  const applyBulkAssignee = () => {
+    if (bulkAssigneeId === '') return;
+    const assigneeId = bulkAssigneeId === 'unassigned' ? null : Number(bulkAssigneeId);
+    handleBulkUpdate({ assignee_id: assigneeId });
   };
 
   // Task actions
@@ -418,6 +476,24 @@ function TasksPage({ workspace, user }) {
     setShowTaskForm(false);
     setEditingTask(null);
     fetchTasks();
+  };
+
+  // Handle task update for calendar drag & drop
+  const handleTaskUpdate = async (taskId, updates) => {
+    try {
+      await updateTask(taskId, updates);
+      // Refresh calendar tasks
+      if (viewType === 'calendar') {
+        fetchCalendarTasks();
+      } else {
+        fetchTasks();
+      }
+      setSnackbar({ open: true, message: 'Task updated', severity: 'success' });
+    } catch (err) {
+      console.error('Failed to update task:', err);
+      setSnackbar({ open: true, message: 'Failed to update task', severity: 'error' });
+      throw err;
+    }
   };
 
   // Task context indicators
@@ -698,12 +774,13 @@ function TasksPage({ workspace, user }) {
     </Popover>
   );
 
+  
   // Render bulk actions menu
   const renderBulkActionsMenu = () => (
     <Menu
       anchorEl={bulkActionAnchor}
       open={Boolean(bulkActionAnchor)}
-      onClose={() => setBulkActionAnchor(null)}
+      onClose={handleCloseBulkMenu}
       PaperProps={{ sx: { width: 360, maxWidth: 'calc(100vw - 32px)' } }}
     >
       <MenuItem disabled>
@@ -715,10 +792,10 @@ function TasksPage({ workspace, user }) {
         disableTouchRipple
         sx={{ alignItems: 'flex-start', flexDirection: 'column', gap: 1, px: 2, py: 1.5 }}
       >
-        <Typography variant="body2">Change Status</Typography>
+        <Typography variant="body2">Change Stage</Typography>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-          {STATUS_OPTIONS.map((s) => (
-            <Chip key={s} label={s} size="small" onClick={() => handleBulkUpdate({ status: s })} />
+          {BULK_STAGE_OPTIONS.map((s) => (
+            <Chip key={s} label={s} size="small" onClick={() => handleBulkUpdate({ stage: s })} />
           ))}
         </Box>
       </MenuItem>
@@ -732,6 +809,77 @@ function TasksPage({ workspace, user }) {
           {PRIORITY_OPTIONS.map((p) => (
             <Chip key={p} label={p} size="small" onClick={() => handleBulkUpdate({ priority: p })} />
           ))}
+        </Box>
+      </MenuItem>
+      <MenuItem
+        disableRipple
+        disableTouchRipple
+        sx={{ alignItems: 'flex-start', flexDirection: 'column', gap: 1, px: 2, py: 1.5 }}
+      >
+        <Typography variant="body2">Set Due Date</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <TextField
+            type="date"
+            size="small"
+            label="Due Date"
+            value={bulkDueDate}
+            onChange={(e) => setBulkDueDate(e.target.value)}
+            InputLabelProps={{ shrink: true }}
+            sx={{ minWidth: 170 }}
+          />
+          <Button size="small" variant="outlined" onClick={applyBulkDueDate} disabled={!bulkDueDate}>
+            Apply
+          </Button>
+        </Box>
+      </MenuItem>
+      <MenuItem
+        disableRipple
+        disableTouchRipple
+        sx={{ alignItems: 'flex-start', flexDirection: 'column', gap: 1, px: 2, py: 1.5 }}
+      >
+        <Typography variant="body2">Set Target Date</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <TextField
+            type="date"
+            size="small"
+            label="Target Date"
+            value={bulkTargetDate}
+            onChange={(e) => setBulkTargetDate(e.target.value)}
+            InputLabelProps={{ shrink: true }}
+            sx={{ minWidth: 170 }}
+          />
+          <Button size="small" variant="outlined" onClick={applyBulkTargetDate} disabled={!bulkTargetDate}>
+            Apply
+          </Button>
+        </Box>
+      </MenuItem>
+      <MenuItem
+        disableRipple
+        disableTouchRipple
+        sx={{ alignItems: 'flex-start', flexDirection: 'column', gap: 1, px: 2, py: 1.5 }}
+      >
+        <Typography variant="body2">Set Assignee</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <FormControl size="small" sx={{ minWidth: 200 }}>
+            <Select
+              value={bulkAssigneeId}
+              onChange={(e) => setBulkAssigneeId(e.target.value)}
+              displayEmpty
+            >
+              <MenuItem value="">
+                <Typography variant="body2" color="text.secondary">Select assignee</Typography>
+              </MenuItem>
+              <MenuItem value="unassigned">Unassigned</MenuItem>
+              {workspaceMembers.map((member) => (
+                <MenuItem key={member.id} value={String(member.id)}>
+                  {getMemberLabel(member)}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Button size="small" variant="outlined" onClick={applyBulkAssignee} disabled={bulkAssigneeId === ''}>
+            Apply
+          </Button>
         </Box>
       </MenuItem>
     </Menu>
@@ -1003,6 +1151,7 @@ function TasksPage({ workspace, user }) {
                 date={calendarDate}
                 onDateChange={setCalendarDate}
                 onTaskClick={handleTaskClick}
+                onTaskUpdate={handleTaskUpdate}
                 getTaskIndicators={getTaskIndicators}
               />
             )}
