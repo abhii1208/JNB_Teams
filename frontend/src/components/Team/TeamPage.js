@@ -137,7 +137,7 @@ function TeamPage({ user, workspace }) {
 
   const handleRemoveMember = async (member) => {
     if (!member) return;
-    if (!confirm(`Remove ${member.email} from workspace?`)) return;
+    if (!window.confirm(`Remove ${member.email} from workspace?`)) return;
     try {
       await removeWorkspaceMember(workspace.id, member.id);
       const resp = await getWorkspaceMembers(workspace.id);
