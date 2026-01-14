@@ -68,6 +68,7 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import CloseIcon from '@mui/icons-material/Close';
 import TaskForm from '../Tasks/TaskForm';
+import CustomColumnSettings from './CustomColumnSettings';
 import { getTasks, createTask, updateTask, deleteTask, updateProject, getProjectMembers, getWorkspaceMembers, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator } from '../../apiClient';
 import { formatShortDate } from '../../utils/date';
 
@@ -2994,12 +2995,24 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
 
               <Button
                 variant="contained"
-                sx={{ textTransform: 'none', px: 4 }}
+                sx={{ textTransform: 'none', px: 4, mb: 4 }}
                 onClick={handleSaveSettings}
                 disabled={settingsSaving}
               >
                 {settingsSaving ? 'Saving...' : 'Save Settings'}
               </Button>
+
+              <Divider sx={{ my: 4 }} />
+
+              {/* Custom Column Settings (Feature 1) */}
+              <CustomColumnSettings
+                projectId={project?.id}
+                userRole={userRole}
+                onSettingsChange={(newSettings) => {
+                  // Optionally handle column settings changes
+                  console.log('Column settings changed:', newSettings);
+                }}
+              />
             </Box>
           </Fade>
           )}

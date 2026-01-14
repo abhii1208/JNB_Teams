@@ -21,6 +21,7 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import RepeatIcon from '@mui/icons-material/Repeat';
 import AssignmentIcon from '@mui/icons-material/Assignment';
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import { getApprovalCount, getUserSettings } from '../../apiClient';
 
 const DRAWER_WIDTH = 260;
@@ -30,6 +31,7 @@ function Sidebar({ currentPage, onNavigate, onLogout, user, workspace }) {
   const isPersonalWorkspace = Boolean(workspace?.is_personal)
     || (workspace?.name === 'Personal' && Number(workspace?.created_by) === Number(user?.id));
   const canViewTeam = !isPersonalWorkspace && (workspace?.role === 'Owner' || workspace?.role === 'Admin');
+  const canViewAdmin = workspace?.role === 'Owner' || workspace?.role === 'Admin';
 
   useEffect(() => {
     const fetchPendingCount = async () => {
@@ -55,6 +57,7 @@ function Sidebar({ currentPage, onNavigate, onLogout, user, workspace }) {
     { id: 'recurring', label: 'Recurring', icon: <RepeatIcon /> },
     ...(canViewTeam ? [{ id: 'team', label: 'Team', icon: <GroupIcon /> }] : []),
     { id: 'approvals', label: 'Approvals', icon: <CheckCircleIcon />, badge: pendingCount },
+    ...(canViewAdmin ? [{ id: 'admin', label: 'Admin', icon: <AdminPanelSettingsIcon /> }] : []),
   ];
 
   return (

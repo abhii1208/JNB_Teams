@@ -12,6 +12,7 @@ import ActivityLogPage from '../Activity/ActivityLogPage';
 import NotificationsPage from '../Notifications/NotificationsPage';
 import RecurringPage from '../Recurring/RecurringPage';
 import TasksPage from '../Tasks/TasksPage';
+import AdminPage from '../Admin/AdminPage';
 import { getWorkspaces, getUserSettings } from '../../apiClient';
 
 const DRAWER_WIDTH = 260;
@@ -166,6 +167,19 @@ function MainLayout({ userId, onLogout }) {
       
       case 'notifications':
         return <NotificationsPage />;
+      
+      case 'admin':
+        if (!currentWorkspace || !['Owner', 'Admin'].includes(currentWorkspace?.role)) {
+          return (
+            <Box sx={{ p: 6 }}>
+              <Typography variant="h6">Access restricted</Typography>
+              <Typography variant="body2" color="text.secondary">
+                The Admin page is only available to workspace Owners and Admins.
+              </Typography>
+            </Box>
+          );
+        }
+        return <AdminPage workspace={currentWorkspace} user={user} />;
       
       case 'settings':
         return <SettingsPage user={user} />;

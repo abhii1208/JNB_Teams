@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -60,11 +60,13 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import PeopleIcon from '@mui/icons-material/People';
 import BusinessIcon from '@mui/icons-material/Business';
 import PersonIcon from '@mui/icons-material/Person';
+import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 
 import TasksTableView from './TasksTableView';
 import TasksCalendarView from './TasksCalendarView';
 import TasksBoardView from './TasksBoardView';
 import TaskFormWithProjectSelect from './TaskFormWithProjectSelect';
+import EditColumnsDialog, { DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_ORDER } from './EditColumnsDialog';
 
 import {
   getWorkspaceTasks,
@@ -79,6 +81,8 @@ import {
   deleteSavedView,
   getUserViewPreferences,
   updateUserViewPreferences,
+  getFullUserPreferences,
+  patchUserPreferences,
 } from '../../apiClient';
 
 const VIEW_TYPES = [
@@ -149,6 +153,20 @@ function TasksPage({ workspace, user }) {
   
   // Grouping
   const [groupBy, setGroupBy] = useState(null);
+  
+  // Column Visibility (Feature 2)
+  const [visibleColumns, setVisibleColumns] = useState(DEFAULT_VISIBLE_COLUMNS);
+  const [columnOrder, setColumnOrder] = useState(DEFAULT_COLUMN_ORDER);
+  const [showEditColumnsDialog, setShowEditColumnsDialog] = useState(false);
+  
+  // Calendar settings
+  const [calendarViewMode, setCalendarViewMode] = useState('month');
+  const [calendarDateMode, setCalendarDateMode] = useState('due_date');
+  const [calendarDensity, setCalendarDensity] = useState('comfortable');
+  
+  // Preferences tracking
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
+  const preferencesDebounceRef = useRef(null);
   
   // Saved Views
   const [savedViews, setSavedViews] = useState([]);
@@ -228,26 +246,108 @@ function TasksPage({ workspace, user }) {
     fetchSavedViews();
   }, [workspace?.id]);
 
-  // Load user preferences
+  // Load user preferences (Feature 3 - Remember user's last activity)
   useEffect(() => {
     if (!workspace?.id) return;
     
     const loadPreferences = async () => {
       try {
-        const res = await getUserViewPreferences(workspace.id);
+        const res = await getFullUserPreferences(workspace.id);
         if (res.data) {
-          if (res.data.default_view) setViewType(res.data.default_view);
-          if (res.data.selected_projects?.length) {
-            setFilters(prev => ({ ...prev, projects: res.data.selected_projects }));
+          const prefs = res.data;
+          // Apply view type
+          if (prefs.last_view_type) setViewType(prefs.last_view_type);
+          // Apply visible columns
+          if (prefs.visible_columns?.length) setVisibleColumns(prefs.visible_columns);
+          // Apply column order
+          if (prefs.column_order?.length) setColumnOrder(prefs.column_order);
+          // Apply filters
+          if (prefs.filters) {
+            setFilters(prev => ({
+              ...prev,
+              ...prefs.filters,
+              // Ensure arrays are properly handled
+              projects: prefs.filters.projects || prev.projects,
+              status: prefs.filters.status || prev.status,
+              stage: prefs.filters.stage || prev.stage,
+              priority: prefs.filters.priority || prev.priority,
+            }));
           }
+          // Apply sorting
+          if (prefs.sort_by) setSortBy(prefs.sort_by);
+          if (prefs.sort_order) setSortOrder(prefs.sort_order);
+          // Apply grouping
+          if (prefs.group_by !== undefined) setGroupBy(prefs.group_by);
+          // Apply calendar settings
+          if (prefs.calendar_view_mode) setCalendarViewMode(prefs.calendar_view_mode);
+          if (prefs.calendar_date_mode) setCalendarDateMode(prefs.calendar_date_mode);
+          if (prefs.calendar_density) setCalendarDensity(prefs.calendar_density);
+          // Apply page size
+          if (prefs.page_size) setLimit(prefs.page_size);
         }
+        setPreferencesLoaded(true);
       } catch (err) {
         console.error('Failed to load preferences:', err);
+        setPreferencesLoaded(true); // Still mark as loaded so UI can render
       }
     };
     
     loadPreferences();
   }, [workspace?.id]);
+
+  // Save preferences when they change (debounced)
+  const savePreferences = useCallback(async () => {
+    if (!workspace?.id || !preferencesLoaded) return;
+    
+    try {
+      await patchUserPreferences(workspace.id, {
+        last_view_type: viewType,
+        visible_columns: visibleColumns,
+        column_order: columnOrder,
+        filters: {
+          projects: filters.projects,
+          status: filters.status,
+          stage: filters.stage,
+          priority: filters.priority,
+          assignee: filters.assignee,
+          overdue: filters.overdue,
+          recurring: filters.recurring,
+          include_archived: filters.include_archived,
+        },
+        sort_by: sortBy,
+        sort_order: sortOrder,
+        group_by: groupBy,
+        calendar_view_mode: calendarViewMode,
+        calendar_date_mode: calendarDateMode,
+        calendar_density: calendarDensity,
+        page_size: limit,
+        selected_projects: filters.projects,
+      });
+    } catch (err) {
+      console.error('Failed to save preferences:', err);
+    }
+  }, [workspace?.id, preferencesLoaded, viewType, visibleColumns, columnOrder, filters, sortBy, sortOrder, groupBy, calendarViewMode, calendarDateMode, calendarDensity, limit]);
+
+  // Debounced preferences save
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    
+    // Clear existing timeout
+    if (preferencesDebounceRef.current) {
+      clearTimeout(preferencesDebounceRef.current);
+    }
+    
+    // Set new timeout to save preferences after 1 second of inactivity
+    preferencesDebounceRef.current = setTimeout(() => {
+      savePreferences();
+    }, 1000);
+    
+    return () => {
+      if (preferencesDebounceRef.current) {
+        clearTimeout(preferencesDebounceRef.current);
+      }
+    };
+  }, [savePreferences, preferencesLoaded]);
 
   // Build query params for API
   const buildQueryParams = useCallback(() => {
@@ -409,6 +509,13 @@ function TasksPage({ workspace, user }) {
       console.error('Failed to delete view:', err);
       setSnackbar({ open: true, message: 'Failed to delete view', severity: 'error' });
     }
+  };
+
+  // Handle column visibility/order changes from EditColumnsDialog
+  const handleSaveColumnSettings = ({ visibleColumns: newVisible, columnOrder: newOrder }) => {
+    setVisibleColumns(newVisible);
+    setColumnOrder(newOrder);
+    setSnackbar({ open: true, message: 'Column settings saved', severity: 'success' });
   };
 
   // Bulk actions
@@ -1033,6 +1140,19 @@ function TasksPage({ workspace, user }) {
             Group: {GROUP_BY_OPTIONS.find(o => o.id === groupBy)?.label || 'None'}
           </Button>
 
+          {/* Edit Columns Button (Feature 2) */}
+          {viewType === 'table' && (
+            <Tooltip title="Edit visible columns">
+              <IconButton
+                size="small"
+                onClick={() => setShowEditColumnsDialog(true)}
+                color={visibleColumns.length !== DEFAULT_VISIBLE_COLUMNS.length ? 'primary' : 'default'}
+              >
+                <ViewColumnIcon />
+              </IconButton>
+            </Tooltip>
+          )}
+
           <Box sx={{ flex: 1 }} />
 
           {/* Saved Views */}
@@ -1143,6 +1263,8 @@ function TasksPage({ workspace, user }) {
                 onTaskEdit={handleTaskEdit}
                 getTaskIndicators={getTaskIndicators}
                 loading={loading}
+                visibleColumns={visibleColumns}
+                columnOrder={columnOrder}
               />
             )}
             {viewType === 'calendar' && (
@@ -1153,6 +1275,12 @@ function TasksPage({ workspace, user }) {
                 onTaskClick={handleTaskClick}
                 onTaskUpdate={handleTaskUpdate}
                 getTaskIndicators={getTaskIndicators}
+                viewMode={calendarViewMode}
+                onViewModeChange={setCalendarViewMode}
+                dateMode={calendarDateMode}
+                onDateModeChange={setCalendarDateMode}
+                density={calendarDensity}
+                onDensityChange={setCalendarDensity}
               />
             )}
             {viewType === 'board' && (
@@ -1177,6 +1305,16 @@ function TasksPage({ workspace, user }) {
       {renderSavedViewsMenu()}
       {renderBulkActionsMenu()}
       {renderSaveViewDialog()}
+
+      {/* Edit Columns Dialog (Feature 2) */}
+      <EditColumnsDialog
+        open={showEditColumnsDialog}
+        onClose={() => setShowEditColumnsDialog(false)}
+        visibleColumns={visibleColumns}
+        columnOrder={columnOrder}
+        onSave={handleSaveColumnSettings}
+        enabledProjectColumns={{}} // TODO: Pass enabled project columns from selected projects
+      />
 
       {/* Task Form Dialog - Need to select project first for new tasks */}
       {showTaskForm && (

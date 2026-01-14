@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -11,7 +11,6 @@ import {
   Select,
   MenuItem,
   Box,
-  Grid,
   Chip,
   Avatar,
   Typography,
@@ -19,60 +18,102 @@ import {
   IconButton,
   Snackbar,
   Alert,
+  Paper,
+  Divider,
+  Tooltip,
+  Checkbox,
+  Popover,
+  List,
+  ListItemButton,
+  ListItemIcon,
   FormControlLabel,
   Switch,
   Collapse,
 } from '@mui/material';
+
+import AvatarGroup from '@mui/material/AvatarGroup';
 import CloseIcon from '@mui/icons-material/Close';
+import AddIcon from '@mui/icons-material/Add';
+import PersonIcon from '@mui/icons-material/Person';
 import RepeatIcon from '@mui/icons-material/Repeat';
+
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import { getProjectMembers } from '../../apiClient';
+
+import { getProjectColumnOptions, getProjectColumnSettings, getProjectMembers } from '../../apiClient';
 import { formatShortDate } from '../../utils/date';
 
 const stageOptions = ['Planned', 'In-process', 'Completed', 'On-hold', 'Dropped'];
-const statusOptions = ['Open', 'Pending Approval', 'Closed', 'Rejected'];
 
-const mockMembers = [
-  { id: 1, name: 'John Doe', email: 'john@example.com', avatar: 'JD' },
-  { id: 2, name: 'Sarah Miller', email: 'sarah@example.com', avatar: 'SM' },
-  { id: 3, name: 'Alex Kim', email: 'alex@example.com', avatar: 'AK' },
-  { id: 4, name: 'Patricia Lee', email: 'patricia@example.com', avatar: 'PL' },
-  { id: 5, name: 'Mike Roberts', email: 'mike@example.com', avatar: 'MR' },
-];
+const DEFAULT_COLUMN_SETTINGS = {
+  enable_category: false,
+  enable_section: false,
+  enable_estimated_hours: false,
+  enable_actual_hours: false,
+  enable_completion_percentage: false,
+  enable_tags: false,
+  enable_external_id: false,
+};
 
-/**
- * Check if user can edit task based on status and role
- * Rules:
- * - Pending Approval/Closed: Only admin/owner can edit
- * - Rejected: Assignee regains access to edit
- * - Open/In-process: Normal editing based on project role
- */
 function canEditTask(task, userRole, isAssignee) {
-  if (!task) return true; // New task
-  
+  if (!task) return true;
   const status = task.status;
   const role = (userRole || '').toString().toLowerCase();
   const isAdminOrOwner = role === 'admin' || role === 'owner';
-  
-  // Pending Approval or Closed: only admin/owner
-  if (status === 'Pending Approval' || status === 'Closed') {
-    return isAdminOrOwner;
-  }
-  
-  // Rejected: assignee can edit (to fix and resubmit)
-  if (status === 'Rejected') {
-    return isAssignee || isAdminOrOwner;
-  }
-  
-  // Open/other statuses: allow normal editing
+
+  if (status === 'Pending Approval' || status === 'Closed') return isAdminOrOwner;
+  if (status === 'Rejected') return isAssignee || isAdminOrOwner;
   return true;
 }
 
-function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, prefilledStatus = null, projectId = null, userRole = null, currentUserId = null, onDelete, onCreateRecurring }) {
+const getMemberLabel = (m) => {
+  if (!m) return '';
+  const name = m.first_name ? `${m.first_name} ${m.last_name || ''}`.trim() : (m.username || '');
+  return name || m.name || m.email || '';
+};
+
+const getInitials = (m) => {
+  const label = getMemberLabel(m).trim();
+  const parts = label.split(/\s+/).filter(Boolean);
+  if (!parts.length) return 'U';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+};
+
+const Section = ({ title, children }) => (
+  <Paper
+    variant="outlined"
+    sx={{
+      p: 1.75,
+      borderRadius: 2,
+      bgcolor: '#fff',
+      borderColor: 'rgba(148,163,184,0.25)',
+    }}
+  >
+    <Typography variant="subtitle2" sx={{ fontWeight: 900, mb: 1 }}>
+      {title}
+    </Typography>
+    <Divider sx={{ mb: 1.5, borderColor: 'rgba(148,163,184,0.20)' }} />
+    {children}
+  </Paper>
+);
+
+function TaskForm({
+  open,
+  onClose,
+  onSave,
+  task = null,
+  prefilledStage = null,
+  prefilledStatus = null,
+  projectId = null,
+  userRole = null,
+  currentUserId = null,
+  onDelete,
+  onCreateRecurring,
+}) {
   const isEdit = Boolean(task);
-  
+
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -86,28 +127,107 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
     priority: 'Medium',
     isRecurring: false,
     recurrencePattern: 'weekly',
+    // Custom columns (Feature 1)
+    category: '',
+    section: '',
+    estimatedHours: '',
+    actualHours: '',
+    completionPercentage: '',
+    tags: [],
+    externalId: '',
   });
 
   const [projectMembers, setProjectMembers] = useState([]);
+  const [columnSettings, setColumnSettings] = useState(DEFAULT_COLUMN_SETTINGS);
+  const [columnOptions, setColumnOptions] = useState({ category: [], section: [] });
   const [toast, setToast] = useState({ open: false, severity: 'success', message: '' });
-  
-  // Determine if current user is assignee
-  const isAssignee = task && currentUserId && (
-    task.assignee_id === currentUserId || 
-    task.assignee === currentUserId ||
-    String(task.assignee_id) === String(currentUserId)
-  );
-  
-  // Check edit permission
+
   const normalizedRole = (userRole || '').toString().toLowerCase();
-  const canEdit = canEditTask(task, normalizedRole, isAssignee);
   const isAdminOrOwner = normalizedRole === 'admin' || normalizedRole === 'owner';
+
+  const isAssignee =
+    task &&
+    currentUserId &&
+    (task.assignee_id === currentUserId ||
+      task.assignee === currentUserId ||
+      String(task.assignee_id) === String(currentUserId));
+
+  const canEdit = canEditTask(task, normalizedRole, isAssignee);
   const canDelete = isEdit && onDelete && isAdminOrOwner;
+
+  // keep your rule: dates locked for non-admin/owner on edit
+  const lockDates = isEdit && !isAdminOrOwner;
+
+  // Date picker open states (so click anywhere opens calendar)
+  const [openTarget, setOpenTarget] = useState(false);
+  const [openDue, setOpenDue] = useState(false);
+
+  // collaborators picker popover
+  const [collabAnchorEl, setCollabAnchorEl] = useState(null);
+  const [collabQuery, setCollabQuery] = useState('');
+  const collabPopoverOpen = Boolean(collabAnchorEl);
+
+  const memberOptions = useMemo(() => projectMembers || [], [projectMembers]);
+
+  const currentUserMember = useMemo(() => {
+    if (!currentUserId) return null;
+    return memberOptions.find((m) => String(m.id) === String(currentUserId)) || null;
+  }, [memberOptions, currentUserId]);
+
+  const collaboratorCandidates = useMemo(() => {
+    const aid = formData.assignee?.id;
+    const base = memberOptions.filter((m) => !aid || String(m.id) !== String(aid));
+    const q = collabQuery.trim().toLowerCase();
+    if (!q) return base;
+
+    return base.filter((m) => {
+      const label = getMemberLabel(m).toLowerCase();
+      const email = (m.email || '').toLowerCase();
+      return label.includes(q) || email.includes(q);
+    });
+  }, [memberOptions, formData.assignee, collabQuery]);
+
+  const normalizeColumnOptions = (res, columnType) => {
+    const data = res?.data;
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.grouped?.[columnType])) return data.grouped[columnType];
+    if (Array.isArray(data?.options)) {
+      return data.options.filter((option) => option.column_name === columnType);
+    }
+    return [];
+  };
+
+  const categoryOptions = columnOptions.category || [];
+  const sectionOptions = columnOptions.section || [];
+
+  const showCategory = columnSettings.enable_category && categoryOptions.length > 0;
+  const showSection = columnSettings.enable_section && sectionOptions.length > 0;
+
+  const showEstimated = columnSettings.enable_estimated_hours;
+  const showActual = columnSettings.enable_actual_hours;
+  const showCompletion = columnSettings.enable_completion_percentage;
+  const showTags = columnSettings.enable_tags;
+  const showExternalId = columnSettings.enable_external_id;
+  const showCustomFieldsSection =
+    showEstimated || showActual || showCompletion || showTags || showExternalId;
+
+  const categoryValue = showCategory && categoryOptions.some((opt) => opt.option_value === formData.category)
+    ? formData.category
+    : '';
+  const sectionValue = showSection && sectionOptions.some((opt) => opt.option_value === formData.section)
+    ? formData.section
+    : '';
+
+  const dateGridTemplateMd = showCategory && showSection
+    ? '156px 156px 200px 200px'
+    : showCategory || showSection
+      ? '156px 156px 200px'
+      : '156px 156px';
 
   useEffect(() => {
     if (task) {
-      // If task was rejected previously, set stage to In-process per workflow
       const initialStage = task.status === 'Rejected' ? 'In-process' : (task.stage || 'Planned');
+
       setFormData({
         name: task.name || '',
         description: task.description || '',
@@ -119,9 +239,18 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
         collaborators: [],
         notes: task.notes || '',
         priority: task.priority || 'Medium',
+        isRecurring: false,
+        recurrencePattern: 'weekly',
+        // Custom columns (Feature 1)
+        category: task.category || '',
+        section: task.section || '',
+        estimatedHours: task.estimated_hours || '',
+        actualHours: task.actual_hours || '',
+        completionPercentage: task.completion_percentage || '',
+        tags: task.tags || [],
+        externalId: task.external_id || '',
       });
     } else {
-      // For new tasks, completely reset the form with blank values
       setFormData({
         name: '',
         description: '',
@@ -135,11 +264,18 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
         priority: 'Medium',
         isRecurring: false,
         recurrencePattern: 'weekly',
+        // Custom columns (Feature 1)
+        category: '',
+        section: '',
+        estimatedHours: '',
+        actualHours: '',
+        completionPercentage: '',
+        tags: [],
+        externalId: '',
       });
     }
   }, [task, prefilledStage, prefilledStatus, open]);
 
-  // Fetch project members when projectId or dialog opens
   useEffect(() => {
     const fetchMembers = async () => {
       if (!projectId) return;
@@ -151,103 +287,199 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
         setProjectMembers([]);
       }
     };
-
     if (open && projectId) fetchMembers();
   }, [projectId, open]);
 
-  // When projectMembers load and task exists, map assignee/collaborators to member objects
+  useEffect(() => {
+    if (!projectId || !open) return;
+    let active = true;
+
+    const fetchColumnData = async () => {
+      try {
+        const [settingsRes, categoryRes, sectionRes] = await Promise.all([
+          getProjectColumnSettings(projectId),
+          getProjectColumnOptions(projectId, 'category'),
+          getProjectColumnOptions(projectId, 'section'),
+        ]);
+
+        if (!active) return;
+
+        setColumnSettings({ ...DEFAULT_COLUMN_SETTINGS, ...(settingsRes.data || {}) });
+        setColumnOptions({
+          category: normalizeColumnOptions(categoryRes, 'category'),
+          section: normalizeColumnOptions(sectionRes, 'section'),
+        });
+      } catch (err) {
+        console.error('Failed to fetch column settings:', err);
+        if (!active) return;
+        setColumnSettings(DEFAULT_COLUMN_SETTINGS);
+        setColumnOptions({ category: [], section: [] });
+      }
+    };
+
+    setColumnSettings(DEFAULT_COLUMN_SETTINGS);
+    setColumnOptions({ category: [], section: [] });
+    fetchColumnData();
+
+    return () => {
+      active = false;
+    };
+  }, [projectId, open]);
+
   useEffect(() => {
     if (!task || projectMembers.length === 0) return;
+
     const findMemberFor = (val) => {
       if (!val) return null;
-      // If val is an object with id/user_id, match by id
+
       if (typeof val === 'object') {
         const id = val.id || val.user_id || val.userId || null;
-        if (id) return projectMembers.find(m => String(m.id) === String(id)) || null;
-        // if object has name, try matching by name
-        if (val.name) return projectMembers.find(m => `${m.first_name || ''} ${m.last_name || ''}`.trim() === val.name) || null;
+        if (id) return projectMembers.find((m) => String(m.id) === String(id)) || null;
+        if (val.name) return projectMembers.find((m) => getMemberLabel(m) === val.name) || null;
       }
-      // try by id
-      let found = projectMembers.find(m => String(m.id) === String(val));
+
+      let found = projectMembers.find((m) => String(m.id) === String(val));
       if (found) return found;
-      // try by email
-      found = projectMembers.find(m => m.email === val);
+
+      found = projectMembers.find((m) => m.email === val);
       if (found) return found;
-      // try by avatar or name
-      found = projectMembers.find(m => m.avatar === val || m.name === val || `${m.first_name || ''} ${m.last_name || ''}`.trim() === val);
+
+      found = projectMembers.find((m) => getMemberLabel(m) === val);
       return found || null;
     };
 
     const assigneeVal = task.assignee_id || task.assignee || task.assignee_name || null;
     const assigneeObj = findMemberFor(assigneeVal);
+
     const collaboratorsObjs = Array.isArray(task.collaborators)
-      ? task.collaborators.map(c => findMemberFor(c)).filter(Boolean)
+      ? task.collaborators.map((c) => findMemberFor(c)).filter(Boolean)
       : [];
 
-    setFormData(prev => ({ ...prev, assignee: assigneeObj, collaborators: collaboratorsObjs }));
+    setFormData((prev) => ({
+      ...prev,
+      assignee: assigneeObj,
+      collaborators: collaboratorsObjs.filter(
+        (c) => !assigneeObj || String(c.id) !== String(assigneeObj.id)
+      ),
+    }));
   }, [projectMembers, task]);
 
-  // handle stage change with auto-status logic
+  const handleChange = (field, value) => setFormData((prev) => ({ ...prev, [field]: value }));
+
   const handleStageChange = (newStage) => {
-    setFormData(prev => {
+    setFormData((prev) => {
       let newStatus = prev.status;
-      if (newStage === 'Completed') {
-        // When stage is set to Completed, automatically set status to Pending Approval
-        newStatus = 'Pending Approval';
-      } else if (newStage === 'Planned' || newStage === 'In-process') {
-        // For Planned or In-process stages, keep status as Open (unless it's Rejected)
-        if (prev.status === 'Pending Approval' || prev.status === 'Closed') {
-          newStatus = 'Open';
-        }
-        // Keep Rejected status if it was rejected before
+
+      if (newStage === 'Completed') newStatus = 'Pending Approval';
+      else if (newStage === 'Planned' || newStage === 'In-process') {
+        if (prev.status === 'Pending Approval' || prev.status === 'Closed') newStatus = 'Open';
       } else {
-        // For On-hold or Dropped, keep the current status
         if (prev.status === 'Pending Approval') newStatus = 'Open';
       }
+
       return { ...prev, stage: newStage, status: newStatus };
     });
   };
 
-  const handleChange = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+  const handleAssigneeChange = (_, value) => {
+    setFormData((prev) => ({
+      ...prev,
+      assignee: value,
+      collaborators: (prev.collaborators || []).filter(
+        (c) => !value || String(c.id) !== String(value.id)
+      ),
+    }));
+  };
+
+  const isCollaboratorSelected = (m) =>
+    (formData.collaborators || []).some((c) => String(c.id) === String(m.id));
+
+  const toggleCollaborator = (m) => {
+    setFormData((prev) => {
+      const exists = (prev.collaborators || []).some((c) => String(c.id) === String(m.id));
+      const next = exists
+        ? (prev.collaborators || []).filter((c) => String(c.id) !== String(m.id))
+        : [...(prev.collaborators || []), m];
+      return { ...prev, collaborators: next };
+    });
+  };
+
+  const openCollaboratorsPicker = (anchorEl) => {
+    if (!canEdit) return;
+    setCollabAnchorEl(anchorEl);
+    setCollabQuery('');
   };
 
   const handleSubmit = () => {
-    // Check if user has permission to save
     if (!canEdit) {
       setToast({ open: true, severity: 'error', message: 'You do not have permission to edit this task' });
       return;
     }
-    
-    // Validate assignee and collaborators are project members
+
     if (formData.assignee) {
-      const found = projectMembers.find(m => String(m.id) === String(formData.assignee.id));
+      const found = memberOptions.find((m) => String(m.id) === String(formData.assignee.id));
       if (!found) {
         setToast({ open: true, severity: 'error', message: 'Assignee must be a project member' });
         return;
       }
     }
-    if (formData.collaborators && formData.collaborators.length > 0) {
-      const invalid = formData.collaborators.some(c => !projectMembers.find(m => String(m.id) === String(c.id)));
+
+    if (formData.collaborators?.length) {
+      const invalid = formData.collaborators.some(
+        (c) => !memberOptions.find((m) => String(m.id) === String(c.id))
+      );
       if (invalid) {
         setToast({ open: true, severity: 'error', message: 'All collaborators must be project members' });
         return;
       }
     }
+
     const taskData = {
       ...formData,
       id: task?.id || Date.now(),
-      // send full assignee object so caller can extract id
       assignee: formData.assignee || null,
-      // collaborators as array of member objects
       collaborators: formData.collaborators || [],
       dueDate: formData.dueDate ? formData.dueDate.toISOString().split('T')[0] : null,
       targetDate: formData.targetDate ? formData.targetDate.toISOString().split('T')[0] : null,
-        createdBy: task?.created_by_name || task?.createdBy || null,
-        createdDate: task?.created_at || task?.createdDate || null,
+      createdBy: task?.created_by_name || task?.createdBy || null,
+      createdDate: task?.created_at || task?.createdDate || null,
+      // Custom columns (Feature 1)
+      category: formData.category || null,
+      section: formData.section || null,
+      estimated_hours: formData.estimatedHours ? parseFloat(formData.estimatedHours) : null,
+      actual_hours: formData.actualHours ? parseFloat(formData.actualHours) : null,
+      completion_percentage: formData.completionPercentage ? parseInt(formData.completionPercentage) : null,
+      tags: formData.tags || [],
+      external_id: formData.externalId || null,
     };
+
     onSave(taskData);
     onClose();
+  };
+
+  // smaller controls (premium compact)
+  const fieldSx = {
+    '& .MuiOutlinedInput-root': {
+      borderRadius: 2,
+      minHeight: 44,
+      bgcolor: 'rgba(15,118,110,0.03)',
+    },
+    '& .MuiInputLabel-root': { fontWeight: 700 },
+  };
+
+  const selectSx = {
+    borderRadius: 2,
+    minHeight: 44,
+    bgcolor: 'rgba(15,118,110,0.03)',
+  };
+
+  const tinyBtnSx = {
+    borderRadius: 2,
+    textTransform: 'none',
+    fontWeight: 900,
+    whiteSpace: 'nowrap',
+    px: 1.2,
+    minHeight: 40,
   };
 
   return (
@@ -255,294 +487,748 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
       <Dialog
         open={open}
         onClose={onClose}
-        maxWidth="md"
+        maxWidth={false}
         fullWidth
-        PaperProps={{ sx: { borderRadius: 3 } }}
+        scroll="body"
+        PaperProps={{
+          sx: {
+            width: { xs: '74vw', md: '66vw' },
+            maxWidth: '1040px',
+            borderRadius: 2.5,
+            overflow: 'hidden',
+          },
+        }}
       >
-        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 2 }}>
-          <Typography component="div" variant="h6" sx={{ fontWeight: 600 }}>
-            {isEdit ? 'Edit Task' : 'Create New Task'}
-            <Chip label="UPDATED2" size="small" color="success" sx={{ ml: 1 }} />
-            {!canEdit && (
-              <Chip 
-                label="Read Only" 
-                size="small" 
-                color="warning" 
-                sx={{ ml: 2 }} 
-              />
-            )}
-          </Typography>
+        <DialogTitle
+          sx={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            py: 1.4,
+            px: 2,
+            bgcolor: 'rgba(15,118,110,0.05)',
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography component="div" variant="h6" sx={{ fontWeight: 900 }}>
+              {isEdit ? 'Edit Task' : 'Create New Task'}
+            </Typography>
+            <Chip label="UPDATED" size="small" color="success" />
+            {!canEdit && <Chip label="Read Only" size="small" color="warning" />}
+          </Box>
+
           <IconButton onClick={onClose} size="small">
             <CloseIcon />
           </IconButton>
         </DialogTitle>
 
-        <DialogContent dividers>
+        <DialogContent sx={{ p: 2, bgcolor: 'rgba(148,163,184,0.04)' }}>
           {!canEdit && (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              This task is {task?.status === 'Pending Approval' ? 'pending approval' : 'closed'} and can only be edited by project admin/owner.
+            <Alert variant="outlined" severity="info" sx={{ mb: 2 }}>
+              This task is <strong>{task?.status || 'restricted'}</strong> and can only be edited by admin/owner.
               {task?.status === 'Rejected' && isAssignee && ' (Assignees can edit rejected tasks)'}
             </Alert>
           )}
-          <Grid container spacing={3}>
-            {/* UPDATED LAYOUT v3: Row 1: Task Name, Stage, Priority | Row 2: Assignee, Collab, Status | Row 3: Dates | Row 4: Notes/Desc */}
-            {/* ROW 1: Task Name, Stage, Priority */}
-            <Grid xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Task Name"
-                value={formData.name}
-                onChange={(e) => handleChange('name', e.target.value)}
-                required
-                placeholder="Enter task name"
-                disabled={!canEdit}
-                inputProps={{ maxLength: 20 }}
-                helperText={`${formData.name.length}/20 characters`}
-              />
-            </Grid>
-            <Grid xs={12} md={3}>
-              <FormControl fullWidth disabled={!canEdit}>
-                <InputLabel>Stage</InputLabel>
-                <Select
-                  value={formData.stage}
-                  label="Stage"
-                  onChange={(e) => handleStageChange(e.target.value)}
-                >
-                  {stageOptions.map(stage => (
-                    <MenuItem key={stage} value={stage}>{stage}</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid xs={12} md={3}>
-              <FormControl fullWidth disabled={!canEdit}>
-                <InputLabel>Priority</InputLabel>
-                <Select
-                  value={formData.priority}
-                  label="Priority"
-                  onChange={(e) => handleChange('priority', e.target.value)}
-                >
-                  <MenuItem value="Low">Low</MenuItem>
-                  <MenuItem value="Medium">Medium</MenuItem>
-                  <MenuItem value="High">High</MenuItem>
-                  <MenuItem value="Critical">Critical</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
 
-            {/* ROW 2: Assignee, Collaborators, Status */}
-            <Grid xs={12} md={6}>
-              <Autocomplete
-                disabled={!canEdit}
-                options={projectMembers}
-                getOptionLabel={(option) => option.first_name ? `${option.first_name} ${option.last_name || ''}`.trim() : option.username || option.email}
-                value={formData.assignee}
-                onChange={(e, value) => handleChange('assignee', value)}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Assignee"
-                    placeholder="Select assignee"
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.75 }}>
+            {/* ===================== BASIC (with dates) ===================== */}
+            <Section title="Basic">
+              {/* Row 1 */}
+              <Box
+                sx={{
+                  display: 'grid',
+                  gap: 2,
+                  gridTemplateColumns: { xs: '1fr', md: '1.54fr 0.6fr 0.6fr' },
+                  alignItems: 'stretch',
+                }}
+              >
+                <TextField
+                  fullWidth
+                  label="Task Name (max 30 chars)"
+                  value={formData.name}
+                  onChange={(e) => handleChange('name', e.target.value)}
+                  required
+                  disabled={!canEdit}
+                  inputProps={{ maxLength: 30 }}
+                  helperText={`${formData.name.length}/30 characters`}
+                  placeholder="Enter task name"
+                  sx={fieldSx}
+                  size="small"
+                />
+
+                <FormControl fullWidth disabled={!canEdit} size="small" sx={{ '& .MuiInputLabel-root': { fontWeight: 700 } }}>
+                  <InputLabel>Stage</InputLabel>
+                  <Select
+                    value={formData.stage}
+                    label="Stage"
+                    onChange={(e) => handleStageChange(e.target.value)}
+                    sx={selectSx}
+                  >
+                    {stageOptions.map((stage) => (
+                      <MenuItem key={stage} value={stage}>
+                        {stage}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+
+                <FormControl fullWidth disabled={!canEdit} size="small" sx={{ '& .MuiInputLabel-root': { fontWeight: 700 } }}>
+                  <InputLabel>Priority</InputLabel>
+                  <Select
+                    value={formData.priority}
+                    label="Priority"
+                    onChange={(e) => handleChange('priority', e.target.value)}
+                    sx={selectSx}
+                  >
+                    <MenuItem value="Low">Low</MenuItem>
+                    <MenuItem value="Medium">Medium</MenuItem>
+                    <MenuItem value="High">High</MenuItem>
+                    <MenuItem value="Critical">Critical</MenuItem>
+                  </Select>
+                </FormControl>
+              </Box>
+
+              {/* Row 2 (Dates) — calendar opens on clicking the field */}
+              <Box
+                sx={{
+                  mt: 1.5,
+                  display: 'grid',
+                  gap: 2,
+                  gridTemplateColumns: { xs: '1fr', md: dateGridTemplateMd },
+                  justifyContent: 'flex-start',
+                }}
+              >
+                <DatePicker
+                  disabled={!canEdit || lockDates}
+                  open={openTarget}
+                  onOpen={() => setOpenTarget(true)}
+                  onClose={() => setOpenTarget(false)}
+                  label="Target Date"
+                  value={formData.targetDate}
+                  onChange={(value) => handleChange('targetDate', value)}
+                  inputFormat="dd-MMM-yy"
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      size: 'small',
+                      helperText: lockDates ? 'Only owner/admin can edit' : '',
+                      sx: fieldSx,
+                      onClick: () => {
+                        if (!(!canEdit || lockDates)) setOpenTarget(true);
+                      },
+                      inputProps: { readOnly: true },
+                    },
+                  }}
+                />
+
+                <DatePicker
+                  disabled={!canEdit || lockDates}
+                  open={openDue}
+                  onOpen={() => setOpenDue(true)}
+                  onClose={() => setOpenDue(false)}
+                  label="Due Date"
+                  value={formData.dueDate}
+                  onChange={(value) => handleChange('dueDate', value)}
+                  inputFormat="dd-MMM-yy"
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      size: 'small',
+                      helperText: lockDates ? 'Only owner/admin can edit' : '',
+                      sx: fieldSx,
+                      onClick: () => {
+                        if (!(!canEdit || lockDates)) setOpenDue(true);
+                      },
+                      inputProps: { readOnly: true },
+                    },
+                  }}
+                />
+
+                {showCategory && (
+                  <FormControl
                     fullWidth
-                    sx={{ '& .MuiInputBase-root': { minHeight: 64, fontSize: '1rem' } }}
-                    InputProps={{
-                      ...params.InputProps,
-                      sx: { alignItems: 'center' }
-                    }}
-                  />
+                    disabled={!canEdit}
+                    size="small"
+                    sx={{ '& .MuiInputLabel-root': { fontWeight: 700 } }}
+                  >
+                    <InputLabel>Category</InputLabel>
+                    <Select
+                      value={categoryValue}
+                      label="Category"
+                      onChange={(e) => handleChange('category', e.target.value)}
+                      sx={selectSx}
+                    >
+                      <MenuItem value="">None</MenuItem>
+                      {categoryOptions.map((option) => (
+                        <MenuItem key={option.id || option.option_value} value={option.option_value}>
+                          {option.option_value}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
                 )}
-                renderOption={(props, option) => (
-                  <Box component="li" {...props} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem', bgcolor: '#0f766e' }}>
-                      {option.avatar || ((option.first_name || '').charAt(0) + (option.last_name || '').charAt(0))}
-                    </Avatar>
-                    <Box>
-                      <Typography variant="body2">{option.first_name ? `${option.first_name} ${option.last_name || ''}`.trim() : option.username || option.email}</Typography>
-                      <Typography variant="caption" color="text.secondary">{option.email}</Typography>
-                    </Box>
-                  </Box>
+
+                {showSection && (
+                  <FormControl
+                    fullWidth
+                    disabled={!canEdit}
+                    size="small"
+                    sx={{ '& .MuiInputLabel-root': { fontWeight: 700 } }}
+                  >
+                    <InputLabel>Section</InputLabel>
+                    <Select
+                      value={sectionValue}
+                      label="Section"
+                      onChange={(e) => handleChange('section', e.target.value)}
+                      sx={selectSx}
+                    >
+                      <MenuItem value="">None</MenuItem>
+                      {sectionOptions.map((option) => (
+                        <MenuItem key={option.id || option.option_value} value={option.option_value}>
+                          {option.option_value}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
                 )}
-              />
-            </Grid>
-            <Grid xs={12} md={3}>
-              <Autocomplete
-                disabled={!canEdit}
-                multiple
-                options={projectMembers}
-                getOptionLabel={(option) => option.first_name ? `${option.first_name} ${option.last_name || ''}`.trim() : option.username || option.email}
-                value={formData.collaborators}
-                onChange={(e, value) => handleChange('collaborators', value)}
-                renderInput={(params) => (
-                  <TextField {...params} label="Collaborators" placeholder="Add collaborators" fullWidth sx={{ '& .MuiInputBase-root': { minHeight: 56, fontSize: '0.95rem' } }} />
-                )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      avatar={
-                        <Avatar sx={{ width: 32, height: 32, fontSize: '0.95rem', bgcolor: '#0f766e' }}>
-                          {option.avatar || ((option.first_name || '').charAt(0) + (option.last_name || '').charAt(0))}
-                        </Avatar>
-                      }
-                      label={option.first_name ? `${option.first_name} ${option.last_name || ''}`.trim() : option.username || option.email}
-                      {...getTagProps({ index })}
-                      size="medium"
-                      sx={{ mr: 0.5, py: 0.5, fontSize: '0.95rem' }}
+              </Box>
+            </Section>
+
+            {/* ===================== ALLOCATION (compact + actions inline + quick team icons) ===================== */}
+            <Section title="Allocation">
+              <Box
+                sx={{
+                  display: 'grid',
+                  rowGap: 1.5,
+                  columnGap: 0.75,
+                  alignItems: 'center',
+                  // ✅ Smaller Assignee & Collaborators (half-ish), actions next, team icons last
+                  gridTemplateColumns: {
+                    xs: '1fr',
+                    md: 'minmax(168px, 224px) minmax(220px, 280px) minmax(156px, 204px) 1fr',
+                  },
+                }}
+              >
+                {/* Assignee (smaller width) */}
+                <Autocomplete
+                  disabled={!canEdit}
+                  options={memberOptions}
+                  getOptionLabel={(o) => getMemberLabel(o)}
+                  value={formData.assignee}
+                  onChange={handleAssigneeChange}
+                  isOptionEqualToValue={(a, b) => String(a?.id) === String(b?.id)}
+                  disablePortal
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Assignee"
+                      placeholder="Select"
+                      fullWidth
+                      size="small"
+                      sx={fieldSx}
+                      InputProps={{
+                        ...params.InputProps,
+                        startAdornment: (
+                          <>
+                            <Box sx={{ display: 'flex', alignItems: 'center', mr: 1 }}>
+                              <Avatar
+                                sx={{
+                                  width: 26,
+                                  height: 26,
+                                  fontSize: 11,
+                                  bgcolor: formData.assignee ? '#0f766e' : 'rgba(148,163,184,0.35)',
+                                }}
+                              >
+                                {formData.assignee ? getInitials(formData.assignee) : <PersonIcon sx={{ fontSize: 15 }} />}
+                              </Avatar>
+                            </Box>
+                            {params.InputProps.startAdornment}
+                          </>
+                        ),
+                      }}
                     />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid xs={12} md={3}>
-              <TextField label="Status" value={formData.status} disabled fullWidth />
-            </Grid>
-            {/* ROW 3: Target Date, Due Date */}
-            <Grid xs={12} md={6}>
-              <DatePicker
-                disabled={!canEdit || (isEdit && normalizedRole !== 'owner' && normalizedRole !== 'admin')}
-                label="Target Date"
-                value={formData.targetDate}
-                onChange={(value) => handleChange('targetDate', value)}
-                inputFormat="dd-MMM-yy"
-                slotProps={{ textField: { fullWidth: true, helperText: isEdit && userRole !== 'owner' && userRole !== 'admin' ? 'Only owner/admin can edit' : '' } }}
-              />
-            </Grid>
+                  )}
+                  renderOption={(props, option) => (
+                    <Box component="li" {...props} sx={{ display: 'flex', alignItems: 'center', gap: 1.1, py: 0.75 }}>
+                      <Avatar sx={{ width: 26, height: 26, fontSize: 11, bgcolor: '#0f766e' }}>
+                        {option.avatar || getInitials(option)}
+                      </Avatar>
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap>
+                          {getMemberLabel(option)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" noWrap>
+                          {option.email || ''}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  )}
+                />
 
-            <Grid xs={12} md={6}>
-              <DatePicker
-                disabled={!canEdit || (isEdit && normalizedRole !== 'owner' && normalizedRole !== 'admin')}
-                label="Due Date"
-                value={formData.dueDate}
-                onChange={(value) => handleChange('dueDate', value)}
-                inputFormat="dd-MMM-yy"
-                slotProps={{ textField: { fullWidth: true, helperText: isEdit && normalizedRole !== 'owner' && normalizedRole !== 'admin' ? 'Only owner/admin can edit' : '' } }}
-              />
-            </Grid>
-
-            <Grid item xs={12} md={6}>
-              <TextField
-                disabled={!canEdit}
-                fullWidth
-                label="Task Notes"
-                value={formData.notes}
-                onChange={(e) => handleChange('notes', e.target.value)}
-                multiline
-                rows={4}
-                placeholder="Add detailed notes, instructions, or updates"
-              />
-            </Grid>
-
-            <Grid item xs={12} md={6}>
-              <TextField
-                disabled={!canEdit}
-                fullWidth
-                label="Description"
-                value={formData.description}
-                onChange={(e) => handleChange('description', e.target.value)}
-                multiline
-                rows={4}
-                placeholder="Add task description"
-              />
-            </Grid>
-
-            {isEdit && (
-              <Grid item xs={12} md={3}>
-                <Box sx={{ p: 2, bgcolor: 'rgba(148, 163, 184, 0.05)', borderRadius: 2 }}>
-                  <Typography variant="caption" color="text.secondary" display="block">
-                    Created by: <strong>{task.created_by_name || task.createdBy || '-'}</strong>
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary" display="block">
-                    Created on: <strong>{(task.created_at || task.createdDate) ? formatShortDate(task.created_at || task.createdDate) : '-'}</strong>
-                  </Typography>
+                {/* ✅ Actions inline (next to assignee) */}
+                <Box sx={{ display: 'flex', gap: 1, justifyContent: { xs: 'flex-start', md: 'flex-start' } }}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    disabled={!canEdit || !currentUserMember}
+                    onClick={() => {
+                      if (!currentUserMember) return;
+                      handleAssigneeChange(null, currentUserMember);
+                    }}
+                    sx={tinyBtnSx}
+                  >
+                    Assign to me
+                  </Button>
+                  <Button
+                    variant="text"
+                    size="small"
+                    disabled={!canEdit || !formData.assignee}
+                    onClick={() => handleAssigneeChange(null, null)}
+                    sx={{ ...tinyBtnSx, color: 'error.main' }}
+                  >
+                    Clear
+                  </Button>
                 </Box>
-              </Grid>
-            )}
 
-            {/* Recurring Task Option - Only for new tasks */}
-            {!isEdit && onCreateRecurring && (
-              <Grid item xs={12}>
-                <Box 
-                  sx={{ 
-                    p: 2, 
-                    border: '1px solid', 
-                    borderColor: formData.isRecurring ? '#0f766e' : 'rgba(148, 163, 184, 0.3)',
+                {/* Collaborators (smaller + clickable field opens picker) */}
+                <Box
+                  onClick={(e) => openCollaboratorsPicker(e.currentTarget)}
+                  sx={{
+                    cursor: canEdit ? 'pointer' : 'default',
+                    border: '1px solid rgba(148,163,184,0.35)',
                     borderRadius: 2,
-                    bgcolor: formData.isRecurring ? 'rgba(15, 118, 110, 0.05)' : 'transparent',
-                    transition: 'all 0.2s'
+                    bgcolor: 'rgba(15,118,110,0.03)',
+                    minHeight: 44,
+                    px: 1.15,
+                    py: 0.75,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 1,
+                    width: '100%',
+                    '&:hover': canEdit ? { borderColor: 'rgba(15,118,110,0.55)' } : undefined,
                   }}
                 >
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography variant="caption" sx={{ fontWeight: 800, color: 'text.secondary', lineHeight: 1.05 }}>
+                      Collaborators
+                    </Typography>
+
+                    <Box sx={{ mt: 0.35, display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {formData.collaborators?.length ? (
+                        <AvatarGroup
+                          max={5}
+                          sx={{
+                            '& .MuiAvatar-root': {
+                              width: 26,
+                              height: 26,
+                              fontSize: 11,
+                              bgcolor: '#0f766e',
+                            },
+                          }}
+                        >
+                          {formData.collaborators.map((m) => (
+                            <Avatar key={m.id} title={getMemberLabel(m)}>
+                              {m.avatar || getInitials(m)}
+                            </Avatar>
+                          ))}
+                        </AvatarGroup>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          Add collaborators
+                        </Typography>
+                      )}
+
+                      {formData.collaborators?.length ? (
+                        <Chip
+                          size="small"
+                          label={`${formData.collaborators.length}`}
+                          sx={{ height: 20, borderRadius: 999, fontWeight: 900 }}
+                        />
+                      ) : null}
+                    </Box>
+                  </Box>
+
+                  {/* + button still present but not required */}
+                  <Tooltip title="Add / remove collaborators">
+                    <span>
+                      <IconButton
+                        size="small"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openCollaboratorsPicker(e.currentTarget);
+                        }}
+                        disabled={!canEdit}
+                        sx={{
+                          borderRadius: 2,
+                          border: '1px solid rgba(148,163,184,0.35)',
+                          bgcolor: '#fff',
+                        }}
+                      >
+                        <AddIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                </Box>
+
+                {/* ✅ Quick team icons (click to add/remove collaborator) */}
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.75,
+                    overflowX: 'auto',
+                    py: 0.25,
+                    px: 0.25,
+                  }}
+                >
+                  {memberOptions
+                    .filter((m) => !formData.assignee || String(m.id) !== String(formData.assignee.id))
+                    .slice(0, 12)
+                    .map((m) => {
+                      const selected = isCollaboratorSelected(m);
+                      return (
+                        <Tooltip key={m.id} title={getMemberLabel(m)} arrow>
+                          <span>
+                            <Avatar
+                              onClick={() => {
+                                if (!canEdit) return;
+                                toggleCollaborator(m);
+                              }}
+                              sx={{
+                                width: 28,
+                                height: 28,
+                                fontSize: 11,
+                                bgcolor: selected ? '#0f766e' : 'rgba(148,163,184,0.35)',
+                                color: selected ? '#fff' : 'rgba(0,0,0,0.75)',
+                                cursor: canEdit ? 'pointer' : 'default',
+                                border: selected ? '2px solid rgba(15,118,110,0.65)' : '2px solid transparent',
+                                transition: 'all 0.15s',
+                              }}
+                            >
+                              {m.avatar || getInitials(m)}
+                            </Avatar>
+                          </span>
+                        </Tooltip>
+                      );
+                    })}
+                  {memberOptions.length > 12 && (
+                    <Chip
+                      size="small"
+                      label={`+${memberOptions.length - 12}`}
+                      onClick={(e) => openCollaboratorsPicker(e.currentTarget)}
+                      sx={{
+                        height: 24,
+                        borderRadius: 999,
+                        fontWeight: 900,
+                        cursor: canEdit ? 'pointer' : 'default',
+                      }}
+                    />
+                  )}
+                </Box>
+
+                {/* Popover */}
+                <Popover
+                  open={collabPopoverOpen}
+                  anchorEl={collabAnchorEl}
+                  onClose={() => setCollabAnchorEl(null)}
+                  anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+                  transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+                  PaperProps={{ sx: { width: 440, borderRadius: 2, p: 1.25 } }}
+                >
+                  <Typography variant="subtitle2" sx={{ fontWeight: 900, mb: 1 }}>
+                    Select collaborators
+                  </Typography>
+
+                  <TextField
+                    size="small"
+                    fullWidth
+                    placeholder="Search members..."
+                    value={collabQuery}
+                    onChange={(e) => setCollabQuery(e.target.value)}
+                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                  />
+
+                  <Box sx={{ mt: 1, maxHeight: 260, overflowY: 'auto' }}>
+                    <List dense disablePadding>
+                      {collaboratorCandidates.map((m) => {
+                        const selected = isCollaboratorSelected(m);
+                        return (
+                          <ListItemButton
+                            key={m.id}
+                            onClick={() => toggleCollaborator(m)}
+                            sx={{ borderRadius: 2, mb: 0.5 }}
+                          >
+                            <ListItemIcon sx={{ minWidth: 34 }}>
+                              <Checkbox edge="start" checked={selected} tabIndex={-1} disableRipple />
+                            </ListItemIcon>
+
+                            <Avatar sx={{ width: 28, height: 28, fontSize: 12, bgcolor: '#0f766e', mr: 1 }}>
+                              {m.avatar || getInitials(m)}
+                            </Avatar>
+
+                            <Box sx={{ minWidth: 0 }}>
+                              <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap>
+                                {getMemberLabel(m)}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" noWrap>
+                                {m.email || ''}
+                              </Typography>
+                            </Box>
+                          </ListItemButton>
+                        );
+                      })}
+
+                      {!collaboratorCandidates.length && (
+                        <Typography variant="body2" color="text.secondary" sx={{ p: 1 }}>
+                          No members found
+                        </Typography>
+                      )}
+                    </List>
+                  </Box>
+
+                  <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
+                    <Button
+                      onClick={() => setCollabAnchorEl(null)}
+                      variant="contained"
+                      sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 900 }}
+                    >
+                      Done
+                    </Button>
+                  </Box>
+                </Popover>
+              </Box>
+            </Section>
+
+            {/* ===================== DETAILS ===================== */}
+            <Section title="Details">
+              <Box
+                sx={{
+                  display: 'grid',
+                  gap: 2,
+                  gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
+                }}
+              >
+                <TextField
+                  disabled={!canEdit}
+                  fullWidth
+                  label="Task Notes"
+                  value={formData.notes}
+                  onChange={(e) => handleChange('notes', e.target.value)}
+                  multiline
+                  rows={4}
+                  placeholder="Add notes"
+                  sx={fieldSx}
+                  size="small"
+                />
+
+                <TextField
+                  disabled={!canEdit}
+                  fullWidth
+                  label="Description"
+                  value={formData.description}
+                  onChange={(e) => handleChange('description', e.target.value)}
+                  multiline
+                  rows={4}
+                  placeholder="Add description"
+                  sx={fieldSx}
+                  size="small"
+                />
+              </Box>
+
+              {isEdit && (
+                <Box sx={{ mt: 1.2, display: 'flex', justifyContent: 'flex-end' }}>
+                  <Box sx={{ textAlign: 'right' }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                      Created by: <strong>{task.created_by_name || task.createdBy || '-'}</strong>
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                      Created on:{' '}
+                      <strong>
+                        {(task.created_at || task.createdDate) ? formatShortDate(task.created_at || task.createdDate) : '-'}
+                      </strong>
+                    </Typography>
+                  </Box>
+                </Box>
+              )}
+
+              {!isEdit && onCreateRecurring && (
+                <Box sx={{ mt: 1.5 }}>
+                  <Divider sx={{ mb: 1.25 }} />
                   <FormControlLabel
                     control={
                       <Switch
                         checked={formData.isRecurring}
                         onChange={(e) => handleChange('isRecurring', e.target.checked)}
-                        color="primary"
                       />
                     }
                     label={
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <RepeatIcon sx={{ color: formData.isRecurring ? '#0f766e' : 'text.secondary' }} />
-                        <Typography variant="body1" sx={{ fontWeight: formData.isRecurring ? 600 : 400 }}>
-                          Make this a recurring task
-                        </Typography>
+                        <RepeatIcon sx={{ color: 'text.secondary' }} />
+                        <Typography sx={{ fontWeight: 900 }}>Recurring task</Typography>
                       </Box>
                     }
                   />
-                  
                   <Collapse in={formData.isRecurring}>
-                    <Box sx={{ mt: 2, pl: 5 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        Set up automatic repetition for this task
-                      </Typography>
-                      <Grid container spacing={2} alignItems="center">
-                        <Grid item>
-                          <FormControl size="small" sx={{ minWidth: 150 }}>
-                            <InputLabel>Repeat</InputLabel>
-                            <Select
-                              value={formData.recurrencePattern}
-                              label="Repeat"
-                              onChange={(e) => handleChange('recurrencePattern', e.target.value)}
-                            >
-                              <MenuItem value="daily">Daily</MenuItem>
-                              <MenuItem value="weekly">Weekly</MenuItem>
-                              <MenuItem value="biweekly">Bi-weekly</MenuItem>
-                              <MenuItem value="monthly">Monthly</MenuItem>
-                            </Select>
-                          </FormControl>
-                        </Grid>
-                        <Grid item>
-                          <Button
-                            variant="outlined"
-                            size="small"
-                            startIcon={<RepeatIcon />}
-                            onClick={() => {
-                              onCreateRecurring({
-                                title: formData.name,
-                                description: formData.description,
-                                project_id: projectId,
-                                assignee: formData.assignee,
-                                priority: formData.priority,
-                                recurrencePattern: formData.recurrencePattern,
-                              });
-                              onClose();
-                            }}
-                            sx={{ borderRadius: 2, textTransform: 'none' }}
-                          >
-                            Set up recurring series
-                          </Button>
-                        </Grid>
-                      </Grid>
-                      <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                        This will open the recurring series editor for advanced options
-                      </Typography>
+                    <Box sx={{ mt: 1 }}>
+                      <FormControl size="small" sx={{ minWidth: 220 }}>
+                        <InputLabel>Repeat</InputLabel>
+                        <Select
+                          value={formData.recurrencePattern}
+                          label="Repeat"
+                          onChange={(e) => handleChange('recurrencePattern', e.target.value)}
+                          sx={{ borderRadius: 2 }}
+                        >
+                          <MenuItem value="daily">Daily</MenuItem>
+                          <MenuItem value="weekly">Weekly</MenuItem>
+                          <MenuItem value="biweekly">Bi-weekly</MenuItem>
+                          <MenuItem value="monthly">Monthly</MenuItem>
+                        </Select>
+                      </FormControl>
                     </Box>
                   </Collapse>
                 </Box>
-              </Grid>
+              )}
+            </Section>
+
+            {/* ===================== CUSTOM FIELDS (Feature 1) ===================== */}
+            {showCustomFieldsSection && (
+              <Section title="Custom Fields">
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                  Additional fields for tracking and organization (enable in Project Settings)
+                </Typography>
+
+                {(showEstimated || showActual || showCompletion) && (
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gap: 2,
+                      gridTemplateColumns: { xs: '1fr', md: 'repeat(auto-fit, minmax(220px, 1fr))' },
+                      mt: 2,
+                    }}
+                  >
+                    {showEstimated && (
+                      <TextField
+                        disabled={!canEdit}
+                        fullWidth
+                        label="Estimated Hours"
+                        type="number"
+                        value={formData.estimatedHours}
+                        onChange={(e) => handleChange('estimatedHours', e.target.value)}
+                        inputProps={{ min: 0, step: 0.5 }}
+                        placeholder="0"
+                        sx={fieldSx}
+                        size="small"
+                      />
+                    )}
+
+                    {showActual && (
+                      <TextField
+                        disabled={!canEdit}
+                        fullWidth
+                        label="Actual Hours"
+                        type="number"
+                        value={formData.actualHours}
+                        onChange={(e) => handleChange('actualHours', e.target.value)}
+                        inputProps={{ min: 0, step: 0.5 }}
+                        placeholder="0"
+                        sx={fieldSx}
+                        size="small"
+                      />
+                    )}
+
+                    {showCompletion && (
+                      <TextField
+                        disabled={!canEdit}
+                        fullWidth
+                        label="Completion %"
+                        type="number"
+                        value={formData.completionPercentage}
+                        onChange={(e) =>
+                          handleChange(
+                            'completionPercentage',
+                            Math.min(100, Math.max(0, parseInt(e.target.value) || 0))
+                          )
+                        }
+                        inputProps={{ min: 0, max: 100 }}
+                        placeholder="0"
+                        sx={fieldSx}
+                        size="small"
+                      />
+                    )}
+                  </Box>
+                )}
+
+                {(showTags || showExternalId) && (
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gap: 2,
+                      gridTemplateColumns: {
+                        xs: '1fr',
+                        md: showTags && showExternalId ? '2fr 1fr' : '1fr',
+                      },
+                      mt: 2,
+                    }}
+                  >
+                    {showTags && (
+                      <Autocomplete
+                        multiple
+                        freeSolo
+                        disabled={!canEdit}
+                        options={[]}
+                        value={formData.tags}
+                        onChange={(_, value) => handleChange('tags', value)}
+                        renderTags={(value, getTagProps) =>
+                          value.map((tag, index) => (
+                            <Chip
+                              {...getTagProps({ index })}
+                              key={index}
+                              label={tag}
+                              size="small"
+                              sx={{ height: 22, borderRadius: 1 }}
+                            />
+                          ))
+                        }
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            label="Tags"
+                            placeholder="Add tags (press Enter)"
+                            size="small"
+                            sx={fieldSx}
+                          />
+                        )}
+                      />
+                    )}
+
+                    {showExternalId && (
+                      <TextField
+                        disabled={!canEdit}
+                        fullWidth
+                        label="External ID"
+                        value={formData.externalId}
+                        onChange={(e) => handleChange('externalId', e.target.value)}
+                        placeholder="JIRA-123"
+                        sx={{
+                          ...fieldSx,
+                          '& .MuiOutlinedInput-input': {
+                            fontFamily: 'monospace',
+                          },
+                        }}
+                        size="small"
+                        helperText="Link to external system"
+                      />
+                    )}
+                  </Box>
+                )}
+              </Section>
             )}
-          </Grid>
+
+          </Box>
         </DialogContent>
 
-        <DialogActions sx={{ p: 2.5 }}>
+        <DialogActions sx={{ p: 2, bgcolor: '#fff', borderTop: '1px solid rgba(148,163,184,0.25)' }}>
           {canDelete && (
             <Button
               onClick={() => {
@@ -551,34 +1237,37 @@ function TaskForm({ open, onClose, onSave, task = null, prefilledStage = null, p
               }}
               color="error"
               variant="outlined"
-              sx={{ textTransform: 'none', mr: 'auto' }}
+              sx={{ textTransform: 'none', mr: 'auto', borderRadius: 2, fontWeight: 900 }}
             >
               Delete Task
             </Button>
           )}
-          <Button onClick={onClose} sx={{ textTransform: 'none' }}>
+
+          <Button onClick={onClose} sx={{ textTransform: 'none', borderRadius: 2, fontWeight: 900 }}>
             Cancel
           </Button>
+
           <Button
             onClick={handleSubmit}
             variant="contained"
-            sx={{ textTransform: 'none', borderRadius: 2 }}
+            sx={{ textTransform: 'none', borderRadius: 2, fontWeight: 900 }}
             disabled={!formData.name.trim() || !canEdit}
           >
             {isEdit ? 'Save Changes' : 'Create Task'}
           </Button>
         </DialogActions>
+
+        <Snackbar
+          open={toast.open}
+          autoHideDuration={4000}
+          onClose={() => setToast({ ...toast, open: false })}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert onClose={() => setToast({ ...toast, open: false })} severity={toast.severity} sx={{ width: '100%' }}>
+            {toast.message}
+          </Alert>
+        </Snackbar>
       </Dialog>
-      <Snackbar
-        open={toast.open}
-        autoHideDuration={4000}
-        onClose={() => setToast({ ...toast, open: false })}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert onClose={() => setToast({ ...toast, open: false })} severity={toast.severity} sx={{ width: '100%' }}>
-          {toast.message}
-        </Alert>
-      </Snackbar>
     </LocalizationProvider>
   );
 }

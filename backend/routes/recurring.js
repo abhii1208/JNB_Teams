@@ -111,22 +111,28 @@ router.get('/workspace/:workspaceId', async (req, res) => {
     const { includeDeleted = false, includePaused = true } = req.query;
 
     try {
+        // Cast workspaceId to integer to prevent type mismatch
+        const workspaceIdInt = parseInt(workspaceId, 10);
+        if (isNaN(workspaceIdInt)) {
+            return res.status(400).json({ error: 'Invalid workspace ID' });
+        }
+
         let query = `
             SELECT 
                 rs.*,
                 u.first_name || ' ' || u.last_name as created_by_name,
                 a.first_name || ' ' || a.last_name as assignee_name,
                 p.name as project_name,
-                (SELECT COUNT(*) FROM tasks WHERE series_id = rs.id AND deleted_at IS NULL) as total_instances,
-                (SELECT COUNT(*) FROM tasks WHERE series_id = rs.id AND status = 'Completed' AND deleted_at IS NULL) as completed_instances
+                (SELECT COUNT(*) FROM tasks WHERE series_id::text = rs.id::text AND deleted_at IS NULL) as total_instances,
+                (SELECT COUNT(*) FROM tasks WHERE series_id::text = rs.id::text AND status = 'Completed' AND deleted_at IS NULL) as completed_instances
             FROM recurring_series rs
-            LEFT JOIN users u ON rs.created_by = u.id
-            LEFT JOIN users a ON rs.static_assignee_id = a.id
+            LEFT JOIN users u ON rs.created_by::text = u.id::text
+            LEFT JOIN users a ON rs.static_assignee_id::text = a.id::text
             LEFT JOIN projects p ON rs.project_id = p.id
             WHERE rs.workspace_id = $1
         `;
 
-        const params = [workspaceId];
+        const params = [workspaceIdInt];
 
         if (!includeDeleted) {
             query += ' AND rs.deleted_at IS NULL';
@@ -162,6 +168,12 @@ router.get('/:id', async (req, res) => {
     const { id } = req.params;
 
     try {
+        // Cast id to integer to prevent type mismatch
+        const seriesId = parseInt(id, 10);
+        if (isNaN(seriesId)) {
+            return res.status(400).json({ error: 'Invalid series ID' });
+        }
+
         const result = await pool.query(`
             SELECT 
                 rs.*,
@@ -171,13 +183,13 @@ router.get('/:id', async (req, res) => {
                 p.name as project_name,
                 w.name as workspace_name
             FROM recurring_series rs
-            LEFT JOIN users u ON rs.created_by = u.id
-            LEFT JOIN users a ON rs.static_assignee_id = a.id
-            LEFT JOIN users ap ON rs.approver_id = ap.id
+            LEFT JOIN users u ON rs.created_by::text = u.id::text
+            LEFT JOIN users a ON rs.static_assignee_id::text = a.id::text
+            LEFT JOIN users ap ON rs.approver_id::text = ap.id::text
             LEFT JOIN projects p ON rs.project_id = p.id
             LEFT JOIN workspaces w ON rs.workspace_id = w.id
             WHERE rs.id = $1
-        `, [id]);
+        `, [seriesId]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Series not found' });
@@ -191,10 +203,10 @@ router.get('/:id', async (req, res) => {
             const rotationResult = await pool.query(`
                 SELECT ar.*, u.first_name || ' ' || u.last_name as user_name
                 FROM assignment_rotation ar
-                JOIN users u ON ar.user_id = u.id
+                JOIN users u ON ar.user_id::text = u.id::text
                 WHERE ar.series_id = $1
                 ORDER BY ar.order_index
-            `, [id]);
+            `, [seriesId]);
             rotationMembers = rotationResult.rows;
         }
 
@@ -202,11 +214,11 @@ router.get('/:id', async (req, res) => {
         const instancesResult = await pool.query(`
             SELECT t.*, u.first_name || ' ' || u.last_name as assignee_name
             FROM tasks t
-            LEFT JOIN users u ON t.assignee_id = u.id
-            WHERE t.series_id = $1 AND t.deleted_at IS NULL
+            LEFT JOIN users u ON t.assignee_id::text = u.id::text
+            WHERE t.series_id::text = $1::text AND t.deleted_at IS NULL
             ORDER BY t.due_date DESC
             LIMIT 10
-        `, [id]);
+        `, [seriesId]);
 
         // Get exceptions
         const exceptionsResult = await pool.query(`
@@ -214,18 +226,19 @@ router.get('/:id', async (req, res) => {
             WHERE series_id = $1
             ORDER BY original_date DESC
             LIMIT 20
-        `, [id]);
+        `, [seriesId]);
 
         res.json({
             ...series,
-            rule_summary: getRuleSummary(series.recurrence_rule),
             rotation_members: rotationMembers,
             recent_instances: instancesResult.rows,
             exceptions: exceptionsResult.rows
         });
     } catch (err) {
         console.error('Get series error:', err);
-        res.status(500).json({ error: 'Failed to fetch series' });
+        console.error('Stack trace:', err.stack);
+        console.error('Error details:', { message: err.message, code: err.code, detail: err.detail });
+        res.status(500).json({ error: 'Failed to fetch series', details: err.message });
     }
 });
 
@@ -364,6 +377,11 @@ router.put('/:id', async (req, res) => {
     } = req.body;
 
     try {
+        // Cast id to integer to prevent type mismatch
+        const seriesId = parseInt(id, 10);
+        if (isNaN(seriesId)) {
+            return res.status(400).json({ error: 'Invalid series ID' });
+        }
         // If editing future only, split the series
         if (edit_scope === 'future' && updates.from_date) {
             const result = await splitSeries(id, updates.from_date, updates, req.userId);
@@ -434,6 +452,9 @@ router.put('/:id', async (req, res) => {
             return res.status(400).json({ error: 'No valid fields to update' });
         }
 
+        // Update the first parameter to use seriesId
+        values[0] = seriesId;
+
         const result = await pool.query(`
             UPDATE recurring_series 
             SET ${updateFields.join(', ')}
@@ -449,7 +470,7 @@ router.put('/:id', async (req, res) => {
         if (updates.recurrence_rule) {
             setImmediate(async () => {
                 try {
-                    await generateInstancesForSeries(id, { forceRegenerate: true });
+                    await generateInstancesForSeries(seriesId, { forceRegenerate: true });
                 } catch (err) {
                     console.error('Regeneration error:', err);
                 }
@@ -474,12 +495,16 @@ router.post('/:id/pause', async (req, res) => {
     const { id } = req.params;
 
     try {
+        const seriesId = parseInt(id, 10);
+        if (isNaN(seriesId)) {
+            return res.status(400).json({ error: 'Invalid series ID' });
+        }
         const result = await pool.query(`
             UPDATE recurring_series 
             SET paused_at = NOW()
             WHERE id = $1 AND paused_at IS NULL AND deleted_at IS NULL
             RETURNING *
-        `, [id]);
+        `, [seriesId]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Series not found or already paused' });
@@ -503,12 +528,16 @@ router.post('/:id/resume', async (req, res) => {
     const { backfill = false } = req.body;
 
     try {
+        const seriesId = parseInt(id, 10);
+        if (isNaN(seriesId)) {
+            return res.status(400).json({ error: 'Invalid series ID' });
+        }
         const result = await pool.query(`
             UPDATE recurring_series 
             SET paused_at = NULL
             WHERE id = $1 AND paused_at IS NOT NULL AND deleted_at IS NULL
             RETURNING *
-        `, [id]);
+        `, [seriesId]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Series not found or not paused' });
@@ -519,7 +548,7 @@ router.post('/:id/resume', async (req, res) => {
         // Generate instances after resume
         setImmediate(async () => {
             try {
-                await generateInstancesForSeries(id);
+                await generateInstancesForSeries(seriesId);
             } catch (err) {
                 console.error('Post-resume generation error:', err);
             }
@@ -542,13 +571,17 @@ router.delete('/:id', async (req, res) => {
     const { id } = req.params;
 
     try {
+        const seriesId = parseInt(id, 10);
+        if (isNaN(seriesId)) {
+            return res.status(400).json({ error: 'Invalid series ID' });
+        }
         // Soft delete the series (instances remain)
         const result = await pool.query(`
             UPDATE recurring_series 
             SET deleted_at = NOW()
             WHERE id = $1 AND deleted_at IS NULL
             RETURNING id, title
-        `, [id]);
+        `, [seriesId]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Series not found' });
@@ -560,11 +593,11 @@ router.delete('/:id', async (req, res) => {
             SET cancelled_at = NOW()
             WHERE task_id IN (
                 SELECT id FROM tasks 
-                WHERE series_id = $1 
+                WHERE series_id::text = $1::text 
                 AND due_date >= CURRENT_DATE
             )
             AND sent_at IS NULL
-        `, [id]);
+        `, [seriesId]);
 
         res.json({
             message: 'Series deleted. Existing task instances preserved.',
@@ -592,13 +625,17 @@ router.post('/:id/exception', async (req, res) => {
     }
 
     try {
+        const seriesId = parseInt(id, 10);
+        if (isNaN(seriesId)) {
+            return res.status(400).json({ error: 'Invalid series ID' });
+        }
         const result = await pool.query(`
             INSERT INTO recurrence_exceptions (series_id, original_date, new_date, exception_type, reason, created_by)
             VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (series_id, original_date) DO UPDATE
             SET new_date = $3, exception_type = $4, reason = $5
             RETURNING *
-        `, [id, original_date, new_date || null, exception_type, reason || null, req.userId]);
+        `, [seriesId, original_date, new_date || null, exception_type, reason || null, req.userId]);
 
         res.json({
             message: 'Exception added',
@@ -617,11 +654,15 @@ router.delete('/:id/exception/:date', async (req, res) => {
     const { id, date } = req.params;
 
     try {
+        const seriesId = parseInt(id, 10);
+        if (isNaN(seriesId)) {
+            return res.status(400).json({ error: 'Invalid series ID' });
+        }
         const result = await pool.query(`
             DELETE FROM recurrence_exceptions
             WHERE series_id = $1 AND original_date = $2
             RETURNING *
-        `, [id, date]);
+        `, [seriesId, date]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Exception not found' });
@@ -645,8 +686,12 @@ router.post('/:id/generate', async (req, res) => {
     const { maxInstances = 10 } = req.body || {};
 
     try {
+        const seriesId = parseInt(id, 10);
+        if (isNaN(seriesId)) {
+            return res.status(400).json({ error: 'Invalid series ID' });
+        }
         const parsedMax = Number(maxInstances);
-        const result = await generateInstancesForSeries(id, { 
+        const result = await generateInstancesForSeries(seriesId, { 
             maxInstances: Number.isNaN(parsedMax) ? 10 : parsedMax 
         });
         
@@ -668,6 +713,10 @@ router.get('/:id/audit', async (req, res) => {
     const { limit = 50 } = req.query;
 
     try {
+        const seriesId = parseInt(id, 10);
+        if (isNaN(seriesId)) {
+            return res.status(400).json({ error: 'Invalid series ID' });
+        }
         const result = await pool.query(`
             SELECT 
                 sal.*,
@@ -677,7 +726,7 @@ router.get('/:id/audit', async (req, res) => {
             WHERE sal.series_id = $1
             ORDER BY sal.performed_at DESC
             LIMIT $2
-        `, [id, limit]);
+        `, [seriesId, limit]);
 
         res.json(result.rows);
     } catch (err) {

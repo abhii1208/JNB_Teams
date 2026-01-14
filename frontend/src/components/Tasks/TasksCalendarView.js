@@ -93,7 +93,11 @@ const getTaskDateColor = (dateStr) => {
   if (taskDate < today) return '#dc2626'; // Overdue - red
   if (taskDate === today) return '#f97316'; // Due today - orange
   
-  const daysDiff = Math.floor((new Date(taskDate) - new Date(today)) / (1000 * 60 * 60 * 24));
+  const taskDateObj = parseDateOnly(taskDate);
+  const todayObj = parseDateOnly(today);
+  const daysDiff = taskDateObj && todayObj
+    ? Math.floor((taskDateObj - todayObj) / (1000 * 60 * 60 * 24))
+    : 0;
   if (daysDiff <= 3) return '#3b82f6'; // Upcoming (next 3 days) - blue
   
   return '#64748b'; // Future - gray
@@ -114,6 +118,23 @@ const formatDateOnly = (date) => {
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+};
+
+const getDateKey = (dateValue) => {
+  if (!dateValue) return null;
+  if (dateValue instanceof Date) return formatDateOnly(dateValue);
+  if (typeof dateValue === 'string') {
+    if (!dateValue.includes('T')) return dateValue;
+    const [isoDate, timePartRaw = ''] = dateValue.split('T');
+    const timePart = timePartRaw.toUpperCase();
+    const isMidnightUtc = timePart.startsWith('00:00:00')
+      && (timePart.includes('Z') || timePart.includes('+00') || timePart.includes('-00'));
+    if (isMidnightUtc) return isoDate;
+    const parsed = new Date(dateValue);
+    if (isValid(parsed)) return formatDateOnly(parsed);
+    return isoDate;
+  }
+  return null;
 };
 
 function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndicators, onTaskUpdate }) {
@@ -156,12 +177,10 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
     const map = {};
     tasks.forEach(task => {
       const dateField = dateMode === 'due' ? task.due_date : task.target_date;
-      if (dateField) {
-        // Extract date-only string without conversion
-        const dateKey = dateField.includes('T') ? dateField.split('T')[0] : dateField;
-        if (!map[dateKey]) map[dateKey] = [];
-        map[dateKey].push(task);
-      }
+      const dateKey = getDateKey(dateField);
+      if (!dateKey) return;
+      if (!map[dateKey]) map[dateKey] = [];
+      map[dateKey].push(task);
     });
     return map;
   }, [tasks, dateMode]);
@@ -186,11 +205,10 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
     const map = {};
     filteredTasks.forEach(task => {
       const dateField = dateMode === 'due' ? task.due_date : task.target_date;
-      if (dateField) {
-        const dateKey = dateField.includes('T') ? dateField.split('T')[0] : dateField;
-        if (!map[dateKey]) map[dateKey] = [];
-        map[dateKey].push(task);
-      }
+      const dateKey = getDateKey(dateField);
+      if (!dateKey) return;
+      if (!map[dateKey]) map[dateKey] = [];
+      map[dateKey].push(task);
     });
     return map;
   }, [filteredTasks, dateMode]);
@@ -260,7 +278,7 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
   };
   
   const getTasksForDay = (day) => {
-    const dateKey = format(day, 'yyyy-MM-dd');
+    const dateKey = formatDateOnly(day);
     return filteredTasksByDate[dateKey] || [];
   };
 
@@ -310,7 +328,7 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
     const isRecurring = indicators.some(i => i.type === 'recurring');
     
     const dateField = dateMode === 'due' ? task.due_date : task.target_date;
-    const dateStr = dateField ? (dateField.includes('T') ? dateField.split('T')[0] : dateField) : null;
+    const dateStr = getDateKey(dateField);
     const dateColor = dateStr ? getTaskDateColor(dateStr) : '#64748b';
     
     return (

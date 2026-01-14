@@ -19,7 +19,11 @@ const activityRouter = require('./routes/activity');
 const notificationsRouter = require('./routes/notifications');
 const userRouter = require('./routes/user');
 const recurringRouter = require('./routes/recurring');
+const recurringBulkRouter = require('./routes/recurring-bulk');
 const savedViewsRouter = require('./routes/savedViews');
+const projectColumnsRouter = require('./routes/projectColumns');
+const userPreferencesRouter = require('./routes/userPreferences');
+const adminRouter = require('./routes/admin');
 
 // Import background jobs
 const { initializeJobs, startJobs, stopJobs } = require('./jobs');
@@ -401,8 +405,12 @@ app.use('/api/approvals', authenticateToken, approvalsRouter);
 app.use('/api/activity', authenticateToken, activityRouter);
 app.use('/api/notifications', authenticateToken, notificationsRouter);
 app.use('/api/user', authenticateToken, userRouter);
+app.use('/api/recurring/bulk', authenticateToken, recurringBulkRouter);
 app.use('/api/recurring', authenticateToken, recurringRouter);
 app.use('/api/views', authenticateToken, savedViewsRouter);
+app.use('/api/project-columns', authenticateToken, projectColumnsRouter);
+app.use('/api/user-preferences', authenticateToken, userPreferencesRouter);
+app.use('/api/admin', authenticateToken, adminRouter);
 
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

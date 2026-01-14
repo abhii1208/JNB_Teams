@@ -126,3 +126,49 @@ export const getUserViewPreferences = (workspaceId) =>
   api.get(`/api/views/workspace/${workspaceId}/preferences`);
 export const updateUserViewPreferences = (workspaceId, preferences) => 
   api.put(`/api/views/workspace/${workspaceId}/preferences`, preferences);
+
+// User Preferences API (enhanced)
+export const getFullUserPreferences = (workspaceId) => 
+  api.get(`/api/user-preferences/workspace/${workspaceId}`);
+export const updateFullUserPreferences = (workspaceId, preferences) => 
+  api.put(`/api/user-preferences/workspace/${workspaceId}`, preferences);
+export const patchUserPreferences = (workspaceId, partialPreferences) => 
+  api.patch(`/api/user-preferences/workspace/${workspaceId}`, partialPreferences);
+export const resetUserPreferences = (workspaceId) => 
+  api.delete(`/api/user-preferences/workspace/${workspaceId}`);
+
+// Project Column Options API (Category & Section management)
+export const getProjectColumnOptions = (projectId, columnType) => 
+  api.get(`/api/project-columns/${projectId}/column-options`, { params: columnType ? { column_name: columnType } : {} });
+export const createProjectColumnOption = (projectId, optionData) => 
+  api.post(`/api/project-columns/${projectId}/column-options`, optionData);
+export const updateProjectColumnOption = (projectId, optionId, optionData) => 
+  api.put(`/api/project-columns/${projectId}/column-options/${optionId}`, optionData);
+export const deleteProjectColumnOption = (projectId, optionId) => 
+  api.delete(`/api/project-columns/${projectId}/column-options/${optionId}`);
+export const bulkCreateColumnOptions = (projectId, options) => 
+  api.post(`/api/project-columns/${projectId}/column-options/bulk`, { options });
+export const copyColumnOptionsFromProject = (projectId, sourceProjectId, columnTypes, strategy = 'merge') => 
+  api.post(`/api/project-columns/${projectId}/column-options/copy`, { 
+    source_project_id: sourceProjectId, 
+    column_types: columnTypes, 
+    strategy 
+  });
+export const getCopyableProjects = (projectId) => 
+  api.get(`/api/project-columns/${projectId}/column-options/copyable-projects`);
+export const getProjectColumnSettings = (projectId) => 
+  api.get(`/api/project-columns/${projectId}/column-settings`);
+export const updateProjectColumnSettings = (projectId, settings) => 
+  api.put(`/api/project-columns/${projectId}/column-settings`, settings);
+
+// Admin API
+export const getAdminProjects = (workspaceId, params = {}) => 
+  api.get(`/api/admin/${workspaceId}/projects`, { params });
+export const getAdminProjectTeamMetrics = (workspaceId, projectId, params = {}) => 
+  api.get(`/api/admin/${workspaceId}/projects/${projectId}/team-metrics`, { params });
+export const getAdminTeam = (workspaceId, params = {}) => 
+  api.get(`/api/admin/${workspaceId}/team`, { params });
+export const getAdminMemberDetails = (workspaceId, userId, params = {}) => 
+  api.get(`/api/admin/${workspaceId}/team/${userId}/details`, { params });
+export const getAdminProjectTasks = (workspaceId, projectId, params = {}) => 
+  api.get(`/api/admin/${workspaceId}/projects/${projectId}/tasks`, { params });
