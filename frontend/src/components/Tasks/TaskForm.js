@@ -73,6 +73,68 @@ const getMemberLabel = (m) => {
   return name || m.name || m.email || '';
 };
 
+const isMidnightUtcString = (value) => {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed.includes('T')) return false;
+  const [, timePartRaw = ''] = trimmed.split('T');
+  const timePart = timePartRaw.toUpperCase();
+  const isMidnight = timePart.startsWith('00:00:00') || timePart.startsWith('00:00');
+  const isUtc = timePart.includes('Z') || timePart.includes('+00') || timePart.includes('-00');
+  return isMidnight && isUtc;
+};
+
+const parseLocalDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.includes('T') && !isMidnightUtcString(trimmed)) {
+      const parsed = new Date(trimmed);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    const datePart = trimmed.split('T')[0].split(' ')[0];
+    const parts = datePart.split('-');
+    if (parts.length === 3 && parts[0].length === 4) {
+      const year = Number(parts[0]);
+      const month = Number(parts[1]) - 1;
+      const day = Number(parts[2]);
+      if (Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)) {
+        return new Date(year, month, day);
+      }
+    }
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const formatDateForApi = (value) => {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+    if (trimmed.includes('T') && !isMidnightUtcString(trimmed)) {
+      const parsed = new Date(trimmed);
+      return Number.isNaN(parsed.getTime()) ? null : formatDateForApi(parsed);
+    }
+    const parsed = parseLocalDate(trimmed);
+    return parsed ? formatDateForApi(parsed) : null;
+  }
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return null;
+  const isUtcMidnight = value.getUTCHours() === 0
+    && value.getUTCMinutes() === 0
+    && value.getUTCSeconds() === 0
+    && value.getUTCMilliseconds() === 0;
+  const useUtc = isUtcMidnight && !(value.getHours() === 0 && value.getMinutes() === 0 && value.getSeconds() === 0);
+  const year = useUtc ? value.getUTCFullYear() : value.getFullYear();
+  const month = String((useUtc ? value.getUTCMonth() : value.getMonth()) + 1).padStart(2, '0');
+  const day = String(useUtc ? value.getUTCDate() : value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const getInitials = (m) => {
   const label = getMemberLabel(m).trim();
   const parts = label.split(/\s+/).filter(Boolean);
@@ -233,8 +295,8 @@ function TaskForm({
         description: task.description || '',
         stage: initialStage,
         status: task.status || 'Open',
-        dueDate: task.due_date ? new Date(task.due_date) : (task.dueDate ? new Date(task.dueDate) : null),
-        targetDate: task.target_date ? new Date(task.target_date) : (task.targetDate ? new Date(task.targetDate) : null),
+        dueDate: parseLocalDate(task.due_date || task.dueDate),
+        targetDate: parseLocalDate(task.target_date || task.targetDate),
         assignee: null,
         collaborators: [],
         notes: task.notes || '',
@@ -439,8 +501,8 @@ function TaskForm({
       id: task?.id || Date.now(),
       assignee: formData.assignee || null,
       collaborators: formData.collaborators || [],
-      dueDate: formData.dueDate ? formData.dueDate.toISOString().split('T')[0] : null,
-      targetDate: formData.targetDate ? formData.targetDate.toISOString().split('T')[0] : null,
+      dueDate: formatDateForApi(formData.dueDate),
+      targetDate: formatDateForApi(formData.targetDate),
       createdBy: task?.created_by_name || task?.createdBy || null,
       createdDate: task?.created_at || task?.createdDate || null,
       // Custom columns (Feature 1)

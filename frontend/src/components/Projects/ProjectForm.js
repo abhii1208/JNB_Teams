@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
+  Autocomplete,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -8,11 +9,14 @@ import {
   TextField,
   Box,
   FormControl,
+  FormHelperText,
+  InputLabel,
   Select,
   MenuItem,
   Typography,
   IconButton,
   Grid,
+  Chip,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 
@@ -41,6 +45,7 @@ import HotelIcon from '@mui/icons-material/Hotel';
 import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import PetsIcon from '@mui/icons-material/Pets';
 import SportsEsportsIcon from '@mui/icons-material/SportsEsports';
+import { createClient, getClients, getWorkspaceMembers } from '../../apiClient';
 
 const projectIcons = [
   { value: 'folder', label: 'Folder', icon: <FolderIcon /> },
@@ -105,12 +110,23 @@ function formatDateSafe(value) {
   }).format(d);
 }
 
-function ProjectForm({ open, onClose, onSave, project, workspace }) {
+function ProjectForm({ open, onClose, onSave, project, workspace, user }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [icon, setIcon] = useState('folder');
   const [color, setColor] = useState('#0f766e');
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
+  const [clientsOptions, setClientsOptions] = useState([]);
+  const [selectedClients, setSelectedClients] = useState([]);
+  const [primaryClientId, setPrimaryClientId] = useState(null);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [clientQuickOpen, setClientQuickOpen] = useState(false);
+  const [quickClientName, setQuickClientName] = useState('');
+  const [quickClientOwnerId, setQuickClientOwnerId] = useState(user?.id || '');
+  const [quickClientStatus, setQuickClientStatus] = useState('Active');
+  const [quickClientGstin, setQuickClientGstin] = useState('');
+  const [quickClientTags, setQuickClientTags] = useState('');
+  const [workspaceMembers, setWorkspaceMembers] = useState([]);
 
   useEffect(() => {
     if (project) {
@@ -118,13 +134,66 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
       setDescription(project.description ?? project.project_description ?? '');
       setIcon(project.icon ?? project.project_icon ?? 'folder');
       setColor(project.color ?? project.project_color ?? '#0f766e');
+      const existingClients = Array.isArray(project.clients) ? project.clients : [];
+      const existingPrimary = project.primary_client || existingClients.find((c) => c.is_primary) || null;
+      setSelectedClients(existingClients);
+      setPrimaryClientId(existingPrimary?.id || existingClients[0]?.id || null);
     } else {
       setName('');
       setDescription('');
       setIcon('folder');
       setColor('#0f766e');
+      setSelectedClients([]);
+      setPrimaryClientId(null);
     }
   }, [project, open]);
+
+  useEffect(() => {
+    const fetchClients = async () => {
+      if (!workspace?.id || !open) return;
+      try {
+        setClientsLoading(true);
+        const response = await getClients(workspace.id);
+        setClientsOptions(response.data || []);
+      } catch (error) {
+        console.error('Failed to fetch clients:', error);
+        setClientsOptions([]);
+      } finally {
+        setClientsLoading(false);
+      }
+    };
+
+    fetchClients();
+  }, [workspace?.id, open]);
+
+  useEffect(() => {
+    if (selectedClients.length === 0) {
+      if (primaryClientId !== null) setPrimaryClientId(null);
+      return;
+    }
+    if (selectedClients.length === 1 && String(primaryClientId) !== String(selectedClients[0].id)) {
+      setPrimaryClientId(selectedClients[0].id);
+      return;
+    }
+    if (primaryClientId && !selectedClients.some((client) => String(client.id) === String(primaryClientId))) {
+      setPrimaryClientId(selectedClients[0].id);
+    }
+  }, [selectedClients, primaryClientId]);
+
+  useEffect(() => {
+    const fetchMembers = async () => {
+      if (!clientQuickOpen || !workspace?.id) return;
+      try {
+        const response = await getWorkspaceMembers(workspace.id);
+        setWorkspaceMembers(response.data || []);
+      } catch (error) {
+        console.error('Failed to fetch workspace members:', error);
+        setWorkspaceMembers([]);
+      }
+    };
+
+    fetchMembers();
+  }, [clientQuickOpen, workspace?.id]);
 
   const createdOnLabel = useMemo(() => {
     const raw = getCreatedDateValue(project);
@@ -134,6 +203,13 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
 
   const handleSubmit = () => {
     const created = getCreatedDateValue(project) || new Date().toISOString();
+    const selectedClientIds = selectedClients.map((client) => client.id);
+    const resolvedPrimaryId = selectedClientIds.includes(primaryClientId)
+      ? primaryClientId
+      : selectedClientIds[0] || null;
+    const resolvedPrimaryClient = selectedClients.find(
+      (client) => String(client.id) === String(resolvedPrimaryId)
+    ) || null;
 
     const projectData = {
       id: project?.id || Date.now(),
@@ -146,12 +222,107 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
       status: project?.status || 'Active',
       members: project?.members || [],
       tasks: project?.tasks || [],
+      client_ids: selectedClientIds,
+      primary_client_id: resolvedPrimaryId,
+      clients: selectedClients,
+      primary_client: resolvedPrimaryClient,
       // keep original backend field if it exists (no harm)
       ...(project?.created_at ? { created_at: project.created_at } : {}),
     };
 
     onSave(projectData);
     onClose();
+  };
+
+  const resetQuickClient = () => {
+    setQuickClientName('');
+    setQuickClientOwnerId(user?.id || '');
+    setQuickClientStatus('Active');
+    setQuickClientGstin('');
+    setQuickClientTags('');
+  };
+
+  const handleCreateQuickClient = async () => {
+    if (!workspace?.id || !quickClientName.trim()) return;
+    const basePayload = {
+      workspace_id: workspace.id,
+      client_name: quickClientName.trim(),
+      status: quickClientStatus,
+      owner_user_id: quickClientOwnerId === '' ? null : quickClientOwnerId || user?.id || null,
+      gstin: quickClientGstin || null,
+      tags: quickClientTags
+        .split(',')
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    };
+    try {
+      const attemptCreate = async (allowDuplicate = false) => {
+        const payload = allowDuplicate ? { ...basePayload, allow_duplicate: true } : basePayload;
+        return createClient(payload);
+      };
+
+      let response = await attemptCreate();
+      const created = response.data || {};
+      const nextClient = {
+        id: created.id,
+        name: created.name || created.client_name || quickClientName.trim(),
+        code: created.code || created.client_code,
+        status: created.status || quickClientStatus,
+      };
+      setClientsOptions((prev) => {
+        const exists = prev.some((client) => String(client.id) === String(nextClient.id));
+        return exists ? prev : [...prev, nextClient];
+      });
+      setSelectedClients((prev) => {
+        const exists = prev.some((client) => String(client.id) === String(nextClient.id));
+        return exists ? prev : [...prev, nextClient];
+      });
+      if (!primaryClientId) {
+        setPrimaryClientId(nextClient.id);
+      }
+      resetQuickClient();
+      setClientQuickOpen(false);
+    } catch (error) {
+      const similar = error.response?.data?.similar_clients;
+      if (error.response?.status === 409 && Array.isArray(similar) && similar.length > 0) {
+        const list = similar.map((client) => `${client.name} (${client.code})`).join('\n');
+        const proceed = window.confirm(
+          `Similar clients found:\n${list}\n\nCreate anyway?`
+        );
+        if (proceed) {
+          try {
+            const retryResponse = await createClient({ ...basePayload, allow_duplicate: true });
+            const created = retryResponse.data || {};
+            const nextClient = {
+              id: created.id,
+              name: created.name || created.client_name || quickClientName.trim(),
+              code: created.code || created.client_code,
+              status: created.status || quickClientStatus,
+            };
+            setClientsOptions((prev) => {
+              const exists = prev.some((client) => String(client.id) === String(nextClient.id));
+              return exists ? prev : [...prev, nextClient];
+            });
+            setSelectedClients((prev) => {
+              const exists = prev.some((client) => String(client.id) === String(nextClient.id));
+              return exists ? prev : [...prev, nextClient];
+            });
+            if (!primaryClientId) {
+              setPrimaryClientId(nextClient.id);
+            }
+            resetQuickClient();
+            setClientQuickOpen(false);
+            return;
+          } catch (retryError) {
+            console.error('Failed to create client after confirmation:', retryError);
+            alert(retryError.response?.data?.error || 'Failed to create client');
+            return;
+          }
+        }
+      }
+      console.error('Failed to create client:', error);
+      alert(error.response?.data?.error || 'Failed to create client');
+    }
   };
 
   const handleClose = () => onClose();
@@ -214,6 +385,92 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
               }}
             />
           </Box>
+
+          {/* Clients */}
+          <Box>
+            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+              Clients
+            </Typography>
+            <Autocomplete
+              multiple
+              options={clientsOptions}
+              value={selectedClients}
+              loading={clientsLoading}
+              onChange={(_event, value) => setSelectedClients(value)}
+              getOptionLabel={(option) => option?.name || ''}
+              isOptionEqualToValue={(option, value) => String(option.id) === String(value.id)}
+              getOptionDisabled={(option) => option?.status === 'Inactive'}
+              renderTags={(value, getTagProps) =>
+                value.map((option, index) => (
+                  <Chip
+                    key={option.id || option.name}
+                    label={option.name}
+                    size="small"
+                    variant={option.status === 'Inactive' ? 'outlined' : 'filled'}
+                    sx={{ opacity: option.status === 'Inactive' ? 0.65 : 1 }}
+                    {...getTagProps({ index })}
+                  />
+                ))
+              }
+              renderOption={(props, option) => (
+                <Box component="li" {...props} sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                  <Typography variant="body2">{option?.name}</Typography>
+                  {option?.status === 'Inactive' && (
+                    <Chip
+                      label="Inactive"
+                      size="small"
+                      variant="outlined"
+                      sx={{ fontSize: '0.65rem', height: 20 }}
+                    />
+                  )}
+                </Box>
+              )}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  placeholder="Search clients..."
+                  sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                />
+              )}
+            />
+            <FormHelperText>
+              Select one or more clients. Inactive clients cannot be newly linked.
+            </FormHelperText>
+            <Box sx={{ mt: 1, display: 'flex', gap: 1, alignItems: 'center' }}>
+              <Button
+                size="small"
+                onClick={() => {
+                  resetQuickClient();
+                  setClientQuickOpen(true);
+                }}
+                sx={{ textTransform: 'none' }}
+              >
+                + Add new client
+              </Button>
+            </Box>
+          </Box>
+
+          {selectedClients.length > 0 && (
+            <Box>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                Primary Client
+              </Typography>
+              <FormControl fullWidth>
+                <InputLabel>Primary Client</InputLabel>
+                <Select
+                  label="Primary Client"
+                  value={primaryClientId || ''}
+                  onChange={(e) => setPrimaryClientId(e.target.value)}
+                >
+                  {selectedClients.map((client) => (
+                    <MenuItem key={client.id} value={client.id} disabled={client.status === 'Inactive'}>
+                      {client.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+          )}
 
           {/* Icon + Color (aligned) */}
           <Grid container spacing={2} alignItems="flex-end">
@@ -381,6 +638,90 @@ function ProjectForm({ open, onClose, onSave, project, workspace }) {
           {project ? 'Save Changes' : 'Create Project'}
         </Button>
       </DialogActions>
+
+      {/* Quick Add Client Dialog */}
+      <Dialog
+        open={clientQuickOpen}
+        onClose={() => setClientQuickOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 3 } }}
+      >
+        <DialogTitle sx={{ fontWeight: 600 }}>Quick Add Client</DialogTitle>
+        <DialogContent sx={{ pt: 2 }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <TextField
+              label="Client Name"
+              value={quickClientName}
+              onChange={(e) => setQuickClientName(e.target.value)}
+              fullWidth
+              required
+            />
+            <FormControl fullWidth>
+              <InputLabel>Status</InputLabel>
+              <Select
+                label="Status"
+                value={quickClientStatus}
+                onChange={(e) => setQuickClientStatus(e.target.value)}
+              >
+                <MenuItem value="Active">Active</MenuItem>
+                <MenuItem value="Inactive">Inactive</MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl fullWidth>
+              <InputLabel>Owner</InputLabel>
+              <Select
+                label="Owner"
+                value={quickClientOwnerId}
+                onChange={(e) => setQuickClientOwnerId(e.target.value)}
+              >
+                <MenuItem value="">
+                  <em>Unassigned</em>
+                </MenuItem>
+                {workspaceMembers.map((member) => (
+                  <MenuItem key={member.id} value={member.id}>
+                    {member.first_name || member.last_name
+                      ? `${member.first_name || ''} ${member.last_name || ''}`.trim()
+                      : member.email}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <TextField
+              label="GSTIN"
+              value={quickClientGstin}
+              onChange={(e) => setQuickClientGstin(e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="Tags"
+              value={quickClientTags}
+              onChange={(e) => setQuickClientTags(e.target.value)}
+              fullWidth
+              placeholder="Retail, Marketplace"
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ p: 3 }}>
+          <Button
+            onClick={() => {
+              setClientQuickOpen(false);
+              resetQuickClient();
+            }}
+            sx={{ textTransform: 'none' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleCreateQuickClient}
+            disabled={!quickClientName.trim()}
+            sx={{ textTransform: 'none', px: 3 }}
+          >
+            Create Client
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Icon Picker Dialog */}
       <Dialog

@@ -15,6 +15,10 @@ import {
   Avatar,
   AvatarGroup,
   CircularProgress,
+  FormControl,
+  InputLabel,
+  Select,
+  Tooltip,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
@@ -48,9 +52,9 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import ArchiveIcon from '@mui/icons-material/Archive';
 import UnarchiveIcon from '@mui/icons-material/Unarchive';
 import ProjectForm from './ProjectForm';
-import { getProjects, createProject, updateProject, archiveProject, unarchiveProject, updateProjectAccess } from '../../apiClient';
+import { getProjects, createProject, updateProject, archiveProject, unarchiveProject, updateProjectAccess, getClients } from '../../apiClient';
 
-function ProjectList({ onSelectProject, workspace }) {
+function ProjectList({ onSelectProject, workspace, user }) {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -60,6 +64,8 @@ function ProjectList({ onSelectProject, workspace }) {
   const [projectFormOpen, setProjectFormOpen] = useState(false);
   const [editingProject, setEditingProject] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [clientOptions, setClientOptions] = useState([]);
+  const [clientFilter, setClientFilter] = useState('all');
 
   // Fetch projects
   useEffect(() => {
@@ -72,6 +78,8 @@ function ProjectList({ onSelectProject, workspace }) {
         const projectsData = (response.data || []).map(p => ({
           ...p,
           members: p.members || [],
+          clients: Array.isArray(p.clients) ? p.clients : [],
+          primary_client: p.primary_client || null,
           openTasks: p.open_tasks || 0,
           pendingApproval: p.pending_approval || 0,
           completedTasks: p.completed_tasks || 0,
@@ -89,6 +97,25 @@ function ProjectList({ onSelectProject, workspace }) {
     
     fetchProjects();
   }, [workspace, showArchived]);
+
+  useEffect(() => {
+    const fetchClients = async () => {
+      if (!workspace?.id) return;
+      try {
+        const response = await getClients(workspace.id, { status: 'Active' });
+        setClientOptions(response.data || []);
+      } catch (error) {
+        console.error('Failed to fetch clients:', error);
+        setClientOptions([]);
+      }
+    };
+
+    fetchClients();
+  }, [workspace?.id]);
+
+  useEffect(() => {
+    setClientFilter('all');
+  }, [workspace?.id]);
 
   const roleColors = {
     'Owner': { bg: '#d1fae5', text: '#065f46' },
@@ -203,9 +230,15 @@ function ProjectList({ onSelectProject, workspace }) {
   };
 
   const filteredProjects = (projects || []).filter(
-    (proj) =>
-      proj.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      proj.description?.toLowerCase().includes(searchQuery.toLowerCase())
+    (proj) => {
+      const matchesSearch =
+        proj.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        proj.description?.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesClient =
+        clientFilter === 'all' ||
+        (proj.clients || []).some((client) => String(client.id) === String(clientFilter));
+      return matchesSearch && matchesClient;
+    }
   );
 
   if (loading) {
@@ -264,10 +297,26 @@ function ProjectList({ onSelectProject, workspace }) {
             maxWidth: 400,
             '& .MuiOutlinedInput-root': {
               borderRadius: 2,
-              backgroundColor: '#fff',
-            },
-          }}
-        />
+            backgroundColor: '#fff',
+          },
+        }}
+      />
+        <FormControl sx={{ minWidth: 200 }}>
+          <InputLabel>Client</InputLabel>
+          <Select
+            label="Client"
+            value={clientFilter}
+            onChange={(e) => setClientFilter(e.target.value)}
+            sx={{ borderRadius: 2, backgroundColor: '#fff' }}
+          >
+            <MenuItem value="all">All Clients</MenuItem>
+            {clientOptions.map((client) => (
+              <MenuItem key={client.id} value={client.id}>
+                {client.name}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
         <Button
           variant="outlined"
           startIcon={<FilterListIcon />}
@@ -385,6 +434,79 @@ function ProjectList({ onSelectProject, workspace }) {
                 >
                   {project.description}
                 </Typography>
+
+                {/* Clients */}
+                {(() => {
+                  const clientList = project.clients || [];
+                  const primaryClient = project.primary_client || clientList.find((c) => c.is_primary) || null;
+                  const combinedClients = primaryClient && !clientList.some((c) => String(c.id) === String(primaryClient.id))
+                    ? [primaryClient, ...clientList]
+                    : clientList;
+                  const secondaryClients = combinedClients.filter(
+                    (c) => !primaryClient || String(c.id) !== String(primaryClient.id)
+                  );
+                  const secondaryDisplay = secondaryClients.slice(0, 2);
+                  const overflowCount = secondaryClients.length - secondaryDisplay.length;
+                  const tooltipLabel = combinedClients.length
+                    ? combinedClients.map((c) => c.name).join(', ')
+                    : 'No clients linked';
+
+                  return (
+                    <Tooltip title={tooltipLabel} arrow>
+                      <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 2, minHeight: 26 }}>
+                        {combinedClients.length === 0 ? (
+                          <Typography variant="caption" color="text.secondary">
+                            No client linked
+                          </Typography>
+                        ) : (
+                          <>
+                            {primaryClient && (
+                              <Chip
+                                label={primaryClient.name}
+                                size="small"
+                                sx={{
+                                  backgroundColor: primaryClient.status === 'Inactive'
+                                    ? '#e2e8f0'
+                                    : (project.color || '#0f766e'),
+                                  color: primaryClient.status === 'Inactive' ? '#475569' : '#fff',
+                                  fontWeight: 600,
+                                  fontSize: '0.65rem',
+                                  height: 22,
+                                }}
+                              />
+                            )}
+                            {secondaryDisplay.map((client) => (
+                              <Chip
+                                key={client.id}
+                                label={client.name}
+                                size="small"
+                                variant="outlined"
+                                sx={{
+                                  fontWeight: 500,
+                                  fontSize: '0.65rem',
+                                  height: 22,
+                                  opacity: client.status === 'Inactive' ? 0.6 : 1,
+                                }}
+                              />
+                            ))}
+                            {overflowCount > 0 && (
+                              <Chip
+                                label={`+${overflowCount}`}
+                                size="small"
+                                variant="outlined"
+                                sx={{
+                                  fontWeight: 500,
+                                  fontSize: '0.65rem',
+                                  height: 22,
+                                }}
+                              />
+                            )}
+                          </>
+                        )}
+                      </Box>
+                    </Tooltip>
+                  );
+                })()}
 
                 {/* Stats */}
                 <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
@@ -555,6 +677,8 @@ function ProjectList({ onSelectProject, workspace }) {
         onClose={handleCloseProjectForm}
         onSave={handleSaveProject}
         project={editingProject}
+        workspace={workspace}
+        user={user}
       />
     </Box>
   );

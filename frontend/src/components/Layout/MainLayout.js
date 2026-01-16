@@ -13,6 +13,7 @@ import NotificationsPage from '../Notifications/NotificationsPage';
 import RecurringPage from '../Recurring/RecurringPage';
 import TasksPage from '../Tasks/TasksPage';
 import AdminPage from '../Admin/AdminPage';
+import ClientsPage from '../Clients/ClientsPage';
 import { getWorkspaces, getUserSettings } from '../../apiClient';
 
 const DRAWER_WIDTH = 260;
@@ -96,6 +97,9 @@ function MainLayout({ userId, onLogout }) {
   const isPersonalWorkspace = Boolean(currentWorkspace?.is_personal)
     || (currentWorkspace?.name === 'Personal' && Number(currentWorkspace?.created_by) === Number(user?.id));
   const canViewTeam = !isPersonalWorkspace && (currentWorkspace?.role === 'Owner' || currentWorkspace?.role === 'Admin');
+  const canViewClients = !isPersonalWorkspace && (currentWorkspace?.role === 'Owner' || currentWorkspace?.role === 'Admin');
+  const canViewApprovals = !isPersonalWorkspace;
+  const canViewAdmin = !isPersonalWorkspace && (currentWorkspace?.role === 'Owner' || currentWorkspace?.role === 'Admin');
 
   const renderContent = () => {
     switch (currentPage) {
@@ -124,6 +128,7 @@ function MainLayout({ userId, onLogout }) {
           <ProjectList
             onSelectProject={handleSelectProject}
             workspace={currentWorkspace}
+            user={user}
           />
         );
       
@@ -160,6 +165,16 @@ function MainLayout({ userId, onLogout }) {
         return <TeamPage user={user} workspace={currentWorkspace} />;
       
       case 'approvals':
+        if (!currentWorkspace || !canViewApprovals) {
+          return (
+            <Box sx={{ p: 6 }}>
+              <Typography variant="h6">Access restricted</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Approvals are not available for personal workspaces.
+              </Typography>
+            </Box>
+          );
+        }
         return <ApprovalsPage user={user} workspace={currentWorkspace} />;
       
       case 'activity':
@@ -169,17 +184,34 @@ function MainLayout({ userId, onLogout }) {
         return <NotificationsPage />;
       
       case 'admin':
-        if (!currentWorkspace || !['Owner', 'Admin'].includes(currentWorkspace?.role)) {
+        if (!currentWorkspace || !canViewAdmin) {
           return (
             <Box sx={{ p: 6 }}>
               <Typography variant="h6">Access restricted</Typography>
               <Typography variant="body2" color="text.secondary">
-                The Admin page is only available to workspace Owners and Admins.
+                {isPersonalWorkspace
+                  ? 'Admin tools are not available for personal workspaces.'
+                  : 'The Admin page is only available to workspace Owners and Admins.'}
               </Typography>
             </Box>
           );
         }
         return <AdminPage workspace={currentWorkspace} user={user} />;
+
+      case 'clients':
+        if (!currentWorkspace || !canViewClients) {
+          return (
+            <Box sx={{ p: 6 }}>
+              <Typography variant="h6">Access restricted</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {isPersonalWorkspace
+                  ? 'Clients are not available for personal workspaces.'
+                  : 'The Clients page is only available to workspace Owners and Admins.'}
+              </Typography>
+            </Box>
+          );
+        }
+        return <ClientsPage workspace={currentWorkspace} />;
       
       case 'settings':
         return <SettingsPage user={user} />;

@@ -321,4 +321,4 @@ async function resolveAssignee(client, series, nextDate) {
 4. **Rate Limiting**
    - API call limits
    - Bulk operation throttling
-   - Generation frequency caps
+   - Generation frequency     

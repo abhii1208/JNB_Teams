@@ -69,7 +69,8 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import CloseIcon from '@mui/icons-material/Close';
 import TaskForm from '../Tasks/TaskForm';
 import CustomColumnSettings from './CustomColumnSettings';
-import { getTasks, createTask, updateTask, deleteTask, updateProject, getProjectMembers, getWorkspaceMembers, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator } from '../../apiClient';
+import { differenceInCalendarDays, isValid } from 'date-fns';
+import { getTasks, createTask, updateTask, deleteTask, updateProject, getProjectMembers, getWorkspaceMembers, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator, getProjectColumnSettings } from '../../apiClient';
 import { formatShortDate } from '../../utils/date';
 
 // member list is loaded from API
@@ -94,6 +95,16 @@ const statusColors = {
   'Pending Approval': { bg: '#fee2e2', text: '#991b1b' },
   'Closed': { bg: '#e2e8f0', text: '#475569' },
   'Rejected': { bg: '#fee2e2', text: '#991b1b' },
+};
+
+const DEFAULT_CUSTOM_COLUMN_SETTINGS = {
+  enable_category: false,
+  enable_section: false,
+  enable_estimated_hours: false,
+  enable_actual_hours: false,
+  enable_completion_percentage: false,
+  enable_tags: false,
+  enable_external_id: false,
 };
 
 // Helper function to generate theme colors based on project color
@@ -252,6 +263,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     freezeColumns: [],
   });
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [projectColumnSettings, setProjectColumnSettings] = useState(DEFAULT_CUSTOM_COLUMN_SETTINGS);
 
   const normalizeProjectSettings = (source) => {
     if (!source) return null;
@@ -289,6 +301,28 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     if (normalized) {
       setProjectSettings(normalized);
     }
+  }, [project?.id]);
+
+  useEffect(() => {
+    if (!project?.id) return;
+    let active = true;
+
+    const fetchColumnSettings = async () => {
+      try {
+        const res = await getProjectColumnSettings(project.id);
+        if (!active) return;
+        setProjectColumnSettings({ ...DEFAULT_CUSTOM_COLUMN_SETTINGS, ...(res.data || {}) });
+      } catch (err) {
+        console.error('Failed to fetch project column settings:', err);
+        if (!active) return;
+        setProjectColumnSettings(DEFAULT_CUSTOM_COLUMN_SETTINGS);
+      }
+    };
+
+    fetchColumnSettings();
+    return () => {
+      active = false;
+    };
   }, [project?.id]);
 
   // Fetch project members
@@ -405,9 +439,82 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
 
   const normalizeDateValue = (value) => {
     if (!value) return null;
-    if (value instanceof Date) return value.toISOString().slice(0, 10);
-    const str = String(value);
-    return str.includes('T') ? str.split('T')[0] : str;
+    if (value instanceof Date) {
+      const year = value.getFullYear();
+      const month = String(value.getMonth() + 1).padStart(2, '0');
+      const day = String(value.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+    const str = String(value).trim();
+    if (str.includes('T')) {
+      const [, timePartRaw = ''] = str.split('T');
+      const timePart = timePartRaw.toUpperCase();
+      const isMidnight = timePart.startsWith('00:00:00') || timePart.startsWith('00:00');
+      const isUtc = timePart.includes('Z') || timePart.includes('+00') || timePart.includes('-00');
+      if (!isMidnight || !isUtc) {
+        const parsed = new Date(str);
+        if (!isValid(parsed)) return null;
+        const year = parsed.getFullYear();
+        const month = String(parsed.getMonth() + 1).padStart(2, '0');
+        const day = String(parsed.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
+    }
+    return str.split('T')[0].split(' ')[0];
+  };
+
+  const parseLocalDateValue = (value) => {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed.includes('T')) {
+        const [, timePartRaw = ''] = trimmed.split('T');
+        const timePart = timePartRaw.toUpperCase();
+        const isMidnight = timePart.startsWith('00:00:00') || timePart.startsWith('00:00');
+        const isUtc = timePart.includes('Z') || timePart.includes('+00') || timePart.includes('-00');
+        if (!isMidnight || !isUtc) {
+          const parsed = new Date(trimmed);
+          return isValid(parsed) ? parsed : null;
+        }
+      }
+
+      const datePart = trimmed.split('T')[0].split(' ')[0];
+      const parts = datePart.split('-');
+      if (parts.length === 3 && parts[0].length === 4) {
+        const year = Number(parts[0]);
+        const month = Number(parts[1]) - 1;
+        const day = Number(parts[2]);
+        if (Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)) {
+          return new Date(year, month, day);
+        }
+      }
+    }
+
+    const parsed = new Date(value);
+    return isValid(parsed) ? parsed : null;
+  };
+
+  const normalizeNumberInput = (value) => {
+    if (value === '' || value === null || value === undefined) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const normalizeNullableString = (value) => (value === '' ? null : value);
+
+  const getTargetPlanSignal = (dateStr) => {
+    const parsed = parseLocalDateValue(dateStr);
+    if (!parsed) return null;
+
+    const diff = differenceInCalendarDays(parsed, new Date());
+    if (diff < 0) return { label: 'Overdue', color: '#dc2626', bg: '#fef2f2' };
+    if (diff === 0) return { label: 'Planned for today', color: '#0f766e', bg: 'rgba(15,118,110,0.08)' };
+    if (diff === 1) return { label: 'Planned for tomorrow', color: '#0f766e', bg: 'rgba(15,118,110,0.08)' };
+    if (diff <= 7) return { label: 'Planned this week', color: '#2563eb', bg: '#eff6ff' };
+    if (diff <= 31) return { label: 'Planned this month', color: '#0f766e', bg: 'rgba(15,118,110,0.08)' };
+    return { label: 'Planned later', color: '#64748b', bg: '#f8fafc' };
   };
   
   // Apply advanced filters to tasks
@@ -541,6 +648,9 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   ];
   if (hasProjectSettingsPermission) tabList.push({ key: 'settings', label: 'Settings' });
   const activeKey = tabList[activeTab]?.key || 'overview';
+  const showCategoryColumn = projectColumnSettings.enable_category;
+  const showSectionColumn = projectColumnSettings.enable_section;
+  const tableColumnCount = 11 + (showCategoryColumn ? 1 : 0) + (showSectionColumn ? 1 : 0);
 
   const handleOpenTaskForm = (task = null, stage = null, status = null) => {
     // Explicitly set selectedTask to null if task is not provided (new task scenario)
@@ -571,6 +681,13 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           due_date: taskData.dueDate || taskData.due_date || null,
           target_date: taskData.targetDate || taskData.target_date || null,
           notes: taskData.notes,
+          category: normalizeNullableString(taskData.category ?? null),
+          section: normalizeNullableString(taskData.section ?? null),
+          estimated_hours: normalizeNumberInput(taskData.estimated_hours ?? taskData.estimatedHours),
+          actual_hours: normalizeNumberInput(taskData.actual_hours ?? taskData.actualHours),
+          completion_percentage: normalizeNumberInput(taskData.completion_percentage ?? taskData.completionPercentage),
+          tags: Array.isArray(taskData.tags) ? taskData.tags : null,
+          external_id: normalizeNullableString(taskData.external_id ?? taskData.externalId ?? null),
         };
         const response = await updateTask(selectedTask.id, payload);
         setTasks(prev => prev.map(t => t.id === selectedTask.id ? response.data : t));
@@ -606,6 +723,13 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           due_date: taskData.dueDate || null,
           target_date: taskData.targetDate || null,
           notes: taskData.notes,
+          category: normalizeNullableString(taskData.category ?? null),
+          section: normalizeNullableString(taskData.section ?? null),
+          estimated_hours: normalizeNumberInput(taskData.estimated_hours ?? taskData.estimatedHours),
+          actual_hours: normalizeNumberInput(taskData.actual_hours ?? taskData.actualHours),
+          completion_percentage: normalizeNumberInput(taskData.completion_percentage ?? taskData.completionPercentage),
+          tags: Array.isArray(taskData.tags) ? taskData.tags : null,
+          external_id: normalizeNullableString(taskData.external_id ?? taskData.externalId ?? null),
         };
         const response = await createTask(payload);
         const created = response.data;
@@ -804,6 +928,56 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           <Typography variant="body2" color="text.secondary">
             {project.workspace}
           </Typography>
+          {(() => {
+            const clientList = project.clients || [];
+            const primaryClient = project.primary_client || clientList.find((c) => c.is_primary) || null;
+            const combinedClients = primaryClient && !clientList.some((c) => String(c.id) === String(primaryClient.id))
+              ? [primaryClient, ...clientList]
+              : clientList;
+            const secondaryClients = combinedClients.filter(
+              (c) => !primaryClient || String(c.id) !== String(primaryClient.id)
+            );
+            const tooltipLabel = combinedClients.length
+              ? combinedClients.map((c) => c.name).join(', ')
+              : 'No clients linked';
+
+            return (
+              <Tooltip title={tooltipLabel} arrow>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+                  {combinedClients.length === 0 ? (
+                    <Typography variant="caption" color="text.secondary">
+                      No client linked
+                    </Typography>
+                  ) : (
+                    <>
+                      {primaryClient && (
+                        <Chip
+                          label={primaryClient.name}
+                          size="small"
+                          sx={{
+                            backgroundColor: primaryClient.status === 'Inactive'
+                              ? '#e2e8f0'
+                              : projectTheme.primary,
+                            color: primaryClient.status === 'Inactive' ? '#475569' : '#fff',
+                            fontWeight: 600,
+                          }}
+                        />
+                      )}
+                      {secondaryClients.map((client) => (
+                        <Chip
+                          key={client.id}
+                          label={client.name}
+                          size="small"
+                          variant="outlined"
+                          sx={{ opacity: client.status === 'Inactive' ? 0.6 : 1 }}
+                        />
+                      ))}
+                    </>
+                  )}
+                </Box>
+              </Tooltip>
+            );
+          })()}
         </Box>
         {(project.role === 'Owner' || project.role === 'Admin') && (
           <Button
@@ -1468,7 +1642,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                 {taskView === 'table' && (
                   <Fade in timeout={300}>
                     <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2, overflowX: 'auto' }}>
-                      <Table sx={{ minWidth: 1200 }}>
+                      <Table sx={{ minWidth: showCategoryColumn || showSectionColumn ? 1400 : 1200 }}>
                         <TableHead>
                           <TableRow sx={{ backgroundColor: projectTheme.primaryLight }}>
                             <TableCell 
@@ -1571,6 +1745,32 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                 )}
                               </Box>
                             </TableCell>
+                            {showCategoryColumn && (
+                              <TableCell
+                                sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                                onClick={() => handleSort('category')}
+                              >
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
+                                  Category
+                                  {sortColumn === 'category' && (
+                                    sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
+                                  )}
+                                </Box>
+                              </TableCell>
+                            )}
+                            {showSectionColumn && (
+                              <TableCell
+                                sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                                onClick={() => handleSort('section')}
+                              >
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
+                                  Section
+                                  {sortColumn === 'section' && (
+                                    sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
+                                  )}
+                                </Box>
+                              </TableCell>
+                            )}
                             <TableCell 
                               sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
                               onClick={() => handleSort('created_by_name')}
@@ -1593,7 +1793,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                 )}
                               </Box>
                             </TableCell>
-                            <TableCell sx={{ fontWeight: 600 }}>Notes</TableCell>
+                            <TableCell sx={{ fontWeight: 600, width: 200, minWidth: 200, maxWidth: 200 }}>Notes</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
@@ -1602,7 +1802,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                             if (item.isGroupHeader) {
                               return (
                                 <TableRow key={`group-${item.groupKey}`}>
-                                  <TableCell colSpan={11} sx={{ bgcolor: '#f8fafc', py: 1.5 }}>
+                                  <TableCell colSpan={tableColumnCount} sx={{ bgcolor: '#f8fafc', py: 1.5 }}>
                                     <Typography variant="subtitle2" sx={{ fontWeight: 700, color: projectTheme.primary }}>
                                       {item.groupKey} ({item.count})
                                     </Typography>
@@ -1612,6 +1812,8 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                             }
 
                             const task = item;
+                            const targetSignal = getTargetPlanSignal(task.target_date);
+                            const notesLabel = task.notes || 'No notes';
                             return (
                               <TableRow
                               key={task.id}
@@ -1725,12 +1927,45 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                 </Typography>
                               </TableCell>
                               <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                                <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem' }} color="text.secondary">
-                                  {task.target_date ? formatShortDate(task.target_date) : '-'}
-                                </Typography>
+                                <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+                                  <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem' }} color="text.secondary">
+                                    {task.target_date ? formatShortDate(task.target_date) : '-'}
+                                  </Typography>
+                                  {targetSignal && (
+                                    <Chip
+                                      size="small"
+                                      label={targetSignal.label}
+                                      sx={{
+                                        height: 20,
+                                        bgcolor: targetSignal.bg,
+                                        color: targetSignal.color,
+                                        fontWeight: 700,
+                                        '& .MuiChip-label': { px: 1, fontSize: '0.7rem' },
+                                      }}
+                                    />
+                                  )}
+                                </Box>
                               </TableCell>
-                              <TableCell>
-                                <Typography variant="body2" sx={{ fontSize: '0.875rem' }}>
+                              {showCategoryColumn && (
+                                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                                  {task.category ? (
+                                    <Chip size="small" label={task.category} sx={{ bgcolor: '#e0e7ff', color: '#4338ca', height: 22 }} />
+                                  ) : (
+                                    <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem' }} color="text.secondary">-</Typography>
+                                  )}
+                                </TableCell>
+                              )}
+                              {showSectionColumn && (
+                                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                                  {task.section ? (
+                                    <Chip size="small" label={task.section} sx={{ bgcolor: '#fce7f3', color: '#be185d', height: 22 }} />
+                                  ) : (
+                                    <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem' }} color="text.secondary">-</Typography>
+                                  )}
+                                </TableCell>
+                              )}
+                              <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                                <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem' }}>
                                   {task.created_by_name || '-'}
                                 </Typography>
                               </TableCell>
@@ -1739,18 +1974,21 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                   {task.created_at ? formatShortDate(task.created_at) : '-'}
                                 </Typography>
                               </TableCell>
-                              <TableCell sx={{ maxWidth: 200, whiteSpace: 'nowrap' }}>
-                                <Typography 
-                                  variant="caption" 
-                                  color="text.secondary"
-                                  noWrap
-                                  sx={{
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                  }}
-                                >
-                                  {task.notes || 'No notes'}
-                                </Typography>
+                              <TableCell sx={{ width: 200, minWidth: 200, maxWidth: 200 }}>
+                                <Tooltip title={notesLabel} arrow placement="top-start">
+                                  <Typography 
+                                    variant="caption" 
+                                    color="text.secondary"
+                                    noWrap
+                                    sx={{
+                                      width: '100%',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                    }}
+                                  >
+                                    {notesLabel}
+                                  </Typography>
+                                </Tooltip>
                               </TableCell>
                             </TableRow>
                             );
@@ -3009,8 +3247,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                 projectId={project?.id}
                 userRole={userRole}
                 onSettingsChange={(newSettings) => {
-                  // Optionally handle column settings changes
-                  console.log('Column settings changed:', newSettings);
+                  setProjectColumnSettings({ ...DEFAULT_CUSTOM_COLUMN_SETTINGS, ...(newSettings || {}) });
                 }}
               />
             </Box>

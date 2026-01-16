@@ -34,9 +34,9 @@ import {
   formatDistanceToNow,
   format,
   isValid,
-  parseISO,
   differenceInCalendarDays,
 } from 'date-fns';
+import { parseDateInput } from '../../utils/date';
 
 /* ---------------- helpers ---------------- */
 
@@ -66,37 +66,35 @@ const getStatusColor = (status) => {
   }
 };
 
+const parseDateValue = (value) => {
+  const parsed = parseDateInput(value);
+  return parsed && isValid(parsed) ? parsed : null;
+};
+
 const formatDate = (dateStr) => {
-  if (!dateStr) return '-';
-  const date = parseISO(dateStr);
-  if (!isValid(date)) return '-';
+  const date = parseDateValue(dateStr);
+  if (!date) return '-';
   return format(date, 'dd-MMM-yy');
 };
 
 const formatRelativeDate = (dateStr) => {
-  if (!dateStr) return null;
-  const date = parseISO(dateStr);
-  if (!isValid(date)) return null;
+  const date = parseDateValue(dateStr);
+  if (!date) return null;
   return formatDistanceToNow(date, { addSuffix: true });
 };
 
 const isToday = (dateStr) => {
-  if (!dateStr) return false;
-  try {
-    const d = parseISO(dateStr);
-    const now = new Date();
-    return d.getFullYear() === now.getFullYear() &&
-      d.getMonth() === now.getMonth() &&
-      d.getDate() === now.getDate();
-  } catch {
-    return false;
-  }
+  const d = parseDateValue(dateStr);
+  if (!d) return false;
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
 };
 
 const getDueSignal = (dateStr) => {
-  if (!dateStr) return null;
-  const d = parseISO(dateStr);
-  if (!isValid(d)) return null;
+  const d = parseDateValue(dateStr);
+  if (!d) return null;
 
   const diff = differenceInCalendarDays(d, new Date()); // future = positive
   if (diff === 0) return { label: 'Today', color: '#2563eb', bg: '#eff6ff' };
@@ -106,6 +104,19 @@ const getDueSignal = (dateStr) => {
 };
 
 // ✅ Force single line (NO WRAP) everywhere
+const getTargetPlanSignal = (dateStr) => {
+  const d = parseDateValue(dateStr);
+  if (!d) return null;
+
+  const diff = differenceInCalendarDays(d, new Date());
+  if (diff < 0) return { label: 'Overdue', color: '#dc2626', bg: '#fef2f2' };
+  if (diff === 0) return { label: 'Planned for today', color: '#0f766e', bg: 'rgba(15,118,110,0.08)' };
+  if (diff === 1) return { label: 'Planned for tomorrow', color: '#0f766e', bg: 'rgba(15,118,110,0.08)' };
+  if (diff <= 7) return { label: 'Planned this week', color: '#2563eb', bg: '#eff6ff' };
+  if (diff <= 31) return { label: 'Planned this month', color: '#0f766e', bg: 'rgba(15,118,110,0.08)' };
+  return { label: 'Planned later', color: '#64748b', bg: '#f8fafc' };
+};
+
 const NOWRAP_SX = {
   whiteSpace: 'nowrap',
   overflow: 'hidden',
@@ -190,8 +201,8 @@ const getSortValue = (task, key) => {
   // date keys
   if (['due_date', 'target_date', 'created_at'].includes(key)) {
     if (!v) return 0;
-    const d = parseISO(v);
-    return isValid(d) ? d.getTime() : 0;
+    const d = parseDateValue(v);
+    return d ? d.getTime() : 0;
   }
 
   // numbers
@@ -533,11 +544,29 @@ const TaskRow = React.memo(function TaskRow({
                 }
 
                 case 'target_date':
-                  return (
-                    <Typography variant="body2" noWrap sx={NOWRAP_SX}>
-                      {formatDate(task.target_date)}
-                    </Typography>
-                  );
+                  return (() => {
+                    const targetSignal = getTargetPlanSignal(task.target_date);
+                    return (
+                      <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                        <Typography variant="body2" noWrap sx={NOWRAP_SX}>
+                          {formatDate(task.target_date)}
+                        </Typography>
+                        {targetSignal && (
+                          <Chip
+                            size="small"
+                            label={targetSignal.label}
+                            sx={{
+                              height: 20,
+                              bgcolor: targetSignal.bg,
+                              color: targetSignal.color,
+                              fontWeight: 700,
+                              '& .MuiChip-label': { px: 1, fontSize: '0.72rem' },
+                            }}
+                          />
+                        )}
+                      </Box>
+                    );
+                  })();
 
                 case 'created_by_name':
                   return (

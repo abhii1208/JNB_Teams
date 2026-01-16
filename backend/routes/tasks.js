@@ -2,6 +2,13 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 
+const normalizeNumericInput = (value) => {
+  if (value === '' || value === null || value === undefined) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 // Get ALL tasks for a workspace (cross-project)
 // Supports filtering, sorting, pagination
 router.get('/workspace/:workspaceId', async (req, res) => {
@@ -537,9 +544,34 @@ router.get('/project/:projectId', async (req, res) => {
 // Create task
 router.post('/', async (req, res) => {
   const {
-    name, description, project_id, assignee_id, stage = 'Planned',
-    status = 'Not started', priority = 'Medium', due_date, target_date, notes
+    name,
+    description,
+    project_id,
+    assignee_id,
+    stage = 'Planned',
+    status = 'Not started',
+    priority = 'Medium',
+    due_date,
+    target_date,
+    notes,
+    category,
+    section,
+    estimated_hours,
+    actual_hours,
+    completion_percentage,
+    tags,
+    external_id,
+    estimatedHours,
+    actualHours,
+    completionPercentage,
+    externalId,
   } = req.body;
+
+  const normalizedEstimatedHours = normalizeNumericInput(estimated_hours ?? estimatedHours);
+  const normalizedActualHours = normalizeNumericInput(actual_hours ?? actualHours);
+  const normalizedCompletionPercentage = normalizeNumericInput(completion_percentage ?? completionPercentage);
+  const normalizedExternalId = external_id ?? externalId ?? null;
+  const normalizedTags = Array.isArray(tags) ? tags : null;
   
   if (!name || !project_id) {
     return res.status(400).json({ error: 'Name and project_id are required' });
@@ -551,9 +583,28 @@ router.post('/', async (req, res) => {
     
     const taskResult = await client.query(
       `INSERT INTO tasks 
-       (name, description, project_id, assignee_id, stage, status, priority, due_date, target_date, notes, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-      [name, description, project_id, assignee_id, stage, status, priority, due_date, target_date, notes, req.userId]
+       (name, description, project_id, assignee_id, stage, status, priority, due_date, target_date, notes, category, section, estimated_hours, actual_hours, completion_percentage, tags, external_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING *`,
+      [
+        name,
+        description,
+        project_id,
+        assignee_id,
+        stage,
+        status,
+        priority,
+        due_date,
+        target_date,
+        notes,
+        category,
+        section,
+        normalizedEstimatedHours,
+        normalizedActualHours,
+        normalizedCompletionPercentage,
+        normalizedTags,
+        normalizedExternalId,
+        req.userId,
+      ]
     );
     
     const task = taskResult.rows[0];
@@ -612,9 +663,33 @@ router.post('/', async (req, res) => {
 // Update task
 router.put('/:taskId', async (req, res) => {
   const {
-    name, description, assignee_id, stage, status, priority,
-    due_date, target_date, notes
+    name,
+    description,
+    assignee_id,
+    stage,
+    status,
+    priority,
+    due_date,
+    target_date,
+    notes,
+    category,
+    section,
+    estimated_hours,
+    actual_hours,
+    completion_percentage,
+    tags,
+    external_id,
+    estimatedHours,
+    actualHours,
+    completionPercentage,
+    externalId,
   } = req.body;
+
+  const normalizedEstimatedHours = normalizeNumericInput(estimated_hours ?? estimatedHours);
+  const normalizedActualHours = normalizeNumericInput(actual_hours ?? actualHours);
+  const normalizedCompletionPercentage = normalizeNumericInput(completion_percentage ?? completionPercentage);
+  const normalizedExternalId = external_id ?? externalId ?? null;
+  const normalizedTags = Array.isArray(tags) ? tags : null;
   
   const client = await pool.connect();
   try {
@@ -672,11 +747,37 @@ router.put('/:taskId', async (req, res) => {
            due_date = COALESCE($7, due_date),
            target_date = COALESCE($8, target_date),
            notes = COALESCE($9, notes),
-           archived_at = CASE WHEN $11 THEN CURRENT_TIMESTAMP ELSE archived_at END,
+           category = COALESCE($10, category),
+           section = COALESCE($11, section),
+           estimated_hours = COALESCE($12, estimated_hours),
+           actual_hours = COALESCE($13, actual_hours),
+           completion_percentage = COALESCE($14, completion_percentage),
+           tags = COALESCE($15, tags),
+           external_id = COALESCE($16, external_id),
+           archived_at = CASE WHEN $18 THEN CURRENT_TIMESTAMP ELSE archived_at END,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $10
+       WHERE id = $17
        RETURNING *`,
-      [name, description, assignee_id, stage, status, priority, due_date, target_date, notes, req.params.taskId, shouldArchive]
+      [
+        name,
+        description,
+        assignee_id,
+        stage,
+        status,
+        priority,
+        due_date,
+        target_date,
+        notes,
+        category,
+        section,
+        normalizedEstimatedHours,
+        normalizedActualHours,
+        normalizedCompletionPercentage,
+        normalizedTags,
+        normalizedExternalId,
+        req.params.taskId,
+        shouldArchive,
+      ]
     );
     
     if (result.rows.length === 0) {

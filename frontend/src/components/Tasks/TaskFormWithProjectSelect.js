@@ -19,6 +19,14 @@ import FolderIcon from '@mui/icons-material/Folder';
 import TaskForm from './TaskForm';
 import { createTask, updateTask } from '../../apiClient';
 
+const normalizeNumberInput = (value) => {
+  if (value === '' || value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeNullableString = (value) => (value === '' ? null : value);
+
 /**
  * A wrapper component that allows selecting a project before creating a task
  * This is used from the Tasks page where no project context exists
@@ -91,6 +99,13 @@ function TaskFormWithProjectSelect({
         status: taskData.status || 'Open',
         due_date: taskData.dueDate || null,
         target_date: taskData.targetDate || null,
+        category: normalizeNullableString(taskData.category ?? null),
+        section: normalizeNullableString(taskData.section ?? null),
+        estimated_hours: normalizeNumberInput(taskData.estimated_hours ?? taskData.estimatedHours),
+        actual_hours: normalizeNumberInput(taskData.actual_hours ?? taskData.actualHours),
+        completion_percentage: normalizeNumberInput(taskData.completion_percentage ?? taskData.completionPercentage),
+        tags: Array.isArray(taskData.tags) ? taskData.tags : null,
+        external_id: normalizeNullableString(taskData.external_id ?? taskData.externalId ?? null),
       };
 
       if (task && task.id) {

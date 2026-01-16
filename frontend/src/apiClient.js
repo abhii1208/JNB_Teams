@@ -63,6 +63,18 @@ export const updateProjectMember = (projectId, userId, role) =>
 export const removeProjectMember = (projectId, userId) =>
   api.delete(`/api/projects/${projectId}/members/${userId}`);
 
+// Clients API
+export const getClients = (workspaceId, params = {}) =>
+  api.get(`/api/clients/workspace/${workspaceId}`, { params });
+export const getClientDetails = (clientId) =>
+  api.get(`/api/clients/${clientId}`);
+export const createClient = (clientData) =>
+  api.post('/api/clients', clientData);
+export const updateClient = (clientId, clientData) =>
+  api.put(`/api/clients/${clientId}`, clientData);
+export const deactivateClient = (clientId) =>
+  api.delete(`/api/clients/${clientId}`);
+
 // Tasks API
 export const getTasks = (projectId, includeArchived = false) => 
   api.get(`/api/tasks/project/${projectId}`, { params: includeArchived ? { include_archived: 'true' } : {} });

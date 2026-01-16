@@ -1,5 +1,8 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
 require('dotenv').config();
+
+// Ensure DATE columns are returned as YYYY-MM-DD strings to avoid timezone shifts.
+types.setTypeParser(1082, (value) => value);
 
 const toBool = (value) => ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
 const connectionString = process.env.DATABASE_URL;

@@ -127,6 +127,16 @@ const DEFAULT_FILTERS = {
   include_archived: false,
 };
 
+const CUSTOM_COLUMN_IDS = [
+  'category',
+  'section',
+  'estimated_hours',
+  'actual_hours',
+  'completion_percentage',
+  'tags',
+  'external_id',
+];
+
 function TasksPage({ workspace, user }) {
   // View state
   const [viewType, setViewType] = useState('table');
@@ -146,6 +156,23 @@ function TasksPage({ workspace, user }) {
   // Filters
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+
+  const enabledProjectColumns = useMemo(() => {
+    const selectedIds = filters.projects.length
+      ? new Set(filters.projects.map((id) => Number(id)))
+      : null;
+    const relevantProjects = selectedIds
+      ? projects.filter((project) => selectedIds.has(Number(project.id)))
+      : projects;
+    const enabled = {};
+    relevantProjects.forEach((project) => {
+      CUSTOM_COLUMN_IDS.forEach((columnId) => {
+        const key = `enable_${columnId}`;
+        if (project?.[key]) enabled[key] = true;
+      });
+    });
+    return enabled;
+  }, [projects, filters.projects]);
   
   // Sorting
   const [sortBy, setSortBy] = useState('created_at');
@@ -167,6 +194,24 @@ function TasksPage({ workspace, user }) {
   // Preferences tracking
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const preferencesDebounceRef = useRef(null);
+
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    const enabledIds = CUSTOM_COLUMN_IDS.filter(
+      (columnId) => enabledProjectColumns[`enable_${columnId}`]
+    );
+    if (enabledIds.length === 0) return;
+
+    setVisibleColumns((prev) => {
+      const missing = enabledIds.filter((id) => !prev.includes(id));
+      return missing.length ? [...prev, ...missing] : prev;
+    });
+
+    setColumnOrder((prev) => {
+      const missing = enabledIds.filter((id) => !prev.includes(id));
+      return missing.length ? [...prev, ...missing] : prev;
+    });
+  }, [enabledProjectColumns, preferencesLoaded]);
   
   // Saved Views
   const [savedViews, setSavedViews] = useState([]);
@@ -1313,7 +1358,7 @@ function TasksPage({ workspace, user }) {
         visibleColumns={visibleColumns}
         columnOrder={columnOrder}
         onSave={handleSaveColumnSettings}
-        enabledProjectColumns={{}} // TODO: Pass enabled project columns from selected projects
+        enabledProjectColumns={enabledProjectColumns}
       />
 
       {/* Task Form Dialog - Need to select project first for new tasks */}

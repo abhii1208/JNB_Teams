@@ -24,6 +24,7 @@ const savedViewsRouter = require('./routes/savedViews');
 const projectColumnsRouter = require('./routes/projectColumns');
 const userPreferencesRouter = require('./routes/userPreferences');
 const adminRouter = require('./routes/admin');
+const clientsRouter = require('./routes/clients');
 
 // Import background jobs
 const { initializeJobs, startJobs, stopJobs } = require('./jobs');
@@ -411,6 +412,7 @@ app.use('/api/views', authenticateToken, savedViewsRouter);
 app.use('/api/project-columns', authenticateToken, projectColumnsRouter);
 app.use('/api/user-preferences', authenticateToken, userPreferencesRouter);
 app.use('/api/admin', authenticateToken, adminRouter);
+app.use('/api/clients', authenticateToken, clientsRouter);
 
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

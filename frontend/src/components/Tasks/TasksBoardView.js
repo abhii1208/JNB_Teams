@@ -18,7 +18,8 @@ import FolderIcon from '@mui/icons-material/Folder';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 
-import { format, parseISO, isValid } from 'date-fns';
+import { format, isValid } from 'date-fns';
+import { parseDateInput } from '../../utils/date';
 
 const STATUS_COLUMNS = [
   { id: 'Open', label: 'Open', color: '#2563eb', bg: '#eff6ff' },
@@ -47,24 +48,24 @@ const getPriorityColor = (priority) => {
   }
 };
 
+const parseDateValue = (value) => {
+  const parsed = parseDateInput(value);
+  return parsed && isValid(parsed) ? parsed : null;
+};
+
 const formatDate = (dateStr) => {
-  if (!dateStr) return null;
-  const date = parseISO(dateStr);
-  if (!isValid(date)) return null;
+  const date = parseDateValue(dateStr);
+  if (!date) return null;
   return format(date, 'MMM d, yyyy');
 };
 
 const isToday = (dateStr) => {
-  if (!dateStr) return false;
-  try {
-    const d = parseISO(dateStr);
-    const now = new Date();
-    return d.getFullYear() === now.getFullYear()
-      && d.getMonth() === now.getMonth()
-      && d.getDate() === now.getDate();
-  } catch {
-    return false;
-  }
+  const d = parseDateValue(dateStr);
+  if (!d) return false;
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear()
+    && d.getMonth() === now.getMonth()
+    && d.getDate() === now.getDate();
 };
 
 const getGroupField = (groupBy) => {

@@ -22,6 +22,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import RepeatIcon from '@mui/icons-material/Repeat';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import BusinessIcon from '@mui/icons-material/Business';
 import { getApprovalCount, getUserSettings } from '../../apiClient';
 
 const DRAWER_WIDTH = 260;
@@ -31,11 +32,13 @@ function Sidebar({ currentPage, onNavigate, onLogout, user, workspace }) {
   const isPersonalWorkspace = Boolean(workspace?.is_personal)
     || (workspace?.name === 'Personal' && Number(workspace?.created_by) === Number(user?.id));
   const canViewTeam = !isPersonalWorkspace && (workspace?.role === 'Owner' || workspace?.role === 'Admin');
-  const canViewAdmin = workspace?.role === 'Owner' || workspace?.role === 'Admin';
+  const canViewClients = !isPersonalWorkspace && (workspace?.role === 'Owner' || workspace?.role === 'Admin');
+  const canViewApprovals = !isPersonalWorkspace;
+  const canViewAdmin = !isPersonalWorkspace && (workspace?.role === 'Owner' || workspace?.role === 'Admin');
 
   useEffect(() => {
     const fetchPendingCount = async () => {
-      if (!workspace?.id) return;
+      if (!workspace?.id || !canViewApprovals) return;
       try {
         const response = await getApprovalCount(workspace.id);
         setPendingCount(response.data.count);
@@ -48,15 +51,16 @@ function Sidebar({ currentPage, onNavigate, onLogout, user, workspace }) {
     // Poll every 30 seconds
     const interval = setInterval(fetchPendingCount, 30000);
     return () => clearInterval(interval);
-  }, [workspace]);
+  }, [workspace, canViewApprovals]);
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
     { id: 'projects', label: 'Projects', icon: <FolderIcon /> },
+    ...(canViewClients ? [{ id: 'clients', label: 'Clients', icon: <BusinessIcon /> }] : []),
     { id: 'tasks', label: 'Tasks', icon: <AssignmentIcon /> },
     { id: 'recurring', label: 'Recurring', icon: <RepeatIcon /> },
     ...(canViewTeam ? [{ id: 'team', label: 'Team', icon: <GroupIcon /> }] : []),
-    { id: 'approvals', label: 'Approvals', icon: <CheckCircleIcon />, badge: pendingCount },
+    ...(canViewApprovals ? [{ id: 'approvals', label: 'Approvals', icon: <CheckCircleIcon />, badge: pendingCount }] : []),
     ...(canViewAdmin ? [{ id: 'admin', label: 'Admin', icon: <AdminPanelSettingsIcon /> }] : []),
   ];
 
