@@ -12,7 +12,6 @@ import {
   Select,
   MenuItem,
   Chip,
-  Avatar,
 } from '@mui/material';
 import { Snackbar, Alert } from '@mui/material';
 import FolderIcon from '@mui/icons-material/Folder';

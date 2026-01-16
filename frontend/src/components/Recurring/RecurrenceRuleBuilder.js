@@ -115,7 +115,7 @@ function RecurrenceRuleBuilder({ value, onChange, startDate, showPreview = true 
             setSelectedPreset('');
             setMode('custom');
         }
-    }, [valueString]);
+    }, [valueString, value]);
 
     useEffect(() => {
         if (!startDateDefaults) return;

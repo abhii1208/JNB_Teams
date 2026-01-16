@@ -40,8 +40,6 @@ import {
   TableRow,
   Menu,
   Fade,
-  Collapse,
-  Slide,
   InputAdornment,
   Tooltip,
 } from '@mui/material';
@@ -58,9 +56,7 @@ import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import TableViewIcon from '@mui/icons-material/TableView';
-import FilterListIcon from '@mui/icons-material/FilterList';
 import SearchIcon from '@mui/icons-material/Search';
-import SortIcon from '@mui/icons-material/Sort';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
@@ -72,9 +68,6 @@ import CustomColumnSettings from './CustomColumnSettings';
 import { differenceInCalendarDays, isValid } from 'date-fns';
 import { getTasks, createTask, updateTask, deleteTask, updateProject, getProjectMembers, getWorkspaceMembers, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator, getProjectColumnSettings } from '../../apiClient';
 import { formatShortDate } from '../../utils/date';
-
-// member list is loaded from API
-const mockTasks = [];
 
 const roleColors = {
   'Owner': { bg: '#d1fae5', text: '#065f46' },
@@ -144,15 +137,11 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [calendarDateMode, setCalendarDateMode] = useState('due'); // 'due' or 'target'
   const [filterAnchor, setFilterAnchor] = useState(null);
-  const [sortAnchor, setSortAnchor] = useState(null);
   const [groupAnchor, setGroupAnchor] = useState(null);
-  const [filterBy, setFilterBy] = useState('all'); // 'all', 'open', 'pending', 'completed'
-  const [sortBy, setSortBy] = useState('dueDate'); // 'dueDate', 'name', 'status', 'stage'
   const [groupBy, setGroupBy] = useState('none'); // 'none', 'status', 'stage', 'assignee'
   const [sortColumn, setSortColumn] = useState('due_date'); // Column to sort by
   const [sortDirection, setSortDirection] = useState('asc'); // 'asc' or 'desc'
   const [tasks, setTasks] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
   const [draggedTaskId, setDraggedTaskId] = useState(null);
   const [dragOverStage, setDragOverStage] = useState(null);
@@ -229,13 +218,10 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     const fetchTasks = async () => {
       if (!project?.id) return;
       try {
-        setLoading(true);
         const response = await getTasks(project.id, showArchived);
         setTasks(response.data);
       } catch (error) {
         console.error('Failed to fetch tasks:', error);
-      } finally {
-        setLoading(false);
       }
     };
     
@@ -301,7 +287,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     if (normalized) {
       setProjectSettings(normalized);
     }
-  }, [project?.id]);
+  }, [project]);
 
   useEffect(() => {
     if (!project?.id) return;
@@ -1598,32 +1584,6 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                     </Button>
                   </DialogActions>
                 </Dialog>
-
-                {/* Filter Menu (kept for legacy) */}
-                <Menu
-                  anchorEl={null}
-                  open={false}
-                  onClose={() => setFilterAnchor(null)}
-                  TransitionComponent={Fade}
-                >
-                  <MenuItem onClick={() => { setFilterBy('all'); setFilterAnchor(null); }}>All Tasks</MenuItem>
-                  <MenuItem onClick={() => { setFilterBy('open'); setFilterAnchor(null); }}>Open Only</MenuItem>
-                  <MenuItem onClick={() => { setFilterBy('pending'); setFilterAnchor(null); }}>Pending Approval</MenuItem>
-                  <MenuItem onClick={() => { setFilterBy('completed'); setFilterAnchor(null); }}>Completed</MenuItem>
-                </Menu>
-
-                {/* Sort Menu */}
-                <Menu
-                  anchorEl={sortAnchor}
-                  open={Boolean(sortAnchor)}
-                  onClose={() => setSortAnchor(null)}
-                  TransitionComponent={Fade}
-                >
-                  <MenuItem onClick={() => { setSortBy('dueDate'); setSortAnchor(null); }}>Due Date</MenuItem>
-                  <MenuItem onClick={() => { setSortBy('name'); setSortAnchor(null); }}>Name</MenuItem>
-                  <MenuItem onClick={() => { setSortBy('status'); setSortAnchor(null); }}>Status</MenuItem>
-                  <MenuItem onClick={() => { setSortBy('stage'); setSortAnchor(null); }}>Stage</MenuItem>
-                </Menu>
 
                 {/* Group Menu */}
                 <Menu

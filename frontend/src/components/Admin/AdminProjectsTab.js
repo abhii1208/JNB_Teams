@@ -113,16 +113,15 @@ function AdminProjectsTab({ workspace, dateRange }) {
     return () => clearTimeout(t);
   }, [searchTerm]);
 
+  const fromTime = dateRange?.from instanceof Date ? dateRange.from.getTime() : null;
+  const toTime = dateRange?.to instanceof Date ? dateRange.to.getTime() : null;
+
   // Stable date params (avoid toISOString UTC shifting day)
   const dateParams = useMemo(() => {
     const fromStr = formatYYYYMMDDLocal(dateRange?.from);
     const toStr = formatYYYYMMDDLocal(dateRange?.to);
     return { fromStr, toStr };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    dateRange?.from instanceof Date ? dateRange.from.getTime() : null,
-    dateRange?.to instanceof Date ? dateRange.to.getTime() : null,
-  ]);
+  }, [fromTime, toTime]);
 
   const fetchProjects = useCallback(async () => {
     if (!workspace?.id) return;

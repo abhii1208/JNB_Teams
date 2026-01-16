@@ -27,65 +27,6 @@ import CloseIcon from '@mui/icons-material/Close';
 import InfoIcon from '@mui/icons-material/InfoOutlined';
 import { getApprovals, approveApproval, rejectApproval } from '../../apiClient';
 
-// Mock approval data
-const mockApprovals = [
-  {
-    id: 1,
-    type: 'Task Status Change',
-    task: 'Complete API Integration',
-    project: 'Website Redesign',
-    requester: { name: 'Sarah Miller', avatar: 'SM' },
-    requestedDate: '2026-01-12',
-    reason: 'Task completed, ready for review',
-    details: 'All API endpoints integrated and tested successfully.',
-    status: 'Pending',
-  },
-  {
-    id: 2,
-    type: 'Project Budget',
-    task: 'Increase Development Budget',
-    project: 'Mobile App v2',
-    requester: { name: 'Alex Kim', avatar: 'AK' },
-    requestedDate: '2026-01-11',
-    reason: 'Additional resources needed for new features',
-    details: 'Request to increase budget by 20% to hire 2 contractors.',
-    status: 'Pending',
-  },
-  {
-    id: 3,
-    type: 'Task Assignment',
-    task: 'Review Database Schema',
-    project: 'Website Redesign',
-    requester: { name: 'Patricia Lee', avatar: 'PL' },
-    requestedDate: '2026-01-10',
-    reason: 'Need expertise in database design',
-    details: 'Requesting senior developer review before implementation.',
-    status: 'Pending',
-  },
-  {
-    id: 4,
-    type: 'Deadline Extension',
-    task: 'Mobile Testing Phase',
-    project: 'Mobile App v2',
-    requester: { name: 'Mike Roberts', avatar: 'MR' },
-    requestedDate: '2026-01-08',
-    reason: 'Critical bugs discovered',
-    details: 'Need additional 2 weeks to fix bugs found in testing.',
-    status: 'Approved',
-  },
-  {
-    id: 5,
-    type: 'Resource Allocation',
-    task: 'Assign Designer to Campaign',
-    project: 'Marketing Campaign Q1',
-    requester: { name: 'Sarah Miller', avatar: 'SM' },
-    requestedDate: '2026-01-07',
-    reason: 'Design resources unavailable',
-    details: 'Request to allocate Jane from Product team temporarily.',
-    status: 'Rejected',
-  },
-];
-
 const statusColors = {
   'Pending': { bg: '#fef3c7', text: '#92400e' },
   'Approved': { bg: '#d1fae5', text: '#065f46' },
@@ -107,19 +48,15 @@ function ApprovalsPage({ user, workspace }) {
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [approvals, setApprovals] = useState([]);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchApprovals = async () => {
       if (!workspace?.id) return;
       try {
-        setLoading(true);
         const response = await getApprovals({ workspace_id: workspace.id });
         setApprovals(response.data);
       } catch (error) {
         console.error('Failed to fetch approvals:', error);
-      } finally {
-        setLoading(false);
       }
     };
     

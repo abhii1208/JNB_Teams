@@ -10,7 +10,6 @@ import {
   Typography,
   Avatar,
   Divider,
-  Chip,
   Badge,
 } from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -23,7 +22,7 @@ import RepeatIcon from '@mui/icons-material/Repeat';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import BusinessIcon from '@mui/icons-material/Business';
-import { getApprovalCount, getUserSettings } from '../../apiClient';
+import { getApprovalCount } from '../../apiClient';
 
 const DRAWER_WIDTH = 260;
 

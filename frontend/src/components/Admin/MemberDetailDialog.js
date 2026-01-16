@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -31,18 +31,12 @@ function MemberDetailDialog({ open, onClose, member, workspace, dateRange }) {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
 
-  useEffect(() => {
-    if (open && member && workspace) {
-      fetchMemberDetails();
-    }
-  }, [open, member, workspace, dateRange]);
-
-  const fetchMemberDetails = async () => {
+  const fetchMemberDetails = useCallback(async () => {
     try {
       setLoading(true);
       const params = {};
       
-      if (dateRange.from && dateRange.to) {
+      if (dateRange?.from && dateRange?.to) {
         params.date_from = dateRange.from.toISOString().split('T')[0];
         params.date_to = dateRange.to.toISOString().split('T')[0];
       }
@@ -54,7 +48,13 @@ function MemberDetailDialog({ open, onClose, member, workspace, dateRange }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [workspace?.id, member?.id, dateRange?.from, dateRange?.to]);
+
+  useEffect(() => {
+    if (open && member && workspace) {
+      fetchMemberDetails();
+    }
+  }, [open, member, workspace, fetchMemberDetails]);
 
   const summary = data?.summary || {};
   const drilldowns = data?.drilldowns || {};

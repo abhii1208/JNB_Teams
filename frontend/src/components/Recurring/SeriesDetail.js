@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     Box,
     Typography,
@@ -27,7 +27,6 @@ import {
     InputLabel,
     Select,
     MenuItem,
-    Tooltip,
     LinearProgress
 } from '@mui/material';
 import {
@@ -38,12 +37,9 @@ import {
     PlayArrow as PlayIcon,
     Refresh as RefreshIcon,
     Add as AddIcon,
-    Schedule as ScheduleIcon,
     Person as PersonIcon,
     CalendarToday as CalendarIcon,
-    SkipNext as SkipIcon,
-    Event as EventIcon,
-    History as HistoryIcon
+    SkipNext as SkipIcon
 } from '@mui/icons-material';
 import apiClient from '../../apiClient';
 import { getRuleSummary } from '../../utils/recurrenceHelpers';
@@ -62,7 +58,7 @@ function SeriesDetail({ seriesId, workspace, onBack, onEdit }) {
     const [exceptionDialog, setExceptionDialog] = useState({ open: false, type: 'skip', date: '' });
 
     // Fetch series details
-    const fetchSeries = async () => {
+    const fetchSeries = useCallback(async () => {
         if (!seriesId) return;
         setLoading(true);
         setError(null);
@@ -75,11 +71,11 @@ function SeriesDetail({ seriesId, workspace, onBack, onEdit }) {
         } finally {
             setLoading(false);
         }
-    };
+    }, [seriesId]);
 
     useEffect(() => {
         fetchSeries();
-    }, [seriesId]);
+    }, [fetchSeries]);
 
     // Actions
     const handlePause = async () => {

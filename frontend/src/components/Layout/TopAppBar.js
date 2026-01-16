@@ -22,19 +22,13 @@ import {
   DialogContent,
   DialogActions,
   TextField,
-  Breadcrumbs,
-  Link,
 } from '@mui/material';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import TimelineIcon from '@mui/icons-material/Timeline';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import WorkspacesIcon from '@mui/icons-material/Workspaces';
 import AddIcon from '@mui/icons-material/Add';
 import CheckIcon from '@mui/icons-material/Check';
-import SettingsIcon from '@mui/icons-material/Settings';
 import LogoutIcon from '@mui/icons-material/Logout';
-import PersonIcon from '@mui/icons-material/Person';
-import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { getNotificationCount, createWorkspace } from '../../apiClient';
 
 function TopAppBar({ user, currentWorkspace, workspaces = [], onWorkspaceChange, onLogout, currentPage, selectedProject, onNavigate }) {
@@ -68,10 +62,6 @@ function TopAppBar({ user, currentWorkspace, workspaces = [], onWorkspaceChange,
 
   const handleProfileClose = () => {
     setProfileAnchorEl(null);
-  };
-
-  const handleNotificationsClick = (event) => {
-    setNotificationsAnchorEl(event.currentTarget);
   };
 
   const handleNotificationsClose = () => {

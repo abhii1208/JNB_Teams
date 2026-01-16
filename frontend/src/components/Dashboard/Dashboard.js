@@ -58,6 +58,10 @@ const formatDateLabel = (dateStr, labelPrefix) => {
   return `${labelPrefix} ${d.toLocaleDateString()}`;
 };
 
+const getDue = (t) => t?.due_date || t?.dueDate || null;
+const getTarget = (t) => t?.target_date || t?.targetDate || null;
+const getModeDate = (t, mode) => (mode === 'due' ? getDue(t) : getTarget(t));
+
 function Dashboard({ user, workspace, onNavigate }) {
   // Toggle applies to: Today / Tomorrow / Soon / Overdue / No Date + Upcoming list
   const [dateMode, setDateMode] = React.useState('due'); // 'due' | 'target'
@@ -70,10 +74,6 @@ function Dashboard({ user, workspace, onNavigate }) {
   // Fixed sizes
   const SCORECARD_HEIGHT = 190; // increase this to make cards taller
   const FIXED_TASK_BOX_HEIGHT = 525;
-
-  const getDue = (t) => t?.due_date || t?.dueDate || null;
-  const getTarget = (t) => t?.target_date || t?.targetDate || null;
-  const getModeDate = (t, mode) => (mode === 'due' ? getDue(t) : getTarget(t));
 
   // Hide completed tasks (both stage Completed and status Closed)
   const isActiveTask = (t) => {

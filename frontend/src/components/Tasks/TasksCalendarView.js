@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Box,
   Paper,
@@ -23,7 +23,6 @@ import {
   Select,
   MenuItem,
   Checkbox,
-  ListItemIcon,
   Menu,
 } from '@mui/material';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
@@ -34,7 +33,6 @@ import WarningIcon from '@mui/icons-material/Warning';
 import CalendarViewMonthIcon from '@mui/icons-material/CalendarViewMonth';
 import CalendarViewWeekIcon from '@mui/icons-material/CalendarViewWeek';
 import CalendarViewDayIcon from '@mui/icons-material/CalendarViewDay';
-import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import CloseIcon from '@mui/icons-material/Close';
 import FilterListIcon from '@mui/icons-material/FilterList';
@@ -54,11 +52,8 @@ import {
   isSameMonth,
   isSameDay,
   isToday,
-  parseISO,
   isValid,
-  isBefore,
   startOfDay,
-  startOfToday,
 } from 'date-fns';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -171,19 +166,6 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
   const monthEnd = endOfMonth(date);
   const calendarStart = startOfWeek(monthStart);
   const calendarEnd = endOfWeek(monthEnd);
-  
-  // Group tasks by date - FIX: Use date-only strings to prevent timezone issues
-  const tasksByDate = useMemo(() => {
-    const map = {};
-    tasks.forEach(task => {
-      const dateField = dateMode === 'due' ? task.due_date : task.target_date;
-      const dateKey = getDateKey(dateField);
-      if (!dateKey) return;
-      if (!map[dateKey]) map[dateKey] = [];
-      map[dateKey].push(task);
-    });
-    return map;
-  }, [tasks, dateMode]);
   
   // Filter tasks
   const filteredTasks = useMemo(() => {
@@ -404,7 +386,6 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
     const dayTasks = getTasksForDay(day);
     const isCurrentMonth = isSameMonth(day, date);
     const isCurrentDay = isToday(day);
-    const isHovered = hoveredDay && isSameDay(hoveredDay, day);
     
     const isCompact = density === 'compact';
     const maxVisible = isCompact ? 2 : (calendarView === 'month' ? 3 : 8);

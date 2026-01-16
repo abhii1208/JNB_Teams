@@ -16,8 +16,6 @@ import AdminPage from '../Admin/AdminPage';
 import ClientsPage from '../Clients/ClientsPage';
 import { getWorkspaces, getUserSettings } from '../../apiClient';
 
-const DRAWER_WIDTH = 260;
-
 function MainLayout({ userId, onLogout }) {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [workspaces, setWorkspaces] = useState([]);

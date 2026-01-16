@@ -96,15 +96,14 @@ function ProjectTeamMetricsDialog({ open, onClose, project, workspace, dateRange
     };
   }, []);
 
+  const fromTime = dateRange?.from instanceof Date ? dateRange.from.getTime() : null;
+  const toTime = dateRange?.to instanceof Date ? dateRange.to.getTime() : null;
+
   const dateParams = useMemo(() => {
     const fromStr = formatYYYYMMDDLocal(dateRange?.from);
     const toStr = formatYYYYMMDDLocal(dateRange?.to);
     return { fromStr, toStr };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    dateRange?.from instanceof Date ? dateRange.from.getTime() : null,
-    dateRange?.to instanceof Date ? dateRange.to.getTime() : null,
-  ]);
+  }, [fromTime, toTime]);
 
   const fetchTeamMetrics = useCallback(async () => {
     if (!open || !project?.id || !workspace?.id) return;
@@ -145,11 +144,11 @@ function ProjectTeamMetricsDialog({ open, onClose, project, workspace, dateRange
   }, [open, fetchTeamMetrics]);
 
   const projectSummary = data?.project || {};
-  const membersRaw = Array.isArray(data?.members) ? data.members : [];
 
   // Keep "Unassigned" at top, rest alphabetically
   const members = useMemo(() => {
-    const list = [...membersRaw];
+    const raw = Array.isArray(data?.members) ? data.members : [];
+    const list = [...raw];
     list.sort((a, b) => {
       const aUn = (a?.name || '').toLowerCase() === 'unassigned';
       const bUn = (b?.name || '').toLowerCase() === 'unassigned';
@@ -158,7 +157,7 @@ function ProjectTeamMetricsDialog({ open, onClose, project, workspace, dateRange
       return (a?.name || '').localeCompare(b?.name || '');
     });
     return list;
-  }, [membersRaw]);
+  }, [data?.members]);
 
   // Colors that respect theme/dark-mode via alpha
   const COLORS = useMemo(() => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Button,
@@ -6,7 +6,6 @@ import {
   Chip,
   List,
   ListItem,
-  ListItemButton,
   ListItemIcon,
   ListItemText,
   Tab,
@@ -24,7 +23,7 @@ import TaskIcon from '@mui/icons-material/Assignment';
 import CommentIcon from '@mui/icons-material/Comment';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
 import WarningIcon from '@mui/icons-material/Warning';
-import { getNotifications, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification } from '../../apiClient';
+import { markAllNotificationsAsRead } from '../../apiClient';
 
 // Mock notifications data
 const mockNotifications = [

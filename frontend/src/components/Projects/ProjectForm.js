@@ -328,7 +328,6 @@ function ProjectForm({ open, onClose, onSave, project, workspace, user }) {
   const handleClose = () => onClose();
 
   const selectedIcon = projectIcons.find((i) => i.value === icon);
-  const selectedColor = projectColors.find((c) => c.value === color);
 
   return (
     <Dialog

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     Box,
     Typography,
@@ -45,7 +45,7 @@ function SeriesList({ workspace, onCreateNew, onEdit, onViewDetail }) {
     const [selectedSeries, setSelectedSeries] = useState(null);
 
     // Fetch series
-    const fetchSeries = async () => {
+    const fetchSeries = useCallback(async () => {
         if (!workspaceId) return;
         setLoading(true);
         setError(null);
@@ -64,13 +64,13 @@ function SeriesList({ workspace, onCreateNew, onEdit, onViewDetail }) {
         } finally {
             setLoading(false);
         }
-    };
+    }, [workspaceId]);
 
     useEffect(() => {
         if (workspaceId) {
             fetchSeries();
         }
-    }, [workspaceId]);
+    }, [workspaceId, fetchSeries]);
 
     // Filter series
     const filteredSeries = (series || []).filter(s => {

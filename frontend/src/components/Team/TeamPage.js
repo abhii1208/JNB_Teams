@@ -2,15 +2,12 @@ import React, { useState, useEffect } from 'react';
 import {
   Box,
   Button,
-  Card,
-  CardContent,
   Chip,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   FormControl,
-  Grid,
   IconButton,
   InputAdornment,
   InputLabel,
@@ -22,8 +19,6 @@ import {
   MenuItem,
   Paper,
   Select,
-  Tab,
-  Tabs,
   TextField,
   Typography,
   Avatar,
@@ -45,15 +40,7 @@ const roleColors = {
   'Member': { bg: '#f3e8ff', text: '#6b21a8' },
 };
 
-const roleDescriptions = {
-  'Owner': 'Full control over workspace, including billing and deletion',
-  'Admin': 'Same permissions as Owner except billing & workspace deletion',
-  'ProjectAdmin': 'Can create projects and manage project memberships',
-  'Member': 'Can access assigned projects, no workspace-wide control',
-};
-
 function TeamPage({ user, workspace }) {
-  const [activeTab, setActiveTab] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -61,19 +48,15 @@ function TeamPage({ user, workspace }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [selectedMember, setSelectedMember] = useState(null);
   const [members, setMembers] = useState([]);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchMembers = async () => {
       if (!workspace?.id) return;
       try {
-        setLoading(true);
         const response = await getWorkspaceMembers(workspace.id);
         setMembers(response.data);
       } catch (error) {
         console.error('Failed to fetch members:', error);
-      } finally {
-        setLoading(false);
       }
     };
     

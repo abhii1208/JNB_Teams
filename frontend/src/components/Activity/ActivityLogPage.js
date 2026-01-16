@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   Box,
-  Button,
   Card,
   Chip,
   FormControl,
@@ -17,101 +16,14 @@ import {
   TextField,
   Typography,
   Avatar,
-  IconButton,
   InputAdornment,
   Pagination,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
-import FilterListIcon from '@mui/icons-material/FilterList';
 import FolderIcon from '@mui/icons-material/Folder';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
-import EditIcon from '@mui/icons-material/Edit';
 import { getActivity } from '../../apiClient';
-
-// Mock activity data
-const mockActivities = [
-  {
-    id: 1,
-    type: 'Task',
-    action: 'Completed',
-    item: 'Complete API Integration',
-    project: 'Website Redesign',
-    user: { name: 'Sarah Miller', avatar: 'SM' },
-    timestamp: '2026-01-05T14:30:00',
-    details: 'Marked task as completed',
-  },
-  {
-    id: 2,
-    type: 'Project',
-    action: 'Created',
-    item: 'Mobile App v2',
-    project: 'Mobile App v2',
-    user: { name: 'John Doe', avatar: 'JD' },
-    timestamp: '2026-01-05T12:15:00',
-    details: 'Created new project',
-  },
-  {
-    id: 3,
-    type: 'Member',
-    action: 'Added',
-    item: 'Alex Kim',
-    project: 'Website Redesign',
-    user: { name: 'John Doe', avatar: 'JD' },
-    timestamp: '2026-01-05T10:45:00',
-    details: 'Added team member to project',
-  },
-  {
-    id: 4,
-    type: 'Task',
-    action: 'Updated',
-    item: 'Review Database Schema',
-    project: 'Website Redesign',
-    user: { name: 'Patricia Lee', avatar: 'PL' },
-    timestamp: '2026-01-04T16:20:00',
-    details: 'Updated task priority to High',
-  },
-  {
-    id: 5,
-    type: 'Task',
-    action: 'Created',
-    item: 'Mobile Testing Phase',
-    project: 'Mobile App v2',
-    user: { name: 'Mike Roberts', avatar: 'MR' },
-    timestamp: '2026-01-04T14:10:00',
-    details: 'Created new task',
-  },
-  {
-    id: 6,
-    type: 'Project',
-    action: 'Updated',
-    item: 'Marketing Campaign Q1',
-    project: 'Marketing Campaign Q1',
-    user: { name: 'Sarah Miller', avatar: 'SM' },
-    timestamp: '2026-01-04T11:30:00',
-    details: 'Updated project status',
-  },
-  {
-    id: 7,
-    type: 'Member',
-    action: 'Removed',
-    item: 'Alex Kim',
-    project: 'Mobile App v2',
-    user: { name: 'John Doe', avatar: 'JD' },
-    timestamp: '2026-01-03T15:45:00',
-    details: 'Removed team member from project',
-  },
-  {
-    id: 8,
-    type: 'Task',
-    action: 'Completed',
-    item: 'API Documentation',
-    project: 'Website Redesign',
-    user: { name: 'Mike Roberts', avatar: 'MR' },
-    timestamp: '2026-01-03T13:20:00',
-    details: 'Marked task as completed',
-  },
-];
 
 const typeColors = {
   'Task': { bg: '#e0e7ff', text: '#3730a3', icon: <CheckCircleIcon fontSize="small" /> },
@@ -133,14 +45,12 @@ function ActivityLogPage({ workspace }) {
   const [dateFilter, setDateFilter] = useState('All Time');
   const [page, setPage] = useState(1);
   const [activities, setActivities] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [totalPages, setTotalPages] = useState(1);
 
   useEffect(() => {
     const fetchActivities = async () => {
       if (!workspace?.id) return;
       try {
-        setLoading(true);
         const filters = {
           workspace_id: workspace.id,
           page: page,
@@ -152,8 +62,6 @@ function ActivityLogPage({ workspace }) {
         setTotalPages(response.data.pages || 1);
       } catch (error) {
         console.error('Failed to fetch activities:', error);
-      } finally {
-        setLoading(false);
       }
     };
     

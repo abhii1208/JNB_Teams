@@ -26,9 +26,7 @@ import {
   Snackbar,
   ToggleButton,
   ToggleButtonGroup,
-  Collapse,
   FormControlLabel,
-  Switch,
   Popover,
   List,
   ListItem,
@@ -47,16 +45,12 @@ import BookmarkBorderIcon from '@mui/icons-material/BookmarkBorder';
 import SortIcon from '@mui/icons-material/Sort';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ClearIcon from '@mui/icons-material/Clear';
 import WarningIcon from '@mui/icons-material/Warning';
 import RepeatIcon from '@mui/icons-material/Repeat';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import FolderIcon from '@mui/icons-material/Folder';
 import DeleteIcon from '@mui/icons-material/Delete';
-import EditIcon from '@mui/icons-material/Edit';
-import VisibilityIcon from '@mui/icons-material/Visibility';
 import PeopleIcon from '@mui/icons-material/People';
 import BusinessIcon from '@mui/icons-material/Business';
 import PersonIcon from '@mui/icons-material/Person';
@@ -77,10 +71,7 @@ import {
   updateTask,
   getSavedViews,
   createSavedView,
-  updateSavedView,
   deleteSavedView,
-  getUserViewPreferences,
-  updateUserViewPreferences,
   getFullUserPreferences,
   patchUserPreferences,
 } from '../../apiClient';
@@ -92,7 +83,6 @@ const VIEW_TYPES = [
 ];
 
 const STATUS_OPTIONS = ['Open', 'In Progress', 'Under Review', 'Completed', 'Closed'];
-const STAGE_OPTIONS = ['Not Started', 'Planning', 'In Development', 'Testing', 'Done'];
 const BULK_STAGE_OPTIONS = ['Planned', 'In-process', 'Completed', 'On-hold', 'Dropped'];
 const PRIORITY_OPTIONS = ['Critical', 'High', 'Medium', 'Low'];
 const GROUP_BY_OPTIONS = [
@@ -155,7 +145,6 @@ function TasksPage({ workspace, user }) {
   
   // Filters
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
   const enabledProjectColumns = useMemo(() => {
     const selectedIds = filters.projects.length

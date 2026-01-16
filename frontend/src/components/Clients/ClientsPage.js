@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Button,
@@ -76,7 +76,7 @@ function ClientsPage({ workspace }) {
 
   const canManage = ['Owner', 'Admin'].includes(workspace?.role);
 
-  const fetchClients = async () => {
+  const fetchClients = useCallback(async () => {
     if (!workspace?.id) return;
     try {
       setLoading(true);
@@ -88,11 +88,11 @@ function ClientsPage({ workspace }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [workspace?.id]);
 
   useEffect(() => {
     fetchClients();
-  }, [workspace?.id]);
+  }, [fetchClients]);
 
   const filteredClients = useMemo(() => {
     const query = searchQuery.toLowerCase();
