@@ -96,14 +96,14 @@ function ProjectTeamMetricsDialog({ open, onClose, project, workspace, dateRange
     };
   }, []);
 
-  const fromTime = dateRange?.from instanceof Date ? dateRange.from.getTime() : null;
-  const toTime = dateRange?.to instanceof Date ? dateRange.to.getTime() : null;
+  const fromDate = dateRange?.from ?? null;
+  const toDate = dateRange?.to ?? null;
 
   const dateParams = useMemo(() => {
-    const fromStr = formatYYYYMMDDLocal(dateRange?.from);
-    const toStr = formatYYYYMMDDLocal(dateRange?.to);
+    const fromStr = formatYYYYMMDDLocal(fromDate);
+    const toStr = formatYYYYMMDDLocal(toDate);
     return { fromStr, toStr };
-  }, [fromTime, toTime]);
+  }, [fromDate, toDate]);
 
   const fetchTeamMetrics = useCallback(async () => {
     if (!open || !project?.id || !workspace?.id) return;

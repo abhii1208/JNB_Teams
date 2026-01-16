@@ -113,15 +113,15 @@ function AdminProjectsTab({ workspace, dateRange }) {
     return () => clearTimeout(t);
   }, [searchTerm]);
 
-  const fromTime = dateRange?.from instanceof Date ? dateRange.from.getTime() : null;
-  const toTime = dateRange?.to instanceof Date ? dateRange.to.getTime() : null;
+  const fromDate = dateRange?.from ?? null;
+  const toDate = dateRange?.to ?? null;
 
   // Stable date params (avoid toISOString UTC shifting day)
   const dateParams = useMemo(() => {
-    const fromStr = formatYYYYMMDDLocal(dateRange?.from);
-    const toStr = formatYYYYMMDDLocal(dateRange?.to);
+    const fromStr = formatYYYYMMDDLocal(fromDate);
+    const toStr = formatYYYYMMDDLocal(toDate);
     return { fromStr, toStr };
-  }, [fromTime, toTime]);
+  }, [fromDate, toDate]);
 
   const fetchProjects = useCallback(async () => {
     if (!workspace?.id) return;

@@ -50,7 +50,6 @@ import {
   addWeeks,
   subWeeks,
   isSameMonth,
-  isSameDay,
   isToday,
   isValid,
   startOfDay,
@@ -133,7 +132,6 @@ const getDateKey = (dateValue) => {
 };
 
 function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndicators, onTaskUpdate }) {
-  const [hoveredDay, setHoveredDay] = useState(null);
   const [dateMode, setDateMode] = useState(() => {
     return localStorage.getItem('calendarDateMode') || 'due';
   });
@@ -397,8 +395,6 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
     return (
       <Box
         key={day.toISOString()}
-        onMouseEnter={() => setHoveredDay(day)}
-        onMouseLeave={() => setHoveredDay(null)}
         onDragOver={handleDragOver}
         onDrop={(e) => handleDrop(e, day)}
         sx={{
