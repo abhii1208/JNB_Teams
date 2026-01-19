@@ -31,6 +31,7 @@ import {
 const ALL_COLUMNS = [
   { id: 'name', label: 'Task Name', required: true, defaultVisible: true },
   { id: 'project_name', label: 'Project', required: false, defaultVisible: true },
+  { id: 'client_name', label: 'Client', required: false, defaultVisible: true },
   { id: 'stage', label: 'Stage', required: false, defaultVisible: true },
   { id: 'status', label: 'Status', required: false, defaultVisible: true },
   { id: 'priority', label: 'Priority', required: false, defaultVisible: true },

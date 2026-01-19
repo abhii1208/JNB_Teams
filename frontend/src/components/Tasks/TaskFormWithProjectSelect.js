@@ -91,6 +91,7 @@ function TaskFormWithProjectSelect({
         description: taskData.description,
         project_id: internalProject?.id,
         assignee_id: taskData.assignee?.id || null,
+        client_id: taskData.clientId ?? taskData.client_id ?? null,
         collaborators: (taskData.collaborators || []).map(c => c.id),
         notes: taskData.notes || null,
         priority: taskData.priority || 'Medium',
@@ -135,6 +136,8 @@ function TaskFormWithProjectSelect({
         onSave={handleTaskSave}
         task={task}
         projectId={internalProject.id}
+        projectClients={internalProject?.clients || []}
+        primaryClient={internalProject?.primary_client || null}
         userRole={effectiveProjectRole}
         currentUserId={user?.id}
       />

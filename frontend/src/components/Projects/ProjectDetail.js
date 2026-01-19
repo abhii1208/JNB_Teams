@@ -502,6 +502,19 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     if (diff <= 31) return { label: 'Planned this month', color: '#0f766e', bg: 'rgba(15,118,110,0.08)' };
     return { label: 'Planned later', color: '#64748b', bg: '#f8fafc' };
   };
+
+  const getClientTooltipLabel = (task) => {
+    if (!task) return '';
+    const seriesNo = task.client_series_no;
+    const legalName = task.client_legal_name;
+    const name = task.client_name;
+    if (seriesNo) {
+      const tail = legalName || name;
+      return tail ? `${seriesNo} - ${tail}` : seriesNo;
+    }
+    if (legalName) return legalName;
+    return name || '';
+  };
   
   // Apply advanced filters to tasks
   const filterTasks = (tasksToFilter) => {
@@ -636,7 +649,12 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   const activeKey = tabList[activeTab]?.key || 'overview';
   const showCategoryColumn = projectColumnSettings.enable_category;
   const showSectionColumn = projectColumnSettings.enable_section;
-  const tableColumnCount = 11 + (showCategoryColumn ? 1 : 0) + (showSectionColumn ? 1 : 0);
+  const hasProjectClients = (project?.clients && project.clients.length > 0) || project?.primary_client;
+  const showClientColumn = Boolean(hasProjectClients);
+  const tableColumnCount = 11
+    + (showCategoryColumn ? 1 : 0)
+    + (showSectionColumn ? 1 : 0)
+    + (showClientColumn ? 1 : 0);
 
   const handleOpenTaskForm = (task = null, stage = null, status = null) => {
     // Explicitly set selectedTask to null if task is not provided (new task scenario)
@@ -661,6 +679,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           name: taskData.name,
           description: taskData.description,
           assignee_id: taskData.assignee?.id || taskData.assignee_id || null,
+          client_id: taskData.clientId ?? taskData.client_id ?? null,
           stage: taskData.stage,
           status: taskData.status,
           priority: taskData.priority,
@@ -703,6 +722,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           description: taskData.description,
           project_id: project.id,
           assignee_id: taskData.assignee?.id || null,
+          client_id: taskData.clientId ?? taskData.client_id ?? null,
           stage: taskData.stage,
           status: taskData.status,
           priority: taskData.priority,
@@ -1602,7 +1622,14 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                 {taskView === 'table' && (
                   <Fade in timeout={300}>
                     <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2, overflowX: 'auto' }}>
-                      <Table sx={{ minWidth: showCategoryColumn || showSectionColumn ? 1400 : 1200 }}>
+                      <Table
+                        sx={{
+                          minWidth: 1200
+                            + (showCategoryColumn ? 120 : 0)
+                            + (showSectionColumn ? 120 : 0)
+                            + (showClientColumn ? 160 : 0),
+                        }}
+                      >
                         <TableHead>
                           <TableRow sx={{ backgroundColor: projectTheme.primaryLight }}>
                             <TableCell 
@@ -1731,6 +1758,19 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                 </Box>
                               </TableCell>
                             )}
+                            {showClientColumn && (
+                              <TableCell
+                                sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                                onClick={() => handleSort('client_name')}
+                              >
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
+                                  Client
+                                  {sortColumn === 'client_name' && (
+                                    sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
+                                  )}
+                                </Box>
+                              </TableCell>
+                            )}
                             <TableCell 
                               sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
                               onClick={() => handleSort('created_by_name')}
@@ -1774,6 +1814,8 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                             const task = item;
                             const targetSignal = getTargetPlanSignal(task.target_date);
                             const notesLabel = task.notes || 'No notes';
+                            const clientLabel = task.client_name || task.client_legal_name || '';
+                            const clientTooltip = getClientTooltipLabel(task);
                             return (
                               <TableRow
                               key={task.id}
@@ -1921,6 +1963,21 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                     <Chip size="small" label={task.section} sx={{ bgcolor: '#fce7f3', color: '#be185d', height: 22 }} />
                                   ) : (
                                     <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem' }} color="text.secondary">-</Typography>
+                                  )}
+                                </TableCell>
+                              )}
+                              {showClientColumn && (
+                                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                                  {clientLabel ? (
+                                    <Tooltip title={clientTooltip || clientLabel} arrow placement="top">
+                                      <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem' }}>
+                                        {clientLabel}
+                                      </Typography>
+                                    </Tooltip>
+                                  ) : (
+                                    <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem' }} color="text.secondary">
+                                      {''}
+                                    </Typography>
                                   )}
                                 </TableCell>
                               )}
@@ -3291,6 +3348,8 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
         prefilledStage={prefilledStage}
         prefilledStatus={prefilledStatus}
         projectId={project?.id}
+        projectClients={project?.clients || []}
+        primaryClient={project?.primary_client || null}
         userRole={userRole}
         currentUserId={user?.id}
         projectRole={project?.role}

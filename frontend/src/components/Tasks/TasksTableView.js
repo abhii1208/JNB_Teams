@@ -83,6 +83,25 @@ const formatRelativeDate = (dateStr) => {
   return formatDistanceToNow(date, { addSuffix: true });
 };
 
+const getClientDisplayName = (task) => {
+  if (!task) return '';
+  return task.client_name || task.client_legal_name || '';
+};
+
+const getClientTooltip = (task) => {
+  if (!task) return '';
+  const seriesNo = task.client_series_no;
+  const legalName = task.client_legal_name;
+  const name = task.client_name;
+  if (seriesNo) {
+    const tail = legalName || name;
+    return tail ? `${seriesNo} - ${tail}` : seriesNo;
+  }
+  if (legalName) return legalName;
+  if (name) return name;
+  return '';
+};
+
 const isToday = (dateStr) => {
   const d = parseDateValue(dateStr);
   if (!d) return false;
@@ -165,6 +184,7 @@ const TASK_COL_SX = {
 const COLUMNS = [
   { id: 'name', label: 'Task', sortable: true },
   { id: 'project_name', label: 'Project', sortable: true },
+  { id: 'client_name', label: 'Client', sortable: true },
   { id: 'stage', label: 'Stage', sortable: true },
   { id: 'status', label: 'Status', sortable: true },
   { id: 'priority', label: 'Priority', sortable: true },
@@ -186,7 +206,7 @@ const COLUMNS = [
 ];
 
 const DEFAULT_VISIBLE_COLUMNS = [
-  'name', 'project_name', 'stage', 'status', 'priority',
+  'name', 'project_name', 'client_name', 'stage', 'status', 'priority',
   'assignee_name', 'due_date', 'actions'
 ];
 
@@ -248,6 +268,7 @@ const getDividerSx = (colId) => {
 
 const stickyHeaderSx = {
   position: 'sticky',
+  top: 0,
   zIndex: 3,
 };
 
@@ -411,6 +432,18 @@ const TaskRow = React.memo(function TaskRow({
                       }}
                     />
                   );
+
+                case 'client_name': {
+                  const displayName = getClientDisplayName(task);
+                  const tooltip = getClientTooltip(task);
+                  const content = (
+                    <Typography variant="body2" noWrap sx={NOWRAP_SX}>
+                      {displayName}
+                    </Typography>
+                  );
+                  if (!displayName) return content;
+                  return tooltip ? <Tooltip title={tooltip}>{content}</Tooltip> : content;
+                }
 
                 case 'stage':
                   return (
@@ -866,7 +899,6 @@ function TasksTableView({
     return {
       ...base,
       ...(w ? { width: w, minWidth: w, maxWidth: w } : {}),
-      position: 'relative',
     };
   }, [density, colWidths]);
 

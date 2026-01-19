@@ -23,7 +23,23 @@ CREATE TABLE IF NOT EXISTS clients (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_code_unique ON clients(client_code);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_clients_code_unique'
+  ) THEN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM clients
+      GROUP BY client_code
+      HAVING COUNT(*) > 1
+    ) THEN
+      EXECUTE 'CREATE UNIQUE INDEX idx_clients_code_unique ON clients(client_code)';
+    END IF;
+  END IF;
+END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_unique_name_gstin ON clients (workspace_id, LOWER(client_name), COALESCE(gstin, ''));
 CREATE INDEX IF NOT EXISTS idx_clients_workspace ON clients(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_clients_owner ON clients(owner_user_id);

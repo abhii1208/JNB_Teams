@@ -13,7 +13,8 @@ import {
     InputAdornment,
     CircularProgress,
     Grid,
-    Avatar
+    Avatar,
+    Tooltip
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
@@ -26,6 +27,10 @@ import EditIcon from '@mui/icons-material/Edit';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import RepeatIcon from '@mui/icons-material/Repeat';
+import TodayIcon from '@mui/icons-material/Today';
+import EventRepeatIcon from '@mui/icons-material/EventRepeat';
+import AutoModeIcon from '@mui/icons-material/AutoMode';
+import TouchAppIcon from '@mui/icons-material/TouchApp';
 import apiClient from '../../apiClient';
 import { getRuleSummary } from '../../utils/recurrenceHelpers';
 
@@ -249,13 +254,29 @@ function SeriesList({ workspace, onCreateNew, onEdit, onViewDetail }) {
             {/* Series Grid */}
             {!error && (
                 <Grid container spacing={3}>
-                    {filteredSeries.map((item) => (
+                    {filteredSeries.map((item) => {
+                        const getCategoryIcon = (cat) => {
+                            const icons = {
+                                daily: '📆',
+                                weekly: '📅',
+                                monthly: '🗓️',
+                                yearly: '📊',
+                                reports: '📋',
+                                maintenance: '🔧',
+                                reviews: '👁️',
+                                meetings: '🤝'
+                            };
+                            return icons[cat] || '🔁';
+                        };
+                        
+                        return (
                         <Grid item xs={12} md={6} lg={4} key={item.id}>
                             <Card
                                 elevation={0}
                                 onClick={() => onViewDetail(item.id)}
                                 sx={{
                                     border: '1px solid rgba(148, 163, 184, 0.2)',
+                                    borderLeft: `4px solid ${item.color || '#0f766e'}`,
                                     borderRadius: 3,
                                     cursor: 'pointer',
                                     height: '100%',
@@ -264,26 +285,45 @@ function SeriesList({ workspace, onCreateNew, onEdit, onViewDetail }) {
                                     '&:hover': {
                                         transform: 'translateY(-4px)',
                                         boxShadow: '0 12px 40px rgba(15, 23, 42, 0.1)',
-                                        borderColor: '#0f766e',
+                                        borderColor: item.color || '#0f766e',
                                     },
                                 }}
                             >
                                 <CardContent sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
                                     {/* Header */}
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
-                                        <Box
-                                            sx={{
-                                                width: 40,
-                                                height: 40,
-                                                borderRadius: 2,
-                                                backgroundColor: item.paused_at ? 'rgba(148, 163, 184, 0.2)' : 'rgba(15, 118, 110, 0.1)',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                color: item.paused_at ? '#64748b' : '#0f766e',
-                                            }}
-                                        >
-                                            <RepeatIcon />
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            <Box
+                                                sx={{
+                                                    width: 40,
+                                                    height: 40,
+                                                    borderRadius: 2,
+                                                    backgroundColor: item.paused_at ? 'rgba(148, 163, 184, 0.2)' : `${item.color || '#0f766e'}15`,
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    color: item.paused_at ? '#64748b' : (item.color || '#0f766e'),
+                                                    fontSize: '1.2rem'
+                                                }}
+                                            >
+                                                {getCategoryIcon(item.category)}
+                                            </Box>
+                                            {/* Generation Mode Badge */}
+                                            <Tooltip title={item.generation_mode === 'auto' ? 'Auto Generation' : 'Manual Generation'}>
+                                                <Box sx={{ 
+                                                    p: 0.5, 
+                                                    borderRadius: 1, 
+                                                    bgcolor: item.generation_mode === 'auto' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(245, 158, 11, 0.1)',
+                                                    display: 'flex',
+                                                    alignItems: 'center'
+                                                }}>
+                                                    {item.generation_mode === 'auto' ? (
+                                                        <AutoModeIcon sx={{ fontSize: 16, color: '#22c55e' }} />
+                                                    ) : (
+                                                        <TouchAppIcon sx={{ fontSize: 16, color: '#f59e0b' }} />
+                                                    )}
+                                                </Box>
+                                            </Tooltip>
                                         </Box>
                                         <IconButton
                                             size="small"
@@ -332,6 +372,19 @@ function SeriesList({ workspace, onCreateNew, onEdit, onViewDetail }) {
                                                 }}
                                             />
                                         )}
+                                        {item.category && (
+                                            <Chip
+                                                label={item.category.charAt(0).toUpperCase() + item.category.slice(1)}
+                                                size="small"
+                                                sx={{
+                                                    backgroundColor: `${item.color || '#0f766e'}15`,
+                                                    color: item.color || '#0f766e',
+                                                    fontWeight: 500,
+                                                    fontSize: '0.65rem',
+                                                    height: 22,
+                                                }}
+                                            />
+                                        )}
                                         <Chip
                                             label={`${item.total_instances || 0} Tasks`}
                                             size="small"
@@ -354,7 +407,45 @@ function SeriesList({ workspace, onCreateNew, onEdit, onViewDetail }) {
                                                 height: 22,
                                             }}
                                         />
+                                        {item.prevent_future && (
+                                            <Tooltip title="Future instances prevented">
+                                                <Chip
+                                                    icon={<TodayIcon sx={{ fontSize: 14 }} />}
+                                                    label="Today Only"
+                                                    size="small"
+                                                    sx={{
+                                                        backgroundColor: '#fce7f3',
+                                                        color: '#be185d',
+                                                        fontWeight: 500,
+                                                        fontSize: '0.65rem',
+                                                        height: 22,
+                                                    }}
+                                                />
+                                            </Tooltip>
+                                        )}
                                     </Box>
+
+                                    {/* Next Occurrence */}
+                                    {item.next_occurrence && !item.paused_at && (
+                                        <Box sx={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            gap: 0.5, 
+                                            mb: 1.5,
+                                            p: 1,
+                                            bgcolor: 'rgba(59, 130, 246, 0.05)',
+                                            borderRadius: 1
+                                        }}>
+                                            <EventRepeatIcon sx={{ fontSize: 14, color: '#3b82f6' }} />
+                                            <Typography variant="caption" sx={{ color: '#3b82f6', fontWeight: 500 }}>
+                                                Next: {new Date(item.next_occurrence).toLocaleDateString('en-GB', { 
+                                                    day: '2-digit', 
+                                                    month: 'short', 
+                                                    year: 'numeric' 
+                                                })}
+                                            </Typography>
+                                        </Box>
+                                    )}
 
                                     {/* Progress Bar */}
                                     {item.total_instances > 0 && (
@@ -419,7 +510,8 @@ function SeriesList({ workspace, onCreateNew, onEdit, onViewDetail }) {
                                 </CardContent>
                             </Card>
                         </Grid>
-                    ))}
+                    );
+                    })}
                 </Grid>
             )}
 

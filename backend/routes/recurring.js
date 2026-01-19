@@ -262,7 +262,12 @@ router.post('/', async (req, res) => {
         rotation_members = [],
         requires_approval = false,
         approver_id,
-        reminder_offsets = []
+        reminder_offsets = [],
+        generation_mode = 'auto',
+        generate_past = true,
+        prevent_future = true,
+        category = null,
+        color = '#0f766e'
     } = req.body;
 
     // Validate required fields
@@ -286,14 +291,15 @@ router.post('/', async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // Create series
+        // Create series with new generation fields
         const result = await client.query(`
             INSERT INTO recurring_series (
                 workspace_id, project_id, title, description, template,
                 recurrence_rule, timezone, start_date, end_date,
                 auto_close_after_days, assignment_strategy, static_assignee_id,
-                requires_approval, approver_id, reminder_offsets, created_by
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                requires_approval, approver_id, reminder_offsets, created_by,
+                generation_mode, generate_past, prevent_future, category, color
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             RETURNING *
         `, [
             workspace_id,
@@ -311,7 +317,12 @@ router.post('/', async (req, res) => {
             requires_approval,
             approver_id || null,
             JSON.stringify(reminder_offsets),
-            req.userId
+            req.userId,
+            generation_mode,
+            generate_past,
+            prevent_future,
+            category,
+            color
         ]);
 
         const series = result.rows[0];
@@ -343,14 +354,19 @@ router.post('/', async (req, res) => {
 
         await client.query('COMMIT');
 
-        // Generate initial instances (async, don't wait)
-        setImmediate(async () => {
-            try {
-                await generateInstancesForSeries(series.id);
-            } catch (err) {
-                console.error('Initial generation error:', err);
-            }
-        });
+        // Generate initial instances only if auto mode
+        if (generation_mode === 'auto') {
+            setImmediate(async () => {
+                try {
+                    await generateInstancesForSeries(series.id, {
+                        forceBackfill: generate_past,
+                        preventFuture: prevent_future
+                    });
+                } catch (err) {
+                    console.error('Initial generation error:', err);
+                }
+            });
+        }
 
         res.status(201).json({
             ...series,
@@ -399,7 +415,8 @@ router.put('/:id', async (req, res) => {
         const allowedFields = [
             'title', 'description', 'template', 'recurrence_rule', 'timezone',
             'start_date', 'end_date', 'auto_close_after_days', 'assignment_strategy',
-            'project_id', 'static_assignee_id', 'requires_approval', 'approver_id', 'reminder_offsets'
+            'project_id', 'static_assignee_id', 'requires_approval', 'approver_id', 'reminder_offsets',
+            'generation_mode', 'generate_past', 'prevent_future', 'category', 'color'
         ];
 
         for (const field of allowedFields) {
@@ -683,7 +700,7 @@ router.delete('/:id/exception/:date', async (req, res) => {
 // ============================================
 router.post('/:id/generate', async (req, res) => {
     const { id } = req.params;
-    const { maxInstances = 10 } = req.body || {};
+    const { maxInstances = 10, backfill = true } = req.body || {};
 
     try {
         const seriesId = parseInt(id, 10);
@@ -692,7 +709,8 @@ router.post('/:id/generate', async (req, res) => {
         }
         const parsedMax = Number(maxInstances);
         const result = await generateInstancesForSeries(seriesId, { 
-            maxInstances: Number.isNaN(parsedMax) ? 10 : parsedMax 
+            maxInstances: Number.isNaN(parsedMax) ? 10 : parsedMax,
+            forceBackfill: backfill !== false
         });
         
         res.json({

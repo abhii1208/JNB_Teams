@@ -175,11 +175,16 @@ router.put('/:approvalId/approve', async (req, res) => {
       [approval.requester_id, 'Approval', 'Approval Approved', `Your ${approval.type} approval request has been approved`, approval.task_id, approval.project_id]
     );
     
-    // If this approval relates to a task, update the task status/stage
+    // If this approval relates to a task, update the task status/stage and archive it
     if (approval.task_id) {
       try {
         await client.query(
-          `UPDATE tasks SET status = $1, stage = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3`,
+          `UPDATE tasks
+           SET status = $1,
+               stage = $2,
+               archived_at = COALESCE(archived_at, CURRENT_TIMESTAMP),
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $3`,
           ['Closed', 'Completed', approval.task_id]
         );
       } catch (err) {

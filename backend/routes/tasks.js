@@ -9,6 +9,38 @@ const normalizeNumericInput = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const normalizeClientIdInput = (value) => {
+  if (value === '' || value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const getPrimaryProjectClientId = async (dbClient, projectId) => {
+  const result = await dbClient.query(
+    `SELECT client_id
+     FROM project_clients
+     WHERE project_id = $1
+     ORDER BY is_primary DESC, id ASC
+     LIMIT 1`,
+    [projectId]
+  );
+  return result.rows[0]?.client_id || null;
+};
+
+const validateProjectClientLink = async (dbClient, projectId, clientId) => {
+  if (!clientId) return null;
+  const result = await dbClient.query(
+    'SELECT 1 FROM project_clients WHERE project_id = $1 AND client_id = $2',
+    [projectId, clientId]
+  );
+  if (result.rows.length === 0) {
+    const err = new Error('Client is not linked to this project');
+    err.status = 400;
+    throw err;
+  }
+  return clientId;
+};
+
 // Get ALL tasks for a workspace (cross-project)
 // Supports filtering, sorting, pagination
 router.get('/workspace/:workspaceId', async (req, res) => {
@@ -65,6 +97,10 @@ router.get('/workspace/:workspaceId', async (req, res) => {
         t.*,
         p.name as project_name,
         p.id as project_id,
+        COALESCE(task_client.client_name, pc_client.client_name) as client_name,
+        COALESCE(task_client.legal_name, pc_client.legal_name) as client_legal_name,
+        COALESCE(task_client.series_no, pc_client.series_no) as client_series_no,
+        COALESCE(t.client_id, pc_client.client_id) as client_id,
         u.first_name || ' ' || u.last_name as assignee_name,
         u.email as assignee_email,
         creator.first_name || ' ' || creator.last_name as created_by_name,
@@ -79,6 +115,15 @@ router.get('/workspace/:workspaceId', async (req, res) => {
         (SELECT status FROM approvals WHERE task_id = t.id ORDER BY created_at DESC LIMIT 1) as latest_approval_status
       FROM tasks t
       JOIN projects p ON t.project_id = p.id
+      LEFT JOIN clients task_client ON task_client.id = t.client_id
+      LEFT JOIN LATERAL (
+        SELECT c.id as client_id, c.client_name, c.legal_name, c.series_no
+        FROM project_clients pc
+        JOIN clients c ON c.id = pc.client_id
+        WHERE pc.project_id = p.id AND c.workspace_id = p.workspace_id
+        ORDER BY pc.is_primary DESC, pc.id ASC
+        LIMIT 1
+      ) pc_client ON true
       LEFT JOIN users u ON t.assignee_id = u.id
       LEFT JOIN users creator ON t.created_by = creator.id
       LEFT JOIN recurring_series rs ON t.series_id = rs.id
@@ -520,6 +565,10 @@ router.get('/project/:projectId', async (req, res) => {
     const archiveCondition = includeArchived ? '' : 'AND t.archived_at IS NULL';
     const result = await pool.query(`
       SELECT t.*,
+        COALESCE(task_client.client_name, pc_client.client_name) as client_name,
+        COALESCE(task_client.legal_name, pc_client.legal_name) as client_legal_name,
+        COALESCE(task_client.series_no, pc_client.series_no) as client_series_no,
+        COALESCE(t.client_id, pc_client.client_id) as client_id,
         u.first_name || ' ' || u.last_name as assignee_name,
         u.username as assignee_username,
         creator.first_name || ' ' || creator.last_name as created_by_name,
@@ -528,6 +577,15 @@ router.get('/project/:projectId', async (req, res) => {
          JOIN users u2 ON tc.user_id = u2.id
          WHERE tc.task_id = t.id) as collaborators
       FROM tasks t
+      LEFT JOIN clients task_client ON task_client.id = t.client_id
+      LEFT JOIN LATERAL (
+        SELECT c.id as client_id, c.client_name, c.legal_name, c.series_no
+        FROM project_clients pc
+        JOIN clients c ON c.id = pc.client_id
+        WHERE pc.project_id = t.project_id
+        ORDER BY pc.is_primary DESC, pc.id ASC
+        LIMIT 1
+      ) pc_client ON true
       LEFT JOIN users u ON t.assignee_id = u.id
       JOIN users creator ON t.created_by = creator.id
       WHERE t.project_id = $1 AND t.deleted_at IS NULL ${archiveCondition}
@@ -548,6 +606,8 @@ router.post('/', async (req, res) => {
     description,
     project_id,
     assignee_id,
+    client_id,
+    clientId,
     stage = 'Planned',
     status = 'Not started',
     priority = 'Medium',
@@ -572,6 +632,7 @@ router.post('/', async (req, res) => {
   const normalizedCompletionPercentage = normalizeNumericInput(completion_percentage ?? completionPercentage);
   const normalizedExternalId = external_id ?? externalId ?? null;
   const normalizedTags = Array.isArray(tags) ? tags : null;
+  const requestedClientId = normalizeClientIdInput(client_id ?? clientId);
   
   if (!name || !project_id) {
     return res.status(400).json({ error: 'Name and project_id are required' });
@@ -580,11 +641,15 @@ router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    const resolvedClientId = requestedClientId
+      ? await validateProjectClientLink(client, project_id, requestedClientId)
+      : await getPrimaryProjectClientId(client, project_id);
     
     const taskResult = await client.query(
       `INSERT INTO tasks 
-       (name, description, project_id, assignee_id, stage, status, priority, due_date, target_date, notes, category, section, estimated_hours, actual_hours, completion_percentage, tags, external_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING *`,
+       (name, description, project_id, assignee_id, stage, status, priority, due_date, target_date, notes, category, section, estimated_hours, actual_hours, completion_percentage, tags, external_id, client_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
       [
         name,
         description,
@@ -603,6 +668,7 @@ router.post('/', async (req, res) => {
         normalizedCompletionPercentage,
         normalizedTags,
         normalizedExternalId,
+        resolvedClientId,
         req.userId,
       ]
     );
@@ -653,6 +719,9 @@ router.post('/', async (req, res) => {
     res.status(201).json(task);
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.status) {
+      return res.status(err.status).json({ error: err.message });
+    }
     console.error('Create task error:', err);
     res.status(500).json({ error: 'Failed to create task' });
   } finally {
@@ -666,6 +735,8 @@ router.put('/:taskId', async (req, res) => {
     name,
     description,
     assignee_id,
+    client_id,
+    clientId,
     stage,
     status,
     priority,
@@ -690,6 +761,8 @@ router.put('/:taskId', async (req, res) => {
   const normalizedCompletionPercentage = normalizeNumericInput(completion_percentage ?? completionPercentage);
   const normalizedExternalId = external_id ?? externalId ?? null;
   const normalizedTags = Array.isArray(tags) ? tags : null;
+  const hasClientId = Object.prototype.hasOwnProperty.call(req.body, 'client_id')
+    || Object.prototype.hasOwnProperty.call(req.body, 'clientId');
   
   const client = await pool.connect();
   try {
@@ -732,6 +805,14 @@ router.put('/:taskId', async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Insufficient permissions to approve or reject this task' });
     }
+
+    let resolvedClientId = null;
+    if (hasClientId) {
+      const requestedClientId = normalizeClientIdInput(client_id ?? clientId);
+      resolvedClientId = requestedClientId
+        ? await validateProjectClientLink(client, access.project_id, requestedClientId)
+        : null;
+    }
     
     // Auto-archive when task is closed
     const shouldArchive = status && status.toLowerCase() === 'closed';
@@ -754,9 +835,10 @@ router.put('/:taskId', async (req, res) => {
            completion_percentage = COALESCE($14, completion_percentage),
            tags = COALESCE($15, tags),
            external_id = COALESCE($16, external_id),
-           archived_at = CASE WHEN $18 THEN CURRENT_TIMESTAMP ELSE archived_at END,
+           client_id = CASE WHEN $18 THEN $17 ELSE client_id END,
+           archived_at = CASE WHEN $20 THEN CURRENT_TIMESTAMP ELSE archived_at END,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $17
+       WHERE id = $19
        RETURNING *`,
       [
         name,
@@ -775,6 +857,8 @@ router.put('/:taskId', async (req, res) => {
         normalizedCompletionPercentage,
         normalizedTags,
         normalizedExternalId,
+        resolvedClientId,
+        hasClientId,
         req.params.taskId,
         shouldArchive,
       ]
@@ -821,6 +905,9 @@ router.put('/:taskId', async (req, res) => {
     res.json(task);
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.status) {
+      return res.status(err.status).json({ error: err.message });
+    }
     console.error('Update task error:', err);
     res.status(500).json({ error: 'Failed to update task' });
   } finally {

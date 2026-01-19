@@ -245,7 +245,7 @@ function SeriesDetail({ seriesId, workspace, onBack, onEdit }) {
             </Stack>
 
             {/* Stats Cards */}
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2, mb: 3 }}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 2, mb: 3 }}>
                 <Paper sx={{ p: 2 }}>
                     <Typography variant="overline" color="text.secondary">Total Instances</Typography>
                     <Typography variant="h4">{series.total_instances || 0}</Typography>
@@ -264,10 +264,60 @@ function SeriesDetail({ seriesId, workspace, onBack, onEdit }) {
                     <Typography variant="h6">{formatLongDate(series.start_date) || '-'}</Typography>
                 </Paper>
                 <Paper sx={{ p: 2 }}>
-                    <Typography variant="overline" color="text.secondary">Timezone</Typography>
-                    <Typography variant="h6">{series.timezone}</Typography>
+                    <Typography variant="overline" color="text.secondary">Next Occurrence</Typography>
+                    <Typography variant="h6" sx={{ color: series.next_occurrence ? '#3b82f6' : 'text.secondary' }}>
+                        {series.next_occurrence ? formatLongDate(series.next_occurrence) : 'N/A'}
+                    </Typography>
+                </Paper>
+                <Paper sx={{ p: 2 }}>
+                    <Typography variant="overline" color="text.secondary">Generation Mode</Typography>
+                    <Chip 
+                        label={series.generation_mode === 'auto' ? '🔄 Auto' : '✋ Manual'}
+                        color={series.generation_mode === 'auto' ? 'success' : 'warning'}
+                        size="small"
+                        sx={{ mt: 0.5 }}
+                    />
+                </Paper>
+                <Paper sx={{ p: 2 }}>
+                    <Typography variant="overline" color="text.secondary">Category</Typography>
+                    <Typography variant="h6" sx={{ textTransform: 'capitalize' }}>
+                        {series.category || 'Uncategorized'}
+                    </Typography>
                 </Paper>
             </Box>
+
+            {/* Generation Info */}
+            <Paper sx={{ p: 2, mb: 3, bgcolor: series.generation_mode === 'manual' ? 'rgba(245, 158, 11, 0.05)' : 'rgba(34, 197, 94, 0.05)' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
+                    <Box>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                            Instance Generation Settings
+                        </Typography>
+                        <Stack direction="row" spacing={2} sx={{ mt: 1 }}>
+                            <Typography variant="caption" color="text.secondary">
+                                <strong>Prevent Future:</strong> {series.prevent_future ? '✅ Yes' : '❌ No'}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                                <strong>Backfill Past:</strong> {series.generate_past ? '✅ Yes' : '❌ No'}
+                            </Typography>
+                        </Stack>
+                    </Box>
+                    {series.generation_mode === 'manual' && !isPaused && (
+                        <Button
+                            variant="contained"
+                            startIcon={generating ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon />}
+                            onClick={handleGenerateNow}
+                            disabled={generating}
+                            sx={{ 
+                                bgcolor: '#f59e0b',
+                                '&:hover': { bgcolor: '#d97706' }
+                            }}
+                        >
+                            {generating ? 'Generating...' : 'Generate Now'}
+                        </Button>
+                    )}
+                </Box>
+            </Paper>
 
             {/* Details */}
             <Paper sx={{ p: 2, mb: 3 }}>

@@ -127,6 +127,21 @@ const CUSTOM_COLUMN_IDS = [
   'external_id',
 ];
 
+const CLIENT_COLUMN_ID = 'client_name';
+const CLIENT_COLUMN_AFTER = 'project_name';
+
+const insertColumnAfter = (columns, afterId, newId) => {
+  if (columns.includes(newId)) return columns;
+  const next = [...columns];
+  const index = next.indexOf(afterId);
+  if (index === -1) {
+    next.push(newId);
+  } else {
+    next.splice(index + 1, 0, newId);
+  }
+  return next;
+};
+
 function TasksPage({ workspace, user }) {
   // View state
   const [viewType, setViewType] = useState('table');
@@ -201,6 +216,14 @@ function TasksPage({ workspace, user }) {
       return missing.length ? [...prev, ...missing] : prev;
     });
   }, [enabledProjectColumns, preferencesLoaded]);
+
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    if (columnOrder.includes(CLIENT_COLUMN_ID)) return;
+
+    setColumnOrder((prev) => insertColumnAfter(prev, CLIENT_COLUMN_AFTER, CLIENT_COLUMN_ID));
+    setVisibleColumns((prev) => insertColumnAfter(prev, CLIENT_COLUMN_AFTER, CLIENT_COLUMN_ID));
+  }, [preferencesLoaded, columnOrder]);
   
   // Saved Views
   const [savedViews, setSavedViews] = useState([]);

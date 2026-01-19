@@ -73,6 +73,18 @@ const getMemberLabel = (m) => {
   return name || m.name || m.email || '';
 };
 
+const getClientLabel = (client) => {
+  if (!client) return '';
+  const seriesNo = client.series_no || client.seriesNo || '';
+  const legalName = client.legal_name || client.legalName || '';
+  const name = client.name || client.client_name || '';
+  if (seriesNo) {
+    const tail = legalName || name;
+    return tail ? `${seriesNo} - ${tail}` : seriesNo;
+  }
+  return legalName || name || '';
+};
+
 const isMidnightUtcString = (value) => {
   if (typeof value !== 'string') return false;
   const trimmed = value.trim();
@@ -169,6 +181,8 @@ function TaskForm({
   prefilledStage = null,
   prefilledStatus = null,
   projectId = null,
+  projectClients = [],
+  primaryClient = null,
   userRole = null,
   currentUserId = null,
   onDelete,
@@ -189,6 +203,7 @@ function TaskForm({
     priority: 'Medium',
     isRecurring: false,
     recurrencePattern: 'weekly',
+    clientId: null,
     // Custom columns (Feature 1)
     category: '',
     section: '',
@@ -230,6 +245,33 @@ function TaskForm({
   const collabPopoverOpen = Boolean(collabAnchorEl);
 
   const memberOptions = useMemo(() => projectMembers || [], [projectMembers]);
+
+  const rawProjectClients = useMemo(
+    () => (Array.isArray(projectClients) ? projectClients : []),
+    [projectClients]
+  );
+
+  const primaryProjectClient = useMemo(() => {
+    if (primaryClient && primaryClient.id) return primaryClient;
+    return rawProjectClients.find((client) => client.is_primary) || null;
+  }, [primaryClient, rawProjectClients]);
+
+  const projectClientOptions = useMemo(() => {
+    if (!rawProjectClients.length && !primaryProjectClient) return [];
+    if (!primaryProjectClient) return rawProjectClients;
+    const exists = rawProjectClients.some(
+      (client) => String(client.id) === String(primaryProjectClient.id)
+    );
+    return exists ? rawProjectClients : [primaryProjectClient, ...rawProjectClients];
+  }, [rawProjectClients, primaryProjectClient]);
+
+  const showClientSelect = projectClientOptions.length > 1;
+
+  const defaultClientId = useMemo(() => {
+    if (projectClientOptions.length === 1) return projectClientOptions[0].id;
+    if (primaryProjectClient?.id) return primaryProjectClient.id;
+    return null;
+  }, [projectClientOptions, primaryProjectClient]);
 
   const currentUserMember = useMemo(() => {
     if (!currentUserId) return null;
@@ -280,11 +322,13 @@ function TaskForm({
     ? formData.section
     : '';
 
-  const dateGridTemplateMd = showCategory && showSection
-    ? '156px 156px 200px 200px'
-    : showCategory || showSection
-      ? '156px 156px 200px'
-      : '156px 156px';
+  const dateColumns = ['156px', '156px'];
+  const metaColWidth = '165px';
+  const clientColWidth = '185px';
+  if (showCategory) dateColumns.push(metaColWidth);
+  if (showSection) dateColumns.push(metaColWidth);
+  if (showClientSelect) dateColumns.push(clientColWidth);
+  const dateGridTemplateMd = dateColumns.join(' ');
 
   useEffect(() => {
     if (task) {
@@ -303,6 +347,7 @@ function TaskForm({
         priority: task.priority || 'Medium',
         isRecurring: false,
         recurrencePattern: 'weekly',
+        clientId: task.client_id || task.clientId || null,
         // Custom columns (Feature 1)
         category: task.category || '',
         section: task.section || '',
@@ -326,6 +371,7 @@ function TaskForm({
         priority: 'Medium',
         isRecurring: false,
         recurrencePattern: 'weekly',
+        clientId: null,
         // Custom columns (Feature 1)
         category: '',
         section: '',
@@ -387,6 +433,16 @@ function TaskForm({
       active = false;
     };
   }, [projectId, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!defaultClientId) return;
+
+    setFormData((prev) => {
+      if (prev.clientId) return prev;
+      return { ...prev, clientId: defaultClientId };
+    });
+  }, [defaultClientId, open]);
 
   useEffect(() => {
     if (!task || projectMembers.length === 0) return;
@@ -505,6 +561,7 @@ function TaskForm({
       targetDate: formatDateForApi(formData.targetDate),
       createdBy: task?.created_by_name || task?.createdBy || null,
       createdDate: task?.created_at || task?.createdDate || null,
+      clientId: formData.clientId || null,
       // Custom columns (Feature 1)
       category: formData.category || null,
       section: formData.section || null,
@@ -533,6 +590,11 @@ function TaskForm({
     borderRadius: 2,
     minHeight: 44,
     bgcolor: 'rgba(15,118,110,0.03)',
+    '& .MuiSelect-select': {
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+    },
   };
 
   const tinyBtnSx = {
@@ -748,6 +810,29 @@ function TaskForm({
                       {sectionOptions.map((option) => (
                         <MenuItem key={option.id || option.option_value} value={option.option_value}>
                           {option.option_value}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                )}
+
+                {showClientSelect && (
+                  <FormControl
+                    fullWidth
+                    disabled={!canEdit}
+                    size="small"
+                    sx={{ '& .MuiInputLabel-root': { fontWeight: 700 } }}
+                  >
+                    <InputLabel>Client</InputLabel>
+                    <Select
+                      value={formData.clientId || ''}
+                      label="Client"
+                      onChange={(e) => handleChange('clientId', e.target.value)}
+                      sx={selectSx}
+                    >
+                      {projectClientOptions.map((client) => (
+                        <MenuItem key={client.id} value={client.id}>
+                          {getClientLabel(client) || client.name || client.client_name || 'Client'}
                         </MenuItem>
                       ))}
                     </Select>

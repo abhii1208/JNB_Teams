@@ -8,14 +8,35 @@ const { pool } = require('../db');
 const { computeNextOccurrence, generateOccurrences, isValidForGeneration } = require('./recurrenceEngine');
 const { DateTime } = require('luxon');
 
+const PRIORITY_VALUES = {
+    critical: 'Critical',
+    high: 'High',
+    medium: 'Medium',
+    low: 'Low'
+};
+
+const normalizePriority = (value) => {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const directMatch = Object.values(PRIORITY_VALUES).find((p) => p === trimmed);
+    if (directMatch) return directMatch;
+    return PRIORITY_VALUES[trimmed.toLowerCase()] || null;
+};
+
 /**
  * Generate instances for a single series
  * @param {number} seriesId - The recurring series ID
- * @param {object} options - { maxInstances, forceRegenerate }
+ * @param {object} options - { maxInstances, forceRegenerate, forceBackfill, preventFuture }
  * @returns {object} - { generated: number, skipped: number, errors: array }
  */
 async function generateInstancesForSeries(seriesId, options = {}) {
-    const { maxInstances = 10, forceRegenerate = false } = options;
+    const { 
+        maxInstances = 10, 
+        forceRegenerate = false, 
+        forceBackfill = false,
+        preventFuture = null // null means use series setting
+    } = options;
     const result = { generated: 0, skipped: 0, moved: 0, errors: [] };
     
     const client = await pool.connect();
@@ -69,11 +90,6 @@ async function generateInstancesForSeries(seriesId, options = {}) {
         const futureCount = parseInt(countResult.rows[0].count);
         const targetCount = series.max_future_instances || maxInstances;
 
-        if (futureCount >= targetCount && !forceRegenerate) {
-            await client.query('COMMIT');
-            return result;
-        }
-
         const timezone = series.timezone || 'UTC';
         const toISODate = (value) => {
             if (!value) return null;
@@ -91,7 +107,6 @@ async function generateInstancesForSeries(seriesId, options = {}) {
             : (series.recurrence_rule || {});
         const backfillPolicy = series.backfill_policy || 'skip';
         const today = DateTime.now().setZone(timezone).toISODate();
-        const cutoffDate = today;
         const parsedRuleCount = rule.count != null ? Number(rule.count) : null;
         const ruleCount = Number.isFinite(parsedRuleCount) && parsedRuleCount > 0 ? parsedRuleCount : null;
 
@@ -108,6 +123,18 @@ async function generateInstancesForSeries(seriesId, options = {}) {
             AND deleted_at IS NULL
         `, [seriesId]);
         const totalCount = parseInt(totalCountResult.rows[0].count);
+        const shouldBackfill = forceBackfill
+            || series.generate_past
+            || backfillPolicy !== 'skip'
+            || (backfillPolicy === 'skip' && totalCount === 0 && !lastGeneratedAt);
+        
+        // Determine if we should prevent future instances
+        const shouldPreventFuture = preventFuture !== null ? preventFuture : (series.prevent_future ?? true);
+
+        if (futureCount >= targetCount && !forceRegenerate && !shouldBackfill) {
+            await client.query('COMMIT');
+            return result;
+        }
 
         // Determine start point for generation
         const startPoint = lastGeneratedAt && totalCount > 0
@@ -115,18 +142,28 @@ async function generateInstancesForSeries(seriesId, options = {}) {
             : DateTime.fromISO(seriesStartDate, { zone: timezone })
                 .minus({ days: 1 })
                 .toISODate();
-        const generationStartPoint = backfillPolicy === 'skip'
-            ? DateTime.fromISO(today, { zone: timezone }).minus({ days: 1 }).toISODate()
-            : startPoint;
+        const generationStartPoint = shouldBackfill
+            ? startPoint
+            : DateTime.fromISO(today, { zone: timezone }).minus({ days: 1 }).toISODate();
         let currentDate = generationStartPoint < startPoint ? startPoint : generationStartPoint;
 
         // Generate occurrences
         let generatedCount = 0;
-        const maxIterations = 100; // Safety limit
+        let generatedFutureCount = 0;
+        const generationAnchor = DateTime.fromISO(currentDate, { zone: timezone });
+        const spanDays = Math.abs(Math.round(
+            DateTime.fromISO(today, { zone: timezone }).diff(generationAnchor, 'days').days
+        ));
+        const estimatedIterations = spanDays + targetCount + 31;
+        const maxIterations = Math.max(100, Math.min(10000, estimatedIterations)); // Safety limit
         let iterations = 0;
+        const canGenerateFuture = () => {
+            // If prevent future is enabled, don't generate future instances
+            if (shouldPreventFuture) return false;
+            return futureCount + generatedFutureCount < targetCount;
+        };
 
         while (
-            futureCount + generatedCount < targetCount &&
             iterations < maxIterations &&
             (!ruleCount || (totalCount + generatedCount) < ruleCount)
         ) {
@@ -139,13 +176,29 @@ async function generateInstancesForSeries(seriesId, options = {}) {
                 break; // No more occurrences
             }
 
-            if (nextDate > cutoffDate) {
-                break;
-            }
-
             // Check series end date
             if (seriesEndDate && nextDate > seriesEndDate) {
                 break;
+            }
+
+            const isFuture = nextDate > today;
+            
+            // If future instances are prevented, stop when we hit a future date
+            if (isFuture && shouldPreventFuture) {
+                // Update next_occurrence in the series for reference
+                await client.query(`
+                    UPDATE recurring_series SET next_occurrence = $2 WHERE id = $1
+                `, [seriesId, nextDate]);
+                break;
+            }
+            
+            if (isFuture && !canGenerateFuture()) {
+                break;
+            }
+
+            if (!shouldBackfill && nextDate < today) {
+                currentDate = nextDate;
+                continue;
             }
 
             // Check for exception
@@ -159,11 +212,19 @@ async function generateInstancesForSeries(seriesId, options = {}) {
                     currentDate = nextDate;
                     continue;
                 } else if (exception.exception_type === 'move') {
+                    const movedDate = exception.new_date;
+                    const movedIsFuture = movedDate && movedDate > today;
+                    if (movedIsFuture && !canGenerateFuture()) {
+                        break;
+                    }
                     // Create instance on new date
                     const taskId = await createTaskInstance(client, series, exception.new_date, true);
                     await logGeneration(client, seriesId, nextDate, taskId, 'moved');
                     result.moved++;
                     generatedCount++;
+                    if (movedIsFuture) {
+                        generatedFutureCount++;
+                    }
                     currentDate = nextDate;
                     continue;
                 }
@@ -199,6 +260,9 @@ async function generateInstancesForSeries(seriesId, options = {}) {
 
             result.generated++;
             generatedCount++;
+            if (isFuture) {
+                generatedFutureCount++;
+            }
             currentDate = nextDate;
         }
 
@@ -272,6 +336,7 @@ async function ensureProjectForSeries(client, series) {
  */
 async function createTaskInstance(client, series, dueDate, isException = false) {
     const template = series.template || {};
+    const priority = normalizePriority(template.priority) || 'Medium';
     
     // Resolve assignee
     const assigneeId = await resolveAssignee(client, series);
@@ -312,7 +377,7 @@ async function createTaskInstance(client, series, dueDate, isException = false) 
         assigneeId,
         template.stage || 'Planned',
         template.status || 'Open',
-        template.priority || 'Medium',
+        priority,
         dueDateUtc,
         series.timezone,
         dueDate,
