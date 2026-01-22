@@ -19,10 +19,23 @@ import {
   InputLabel,
   Select,
   Tooltip,
+  ToggleButtonGroup,
+  ToggleButton,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  LinearProgress,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import FolderIcon from '@mui/icons-material/Folder';
+import ViewListIcon from '@mui/icons-material/ViewList';
+import ViewModuleIcon from '@mui/icons-material/ViewModule';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import CodeIcon from '@mui/icons-material/Code';
 import DesignServicesIcon from '@mui/icons-material/DesignServices';
@@ -66,6 +79,34 @@ function ProjectList({ onSelectProject, workspace, user }) {
   const [showArchived, setShowArchived] = useState(false);
   const [clientOptions, setClientOptions] = useState([]);
   const [clientFilter, setClientFilter] = useState('all');
+  const [viewMode, setViewMode] = useState('card'); // 'card' or 'table'
+
+  // Export projects to CSV
+  const handleExport = () => {
+    const headers = ['Name', 'Description', 'Status', 'Clients', 'Open Tasks', 'Pending Approval', 'Completed Tasks', 'Total Tasks', 'Members'];
+    const csvData = filteredProjects.map(project => [
+      project.name || '',
+      (project.description || '').replace(/"/g, '""'),
+      project.status || '',
+      (project.clients || []).map(c => c.name).join('; '),
+      project.openTasks || 0,
+      project.pendingApproval || 0,
+      project.completedTasks || 0,
+      project.taskCount || 0,
+      (project.members || []).length
+    ]);
+    
+    const csvContent = [
+      headers.join(','),
+      ...csvData.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `projects_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+  };
 
   // Fetch projects
   useEffect(() => {
@@ -280,7 +321,7 @@ function ProjectList({ onSelectProject, workspace, user }) {
       </Box>
 
       {/* Search & Filter */}
-      <Box sx={{ display: 'flex', gap: 2, mb: 4, alignItems: 'center' }}>
+      <Box sx={{ display: 'flex', gap: 2, mb: 4, alignItems: 'center', flexWrap: 'wrap' }}>
         <TextField
           fullWidth
           placeholder="Search projects..."
@@ -333,9 +374,178 @@ function ProjectList({ onSelectProject, workspace, user }) {
         >
           {showArchived ? 'Show Active' : 'Show Archived'}
         </Button>
+        
+        {/* View Mode Toggle */}
+        <ToggleButtonGroup
+          value={viewMode}
+          exclusive
+          onChange={(e, newMode) => newMode && setViewMode(newMode)}
+          size="small"
+          sx={{ ml: 'auto' }}
+        >
+          <ToggleButton value="card" sx={{ px: 1.5 }}>
+            <Tooltip title="Card View">
+              <ViewModuleIcon />
+            </Tooltip>
+          </ToggleButton>
+          <ToggleButton value="table" sx={{ px: 1.5 }}>
+            <Tooltip title="Table View">
+              <ViewListIcon />
+            </Tooltip>
+          </ToggleButton>
+        </ToggleButtonGroup>
+
+        {/* Export Button */}
+        <Button
+          variant="outlined"
+          startIcon={<FileDownloadIcon />}
+          onClick={handleExport}
+          sx={{ borderRadius: 2, textTransform: 'none' }}
+        >
+          Export
+        </Button>
       </Box>
 
-      {/* Projects Grid */}
+      {/* Projects Table View */}
+      {viewMode === 'table' && (
+        <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 3, mb: 3 }}>
+          <Table>
+            <TableHead>
+              <TableRow sx={{ bgcolor: '#f8fafc' }}>
+                <TableCell sx={{ fontWeight: 600 }}>Project</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Clients</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Progress</TableCell>
+                <TableCell sx={{ fontWeight: 600 }} align="center">Open</TableCell>
+                <TableCell sx={{ fontWeight: 600 }} align="center">Pending</TableCell>
+                <TableCell sx={{ fontWeight: 600 }} align="center">Done</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Members</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Role</TableCell>
+                <TableCell sx={{ width: 50 }}></TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredProjects.map((project) => {
+                const progress = project.taskCount > 0 ? Math.round((project.completedTasks / project.taskCount) * 100) : 0;
+                const primaryClient = project.primary_client || (project.clients || [])[0];
+                return (
+                  <TableRow
+                    key={project.id}
+                    hover
+                    onClick={() => handleSelectProject(project)}
+                    sx={{ cursor: 'pointer', '&:hover': { bgcolor: '#f8fafc' } }}
+                  >
+                    <TableCell>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                        <Box
+                          sx={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: 1,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            bgcolor: project.color || '#0f766e',
+                          }}
+                        >
+                          <FolderIcon sx={{ color: '#fff', fontSize: 18 }} />
+                        </Box>
+                        <Box>
+                          <Typography variant="body2" fontWeight={600}>{project.name}</Typography>
+                          {project.description && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {project.description}
+                            </Typography>
+                          )}
+                        </Box>
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Chip
+                        label={project.status || 'Active'}
+                        size="small"
+                        sx={{
+                          bgcolor: statusColors[project.status]?.bg || '#d1fae5',
+                          color: statusColors[project.status]?.text || '#065f46',
+                          fontWeight: 500,
+                          fontSize: '0.7rem',
+                        }}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      {primaryClient ? (
+                        <Tooltip title={(project.clients || []).map(c => c.name).join(', ')}>
+                          <Chip
+                            label={primaryClient.name}
+                            size="small"
+                            sx={{ bgcolor: project.color || '#0f766e', color: '#fff', fontWeight: 500, fontSize: '0.65rem' }}
+                          />
+                        </Tooltip>
+                      ) : (
+                        <Typography variant="caption" color="text.secondary">-</Typography>
+                      )}
+                    </TableCell>
+                    <TableCell sx={{ minWidth: 120 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <LinearProgress
+                          variant="determinate"
+                          value={progress}
+                          sx={{
+                            flex: 1,
+                            height: 6,
+                            borderRadius: 3,
+                            bgcolor: 'rgba(148, 163, 184, 0.2)',
+                            '& .MuiLinearProgress-bar': { bgcolor: '#0f766e', borderRadius: 3 }
+                          }}
+                        />
+                        <Typography variant="caption" fontWeight={600}>{progress}%</Typography>
+                      </Box>
+                    </TableCell>
+                    <TableCell align="center">
+                      <Chip label={project.openTasks || 0} size="small" sx={{ bgcolor: '#fef3c7', color: '#92400e', fontWeight: 600, minWidth: 32 }} />
+                    </TableCell>
+                    <TableCell align="center">
+                      <Chip label={project.pendingApproval || 0} size="small" sx={{ bgcolor: '#fee2e2', color: '#991b1b', fontWeight: 600, minWidth: 32 }} />
+                    </TableCell>
+                    <TableCell align="center">
+                      <Chip label={project.completedTasks || 0} size="small" sx={{ bgcolor: '#d1fae5', color: '#065f46', fontWeight: 600, minWidth: 32 }} />
+                    </TableCell>
+                    <TableCell>
+                      <AvatarGroup max={3} sx={{ '& .MuiAvatar-root': { width: 24, height: 24, fontSize: '0.65rem' } }}>
+                        {(project.members || []).map((member, idx) => (
+                          <Avatar key={idx} sx={{ bgcolor: '#0f766e', fontWeight: 600 }}>
+                            {typeof member === 'string' ? member : member?.name?.charAt(0) || '?'}
+                          </Avatar>
+                        ))}
+                      </AvatarGroup>
+                    </TableCell>
+                    <TableCell>
+                      <Chip
+                        label={project.role || 'Member'}
+                        size="small"
+                        sx={{
+                          bgcolor: roleColors[project.role]?.bg || '#f3e8ff',
+                          color: roleColors[project.role]?.text || '#6b21a8',
+                          fontWeight: 500,
+                          fontSize: '0.65rem',
+                        }}
+                      />
+                    </TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <IconButton size="small" onClick={(e) => handleMenuOpen(e, project)}>
+                        <MoreVertIcon fontSize="small" />
+                      </IconButton>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+
+      {/* Projects Card Grid */}
+      {viewMode === 'card' && (
       <Grid container spacing={3}>
         {filteredProjects.map((project) => (
           <Grid item xs={12} md={6} lg={4} key={project.id}>
@@ -622,6 +832,7 @@ function ProjectList({ onSelectProject, workspace, user }) {
           </Grid>
         ))}
       </Grid>
+      )}
 
       {/* Context Menu */}
       <Menu

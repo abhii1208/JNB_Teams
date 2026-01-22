@@ -23,6 +23,7 @@ function MainLayout({ userId, onLogout }) {
   const [selectedProject, setSelectedProject] = useState(null);
   const [selectedTask, setSelectedTask] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [navigationState, setNavigationState] = useState(null);
 
   // Fetch workspaces on mount
   useEffect(() => {
@@ -62,10 +63,11 @@ function MainLayout({ userId, onLogout }) {
     fetchUser();
   }, []);
 
-  const handleNavigate = (page) => {
+  const handleNavigate = (page, options = null) => {
     setCurrentPage(page);
     setSelectedProject(null);
     setSelectedTask(null);
+    setNavigationState(options ? { page, ...options } : null);
   };
 
   const handleWorkspaceChange = (workspace) => {
@@ -95,7 +97,12 @@ function MainLayout({ userId, onLogout }) {
   const isPersonalWorkspace = Boolean(currentWorkspace?.is_personal)
     || (currentWorkspace?.name === 'Personal' && Number(currentWorkspace?.created_by) === Number(user?.id));
   const canViewTeam = !isPersonalWorkspace && (currentWorkspace?.role === 'Owner' || currentWorkspace?.role === 'Admin');
-  const canViewClients = !isPersonalWorkspace && (currentWorkspace?.role === 'Owner' || currentWorkspace?.role === 'Admin');
+  const canViewClients = !isPersonalWorkspace && (
+    currentWorkspace?.role === 'Owner'
+    || currentWorkspace?.role === 'Admin'
+    || currentWorkspace?.role === 'ProjectAdmin'
+    || currentWorkspace?.role === 'Project Admin'
+  );
   const canViewApprovals = !isPersonalWorkspace;
   const canViewAdmin = !isPersonalWorkspace && (currentWorkspace?.role === 'Owner' || currentWorkspace?.role === 'Admin');
 
@@ -138,14 +145,17 @@ function MainLayout({ userId, onLogout }) {
           />
         );
       
-      case 'tasks':
+      case 'tasks': {
+        const pageNavigation = navigationState?.page === 'tasks' ? navigationState : null;
         return (
           <TasksPage
             workspace={currentWorkspace}
             user={user}
+            navigationState={pageNavigation}
+            onNavigationConsumed={() => setNavigationState(null)}
           />
         );
-      
+      }
       case 'team':
         if (!currentWorkspace || !canViewTeam) {
           return (
@@ -212,7 +222,7 @@ function MainLayout({ userId, onLogout }) {
         return <ClientsPage workspace={currentWorkspace} />;
       
       case 'settings':
-        return <SettingsPage user={user} />;
+        return <SettingsPage user={user} workspace={currentWorkspace} />;
       
       default:
         return (

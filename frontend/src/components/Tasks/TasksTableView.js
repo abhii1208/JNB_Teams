@@ -17,6 +17,14 @@ import {
   Tooltip,
   LinearProgress,
   Button,
+  Badge,
+  FormControl,
+  FormControlLabel,
+  MenuItem,
+  Select,
+  TextField,
+  Popover,
+  ListItemText,
   Divider,
   ToggleButtonGroup,
   ToggleButton,
@@ -29,6 +37,13 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import FolderIcon from '@mui/icons-material/Folder';
 import AddIcon from '@mui/icons-material/Add';
+import FilterListIcon from '@mui/icons-material/FilterList';
+import DensitySmallIcon from '@mui/icons-material/DensitySmall';
+import DensityMediumIcon from '@mui/icons-material/DensityMedium';
+import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck';
+import TuneIcon from '@mui/icons-material/Tune';
+import InsertLinkIcon from '@mui/icons-material/InsertLink';
+import ClearIcon from '@mui/icons-material/Clear';
 
 import {
   formatDistanceToNow,
@@ -111,29 +126,37 @@ const isToday = (dateStr) => {
     d.getDate() === now.getDate();
 };
 
-const getDueSignal = (dateStr) => {
+const getDueSignal = (dateStr, taskStatus = null) => {
+  // Feature 6: Don't show date labels for completed/closed tasks
+  if (taskStatus === 'Closed' || taskStatus === 'Completed') return null;
+  
   const d = parseDateValue(dateStr);
   if (!d) return null;
 
   const diff = differenceInCalendarDays(d, new Date()); // future = positive
-  if (diff === 0) return { label: 'Today', color: '#2563eb', bg: '#eff6ff' };
-  if (diff < 0) return { label: 'Overdue', color: '#dc2626', bg: '#fef2f2' };
-  if (diff > 0 && diff <= 7) return { label: `in ${diff}d`, color: '#0f766e', bg: 'rgba(15,118,110,0.08)' };
+  if (diff === 0) return { label: 'Today', color: '#2563eb', bg: '#eff6ff', filterKey: 'today' };
+  if (diff < 0) return { label: 'Overdue', color: '#dc2626', bg: '#fef2f2', filterKey: 'overdue' };
+  if (diff === 1) return { label: 'Tomorrow', color: '#0f766e', bg: 'rgba(15,118,110,0.08)', filterKey: 'tomorrow' };
+  if (diff > 0 && diff <= 7) return { label: `in ${diff}d`, color: '#0f766e', bg: 'rgba(15,118,110,0.08)', filterKey: 'week' };
+  if (diff > 7 && diff <= 31) return { label: 'This month', color: '#64748b', bg: '#f8fafc', filterKey: 'month' };
   return null;
 };
 
 // ✅ Force single line (NO WRAP) everywhere
-const getTargetPlanSignal = (dateStr) => {
+const getTargetPlanSignal = (dateStr, taskStatus = null) => {
+  // Feature 6: Don't show date labels for completed/closed tasks
+  if (taskStatus === 'Closed' || taskStatus === 'Completed') return null;
+  
   const d = parseDateValue(dateStr);
   if (!d) return null;
 
   const diff = differenceInCalendarDays(d, new Date());
-  if (diff < 0) return { label: 'Overdue', color: '#dc2626', bg: '#fef2f2' };
-  if (diff === 0) return { label: 'Planned for today', color: '#0f766e', bg: 'rgba(15,118,110,0.08)' };
-  if (diff === 1) return { label: 'Planned for tomorrow', color: '#0f766e', bg: 'rgba(15,118,110,0.08)' };
-  if (diff <= 7) return { label: 'Planned this week', color: '#2563eb', bg: '#eff6ff' };
-  if (diff <= 31) return { label: 'Planned this month', color: '#0f766e', bg: 'rgba(15,118,110,0.08)' };
-  return { label: 'Planned later', color: '#64748b', bg: '#f8fafc' };
+  if (diff < 0) return { label: 'Overdue', color: '#dc2626', bg: '#fef2f2', filterKey: 'overdue' };
+  if (diff === 0) return { label: 'Planned for today', color: '#0f766e', bg: 'rgba(15,118,110,0.08)', filterKey: 'today' };
+  if (diff === 1) return { label: 'Planned for tomorrow', color: '#0f766e', bg: 'rgba(15,118,110,0.08)', filterKey: 'tomorrow' };
+  if (diff <= 7) return { label: 'Planned this week', color: '#2563eb', bg: '#eff6ff', filterKey: 'week' };
+  if (diff <= 31) return { label: 'Planned this month', color: '#0f766e', bg: 'rgba(15,118,110,0.08)', filterKey: 'month' };
+  return { label: 'Planned later', color: '#64748b', bg: '#f8fafc', filterKey: 'later' };
 };
 
 const NOWRAP_SX = {
@@ -291,6 +314,7 @@ const TaskRow = React.memo(function TaskRow({
   getTaskIndicators,
   density,
   getBodyCellSx,
+  onDateFilterClick,
 }) {
   const indicators = getTaskIndicators(task);
 
@@ -361,10 +385,40 @@ const TaskRow = React.memo(function TaskRow({
             {(() => {
               const priorityStyle = getPriorityColor(task.priority);
               const statusStyle = getStatusColor(task.status);
+              
+              // Feature 3: Build tooltip content showing all labels for task name hover
+              const getTaskLabelsTooltip = () => {
+                const labels = [];
+                if (task.priority) labels.push(`Priority: ${task.priority}`);
+                if (task.status) labels.push(`Status: ${task.status}`);
+                if (task.stage) labels.push(`Stage: ${task.stage}`);
+                if (task.project_name) labels.push(`Project: ${task.project_name}`);
+                if (task.assignee_name) labels.push(`Assignee: ${task.assignee_name}`);
+                if (task.due_date) {
+                  const dueSignal = getDueSignal(task.due_date, task.status);
+                  labels.push(`Due: ${formatDate(task.due_date)}${dueSignal ? ` (${dueSignal.label})` : ''}`);
+                }
+                if (task.target_date) {
+                  const targetSignal = getTargetPlanSignal(task.target_date, task.status);
+                  labels.push(`Target: ${formatDate(task.target_date)}${targetSignal ? ` (${targetSignal.label})` : ''}`);
+                }
+                if (task.is_recurring) labels.push('Recurring Task');
+                if (task.latest_approval_status === 'pending') labels.push('Pending Approval');
+                return labels.join('\n');
+              };
 
               switch (colId) {
                 case 'name':
                   return (
+                    <Tooltip 
+                      title={
+                        <Box sx={{ whiteSpace: 'pre-line', fontSize: '0.75rem' }}>
+                          {getTaskLabelsTooltip()}
+                        </Box>
+                      }
+                      placement="right"
+                      arrow
+                    >
                     <Box sx={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
                         <Box sx={{ flex: 1, minWidth: 0, maxWidth: `${TASK_NAME_TEXT_CH}ch` }}>
@@ -416,6 +470,7 @@ const TaskRow = React.memo(function TaskRow({
                         </Typography>
                       )}
                     </Box>
+                    </Tooltip>
                   );
 
                 case 'project_name':
@@ -521,7 +576,7 @@ const TaskRow = React.memo(function TaskRow({
                   const dueText = formatDate(task.due_date);
                   const dueRel = formatRelativeDate(task.due_date);
                   const dueTooltip = dueRel ? `${dueText} (${dueRel})` : null;
-                  const signal = getDueSignal(task.due_date);
+                  const signal = getDueSignal(task.due_date, task.status);
 
                   return (
                     <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
@@ -532,8 +587,8 @@ const TaskRow = React.memo(function TaskRow({
                             noWrap
                             sx={{
                               ...NOWRAP_SX,
-                              color: task.is_overdue ? '#dc2626' : 'text.primary',
-                              fontWeight: task.is_overdue ? 700 : 500,
+                              color: task.is_overdue && task.status !== 'Closed' && task.status !== 'Completed' ? '#dc2626' : 'text.primary',
+                              fontWeight: task.is_overdue && task.status !== 'Closed' && task.status !== 'Completed' ? 700 : 500,
                             }}
                           >
                             {dueText}
@@ -545,15 +600,15 @@ const TaskRow = React.memo(function TaskRow({
                           noWrap
                           sx={{
                             ...NOWRAP_SX,
-                            color: task.is_overdue ? '#dc2626' : 'text.primary',
-                            fontWeight: task.is_overdue ? 700 : 500,
+                            color: task.is_overdue && task.status !== 'Closed' && task.status !== 'Completed' ? '#dc2626' : 'text.primary',
+                            fontWeight: task.is_overdue && task.status !== 'Closed' && task.status !== 'Completed' ? 700 : 500,
                           }}
                         >
                           {dueText}
                         </Typography>
                       )}
 
-                      {isToday(task.due_date) && (
+                      {isToday(task.due_date) && task.status !== 'Closed' && task.status !== 'Completed' && (
                         <Tooltip title="Due today">
                           <CalendarTodayIcon sx={{ color: '#2563eb', fontSize: '1rem', flexShrink: 0 }} />
                         </Tooltip>
@@ -563,12 +618,18 @@ const TaskRow = React.memo(function TaskRow({
                         <Chip
                           size="small"
                           label={signal.label}
+                          onClick={signal.filterKey && onDateFilterClick ? (e) => {
+                            e.stopPropagation();
+                            onDateFilterClick(signal.filterKey);
+                          } : undefined}
                           sx={{
                             height: 20,
                             bgcolor: signal.bg,
                             color: signal.color,
                             fontWeight: 700,
+                            cursor: signal.filterKey && onDateFilterClick ? 'pointer' : 'default',
                             '& .MuiChip-label': { px: 1, fontSize: '0.72rem' },
+                            '&:hover': signal.filterKey && onDateFilterClick ? { opacity: 0.85 } : {},
                           }}
                         />
                       )}
@@ -578,7 +639,7 @@ const TaskRow = React.memo(function TaskRow({
 
                 case 'target_date':
                   return (() => {
-                    const targetSignal = getTargetPlanSignal(task.target_date);
+                    const targetSignal = getTargetPlanSignal(task.target_date, task.status);
                     return (
                       <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
                         <Typography variant="body2" noWrap sx={NOWRAP_SX}>
@@ -588,12 +649,18 @@ const TaskRow = React.memo(function TaskRow({
                           <Chip
                             size="small"
                             label={targetSignal.label}
+                            onClick={targetSignal.filterKey && onDateFilterClick ? (e) => {
+                              e.stopPropagation();
+                              onDateFilterClick(targetSignal.filterKey);
+                            } : undefined}
                             sx={{
                               height: 20,
                               bgcolor: targetSignal.bg,
                               color: targetSignal.color,
                               fontWeight: 700,
+                              cursor: targetSignal.filterKey && onDateFilterClick ? 'pointer' : 'default',
                               '& .MuiChip-label': { px: 1, fontSize: '0.72rem' },
+                              '&:hover': targetSignal.filterKey && onDateFilterClick ? { opacity: 0.85 } : {},
                             }}
                           />
                         )}
@@ -759,16 +826,59 @@ function TasksTableView({
   loading,
   visibleColumns = DEFAULT_VISIBLE_COLUMNS,
   columnOrder = COLUMNS.map((c) => c.id),
+  filters = {},
+  onFiltersChange,
+  projects = [],
+  workspaceMembers = [],
+  statusOptions = [],
+  stageOptions = [],
+  priorityOptions = [],
+  hasActiveFilters = false,
+  activeFilterCount = 0,
+  onClearFilters,
+  onOpenBulkActions,
+  onOpenShareLink,
+  onClearSelection,
   onCreateTask, // optional: shows Create Task button in empty state
+  onDateFilterClick, // optional: callback for clicking date labels (feature 7)
 }) {
   const [expandedGroups, setExpandedGroups] = useState({});
   const [density, setDensity] = useState('comfortable'); // 'compact' | 'comfortable'
   const [orderBy, setOrderBy] = useState('due_date');
   const [order, setOrder] = useState('asc');
+  const [filterAnchorEl, setFilterAnchorEl] = useState(null);
+  const [filterColumnId, setFilterColumnId] = useState(null);
+  const selectedCount = selectedTasks.length;
+  const hasSelection = selectedCount > 0;
 
   // Column widths (resize) in px for non-sticky columns
   const [colWidths, setColWidths] = useState({}); // { [colId]: number }
   const dragRef = useRef(null);
+
+  const updateFilters = useCallback(
+    (patch) => {
+      if (!onFiltersChange || !patch) return;
+      onFiltersChange(patch);
+    },
+    [onFiltersChange]
+  );
+
+  const handleFilterOpen = (event, colId) => {
+    event.stopPropagation();
+    setFilterAnchorEl(event.currentTarget);
+    setFilterColumnId(colId);
+  };
+
+  const handleFilterClose = () => {
+    setFilterAnchorEl(null);
+    setFilterColumnId(null);
+  };
+
+  const getMemberLabel = (member) => {
+    if (!member) return 'Unknown';
+    const fullName = `${member.first_name || ''} ${member.last_name || ''}`.trim();
+    return fullName || member.username || member.email || 'Unknown';
+  };
 
   const displayedColumns = useMemo(() => {
     const orderedVisible = columnOrder
@@ -838,6 +948,579 @@ function TasksTableView({
     // sort inside each group as well (already sortedTasks order, but keeps safe)
     return groups;
   }, [sortedTasks, groupBy, groupMetadata]);
+
+  const isColumnFiltered = useCallback(
+    (colId) => {
+      const hasText = (value) => String(value || '').trim().length > 0;
+      switch (colId) {
+        case 'name':
+          return hasText(filters.name) || filters.recurring !== null;
+        case 'project_name':
+          return (filters.projects || []).length > 0 || filters.include_archived;
+        case 'client_name':
+          return hasText(filters.client_name);
+        case 'stage':
+          return (filters.stage || []).length > 0;
+        case 'status':
+          return (filters.status || []).length > 0 || !filters.hideCompleted;
+        case 'priority':
+          return (filters.priority || []).length > 0;
+        case 'assignee_name':
+          return filters.assignee && filters.assignee !== 'all';
+        case 'collaborators':
+          return (filters.collaborators || []).length > 0;
+        case 'due_date':
+          return hasText(filters.due_date_from)
+            || hasText(filters.due_date_to)
+            || Boolean(filters.dueDateFilter)
+            || filters.overdue
+            || filters.no_due_date;
+        case 'target_date':
+          return hasText(filters.target_date_from)
+            || hasText(filters.target_date_to)
+            || filters.no_target_date;
+        case 'created_by_name':
+          return (filters.created_by || []).length > 0;
+        case 'created_at':
+          return hasText(filters.created_date_from) || hasText(filters.created_date_to);
+        case 'notes':
+          return hasText(filters.notes);
+        case 'category':
+          return hasText(filters.category);
+        case 'section':
+          return hasText(filters.section);
+        case 'estimated_hours':
+          return filters.estimated_hours_min !== '' || filters.estimated_hours_max !== '';
+        case 'actual_hours':
+          return filters.actual_hours_min !== '' || filters.actual_hours_max !== '';
+        case 'completion_percentage':
+          return filters.completion_percentage_min !== '' || filters.completion_percentage_max !== '';
+        case 'tags':
+          return hasText(filters.tags);
+        case 'external_id':
+          return hasText(filters.external_id);
+        default:
+          return false;
+      }
+    },
+    [filters]
+  );
+
+  const clearColumnFilter = useCallback(
+    (colId) => {
+      switch (colId) {
+        case 'name':
+          updateFilters({ name: '', recurring: null });
+          break;
+        case 'project_name':
+          updateFilters({ projects: [], include_archived: false });
+          break;
+        case 'client_name':
+          updateFilters({ client_name: '' });
+          break;
+        case 'stage':
+          updateFilters({ stage: [] });
+          break;
+        case 'status':
+          updateFilters({ status: [], hideCompleted: true });
+          break;
+        case 'priority':
+          updateFilters({ priority: [] });
+          break;
+        case 'assignee_name':
+          updateFilters({ assignee: 'all' });
+          break;
+        case 'collaborators':
+          updateFilters({ collaborators: [] });
+          break;
+        case 'due_date':
+          updateFilters({
+            due_date_from: '',
+            due_date_to: '',
+            dueDateFilter: null,
+            overdue: false,
+            no_due_date: false,
+          });
+          break;
+        case 'target_date':
+          updateFilters({ target_date_from: '', target_date_to: '', no_target_date: false });
+          break;
+        case 'created_by_name':
+          updateFilters({ created_by: [] });
+          break;
+        case 'created_at':
+          updateFilters({ created_date_from: '', created_date_to: '' });
+          break;
+        case 'notes':
+          updateFilters({ notes: '' });
+          break;
+        case 'category':
+          updateFilters({ category: '' });
+          break;
+        case 'section':
+          updateFilters({ section: '' });
+          break;
+        case 'estimated_hours':
+          updateFilters({ estimated_hours_min: '', estimated_hours_max: '' });
+          break;
+        case 'actual_hours':
+          updateFilters({ actual_hours_min: '', actual_hours_max: '' });
+          break;
+        case 'completion_percentage':
+          updateFilters({ completion_percentage_min: '', completion_percentage_max: '' });
+          break;
+        case 'tags':
+          updateFilters({ tags: '' });
+          break;
+        case 'external_id':
+          updateFilters({ external_id: '' });
+          break;
+        default:
+          break;
+      }
+    },
+    [updateFilters]
+  );
+
+  const renderMultiSelect = (value, options, placeholder, onChange) => {
+    const normalized = (Array.isArray(value) ? value : []).map((item) => String(item));
+    return (
+    <FormControl fullWidth size="small">
+      <Select
+        multiple
+        value={value}
+        onChange={onChange}
+        displayEmpty
+        renderValue={(selected) => {
+          if (!selected || selected.length === 0) {
+            return (
+              <Typography variant="body2" color="text.secondary">
+                {placeholder}
+              </Typography>
+            );
+          }
+          const labels = selected.map((val) => {
+            const match = options.find((opt) => String(opt.value) === String(val));
+            return match ? match.label : val;
+          });
+          return labels.join(', ');
+        }}
+      >
+        {options.map((option) => (
+          <MenuItem key={option.value} value={option.value}>
+            <Checkbox checked={normalized.includes(String(option.value))} size="small" />
+            <ListItemText primary={option.label} />
+          </MenuItem>
+        ))}
+      </Select>
+    </FormControl>
+    );
+  };
+
+  const renderFilterContent = () => {
+    if (!filterColumnId) return null;
+
+    const selectedProjects = Array.isArray(filters.projects) ? filters.projects : [];
+    const selectedStatuses = Array.isArray(filters.status) ? filters.status : [];
+    const selectedStages = Array.isArray(filters.stage) ? filters.stage : [];
+    const selectedPriorities = Array.isArray(filters.priority) ? filters.priority : [];
+    const selectedCreators = Array.isArray(filters.created_by) ? filters.created_by : [];
+    const selectedCollaborators = Array.isArray(filters.collaborators) ? filters.collaborators : [];
+
+    const projectOptions = (Array.isArray(projects) ? projects : []).map((project) => ({
+      value: project.id,
+      label: project.name || `Project ${project.id}`,
+    }));
+
+    const memberOptions = (Array.isArray(workspaceMembers) ? workspaceMembers : []).map((member) => ({
+      value: member.id,
+      label: getMemberLabel(member),
+    }));
+
+    const statusOptionsList = (Array.isArray(statusOptions) ? statusOptions : []).map((value) => ({
+      value,
+      label: value,
+    }));
+
+    const stageOptionsList = (Array.isArray(stageOptions) ? stageOptions : []).map((value) => ({
+      value,
+      label: value,
+    }));
+
+    const priorityOptionsList = (Array.isArray(priorityOptions) ? priorityOptions : []).map((value) => ({
+      value,
+      label: value,
+    }));
+
+    switch (filterColumnId) {
+      case 'name':
+        return (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <TextField
+              label="Task name"
+              size="small"
+              value={filters.name || ''}
+              onChange={(e) => updateFilters({ name: e.target.value })}
+            />
+            <FormControl fullWidth size="small">
+              <Select
+                displayEmpty
+                value={filters.recurring === null ? '' : (filters.recurring ? 'true' : 'false')}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === '') {
+                    updateFilters({ recurring: null });
+                  } else {
+                    updateFilters({ recurring: value === 'true' });
+                  }
+                }}
+              >
+                <MenuItem value="">All tasks</MenuItem>
+                <MenuItem value="true">Recurring only</MenuItem>
+                <MenuItem value="false">Non-recurring only</MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
+        );
+      case 'project_name':
+        return (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            {renderMultiSelect(
+              selectedProjects,
+              projectOptions,
+              'All projects',
+              (e) => updateFilters({ projects: e.target.value })
+            )}
+            <FormControlLabel
+              control={(
+                <Checkbox
+                  size="small"
+                  checked={filters.include_archived}
+                  onChange={(e) => updateFilters({ include_archived: e.target.checked })}
+                />
+              )}
+              label="Include archived tasks"
+            />
+          </Box>
+        );
+      case 'client_name':
+        return (
+          <TextField
+            label="Client name"
+            size="small"
+            value={filters.client_name || ''}
+            onChange={(e) => updateFilters({ client_name: e.target.value })}
+          />
+        );
+      case 'status':
+        return (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            {renderMultiSelect(
+              selectedStatuses,
+              statusOptionsList,
+              'All statuses',
+              (e) => updateFilters({ status: e.target.value })
+            )}
+            <FormControlLabel
+              control={(
+                <Checkbox
+                  size="small"
+                  checked={!filters.hideCompleted}
+                  onChange={(e) => updateFilters({ hideCompleted: !e.target.checked })}
+                />
+              )}
+              label="Show completed/closed"
+            />
+          </Box>
+        );
+      case 'stage':
+        return renderMultiSelect(
+          selectedStages,
+          stageOptionsList,
+          'All stages',
+          (e) => updateFilters({ stage: e.target.value })
+        );
+      case 'priority':
+        return renderMultiSelect(
+          selectedPriorities,
+          priorityOptionsList,
+          'All priorities',
+          (e) => updateFilters({ priority: e.target.value })
+        );
+      case 'assignee_name':
+        return (
+          <FormControl fullWidth size="small">
+            <Select
+              value={filters.assignee || 'all'}
+              onChange={(e) => updateFilters({ assignee: e.target.value })}
+            >
+              <MenuItem value="all">All assignees</MenuItem>
+              <MenuItem value="me">Me</MenuItem>
+              <MenuItem value="unassigned">Unassigned</MenuItem>
+              {memberOptions.map((option) => (
+                <MenuItem key={option.value} value={option.value}>
+                  {option.label}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        );
+      case 'collaborators':
+        return renderMultiSelect(
+          selectedCollaborators,
+          memberOptions,
+          'Any collaborator',
+          (e) => updateFilters({ collaborators: e.target.value })
+        );
+      case 'due_date':
+        return (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <FormControl fullWidth size="small">
+              <Select
+                displayEmpty
+                value={filters.dueDateFilter || ''}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  updateFilters({
+                    dueDateFilter: value || null,
+                    overdue: false,
+                    no_due_date: false,
+                    ...(value ? { due_date_from: '', due_date_to: '' } : {}),
+                  });
+                }}
+              >
+                <MenuItem value="">Any date</MenuItem>
+                <MenuItem value="today">Today</MenuItem>
+                <MenuItem value="tomorrow">Tomorrow</MenuItem>
+                <MenuItem value="overdue">Overdue</MenuItem>
+                <MenuItem value="week">Next 7 days</MenuItem>
+                <MenuItem value="month">Next 30 days</MenuItem>
+              </Select>
+            </FormControl>
+            <FormControlLabel
+              control={(
+                <Checkbox
+                  size="small"
+                  checked={Boolean(filters.no_due_date)}
+                  onChange={(e) => updateFilters({
+                    no_due_date: e.target.checked,
+                    dueDateFilter: null,
+                    overdue: false,
+                    due_date_from: '',
+                    due_date_to: '',
+                  })}
+                />
+              )}
+              label="No due date"
+            />
+            <TextField
+              label="From"
+              type="date"
+              size="small"
+              value={filters.due_date_from || ''}
+              onChange={(e) => updateFilters({
+                due_date_from: e.target.value,
+                dueDateFilter: null,
+                no_due_date: false,
+              })}
+              InputLabelProps={{ shrink: true }}
+            />
+            <TextField
+              label="To"
+              type="date"
+              size="small"
+              value={filters.due_date_to || ''}
+              onChange={(e) => updateFilters({
+                due_date_to: e.target.value,
+                dueDateFilter: null,
+                no_due_date: false,
+              })}
+              InputLabelProps={{ shrink: true }}
+            />
+          </Box>
+        );
+      case 'target_date':
+        return (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <FormControlLabel
+              control={(
+                <Checkbox
+                  size="small"
+                  checked={Boolean(filters.no_target_date)}
+                  onChange={(e) => updateFilters({
+                    no_target_date: e.target.checked,
+                    target_date_from: '',
+                    target_date_to: '',
+                  })}
+                />
+              )}
+              label="No target date"
+            />
+            <TextField
+              label="From"
+              type="date"
+              size="small"
+              value={filters.target_date_from || ''}
+              onChange={(e) => updateFilters({
+                target_date_from: e.target.value,
+                no_target_date: false,
+              })}
+              InputLabelProps={{ shrink: true }}
+            />
+            <TextField
+              label="To"
+              type="date"
+              size="small"
+              value={filters.target_date_to || ''}
+              onChange={(e) => updateFilters({
+                target_date_to: e.target.value,
+                no_target_date: false,
+              })}
+              InputLabelProps={{ shrink: true }}
+            />
+          </Box>
+        );
+      case 'created_by_name':
+        return renderMultiSelect(
+          selectedCreators,
+          memberOptions,
+          'Any creator',
+          (e) => updateFilters({ created_by: e.target.value })
+        );
+      case 'created_at':
+        return (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <TextField
+              label="From"
+              type="date"
+              size="small"
+              value={filters.created_date_from || ''}
+              onChange={(e) => updateFilters({ created_date_from: e.target.value })}
+              InputLabelProps={{ shrink: true }}
+            />
+            <TextField
+              label="To"
+              type="date"
+              size="small"
+              value={filters.created_date_to || ''}
+              onChange={(e) => updateFilters({ created_date_to: e.target.value })}
+              InputLabelProps={{ shrink: true }}
+            />
+          </Box>
+        );
+      case 'notes':
+        return (
+          <TextField
+            label="Notes"
+            size="small"
+            value={filters.notes || ''}
+            onChange={(e) => updateFilters({ notes: e.target.value })}
+          />
+        );
+      case 'category':
+        return (
+          <TextField
+            label="Category"
+            size="small"
+            value={filters.category || ''}
+            onChange={(e) => updateFilters({ category: e.target.value })}
+          />
+        );
+      case 'section':
+        return (
+          <TextField
+            label="Section"
+            size="small"
+            value={filters.section || ''}
+            onChange={(e) => updateFilters({ section: e.target.value })}
+          />
+        );
+      case 'estimated_hours':
+        return (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <TextField
+              label="Min hours"
+              type="number"
+              size="small"
+              value={filters.estimated_hours_min}
+              onChange={(e) => updateFilters({ estimated_hours_min: e.target.value })}
+              inputProps={{ min: 0, step: 0.25 }}
+            />
+            <TextField
+              label="Max hours"
+              type="number"
+              size="small"
+              value={filters.estimated_hours_max}
+              onChange={(e) => updateFilters({ estimated_hours_max: e.target.value })}
+              inputProps={{ min: 0, step: 0.25 }}
+            />
+          </Box>
+        );
+      case 'actual_hours':
+        return (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <TextField
+              label="Min hours"
+              type="number"
+              size="small"
+              value={filters.actual_hours_min}
+              onChange={(e) => updateFilters({ actual_hours_min: e.target.value })}
+              inputProps={{ min: 0, step: 0.25 }}
+            />
+            <TextField
+              label="Max hours"
+              type="number"
+              size="small"
+              value={filters.actual_hours_max}
+              onChange={(e) => updateFilters({ actual_hours_max: e.target.value })}
+              inputProps={{ min: 0, step: 0.25 }}
+            />
+          </Box>
+        );
+      case 'completion_percentage':
+        return (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <TextField
+              label="Min %"
+              type="number"
+              size="small"
+              value={filters.completion_percentage_min}
+              onChange={(e) => updateFilters({ completion_percentage_min: e.target.value })}
+              inputProps={{ min: 0, max: 100, step: 1 }}
+            />
+            <TextField
+              label="Max %"
+              type="number"
+              size="small"
+              value={filters.completion_percentage_max}
+              onChange={(e) => updateFilters({ completion_percentage_max: e.target.value })}
+              inputProps={{ min: 0, max: 100, step: 1 }}
+            />
+          </Box>
+        );
+      case 'tags':
+        return (
+          <TextField
+            label="Tags"
+            size="small"
+            placeholder="tag1, tag2"
+            value={filters.tags || ''}
+            onChange={(e) => updateFilters({ tags: e.target.value })}
+          />
+        );
+      case 'external_id':
+        return (
+          <TextField
+            label="External ID"
+            size="small"
+            value={filters.external_id || ''}
+            onChange={(e) => updateFilters({ external_id: e.target.value })}
+          />
+        );
+      default:
+        return null;
+    }
+  };
 
   /* --------- column resize logic --------- */
   const startResize = (e, colId) => {
@@ -937,14 +1620,32 @@ function TasksTableView({
         </Box>
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          {hasActiveFilters && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant="caption" color="text.secondary" noWrap>
+                Active filters: {activeFilterCount}
+              </Typography>
+              <Button
+                size="small"
+                onClick={onClearFilters}
+                disabled={typeof onClearFilters !== 'function'}
+              >
+                Clear All
+              </Button>
+            </Box>
+          )}
           <ToggleButtonGroup
             size="small"
             exclusive
             value={density}
             onChange={(e, v) => v && setDensity(v)}
           >
-            <ToggleButton value="compact">Compact</ToggleButton>
-            <ToggleButton value="comfortable">Comfortable</ToggleButton>
+            <ToggleButton value="compact" aria-label="Compact density" title="Compact">
+              <DensitySmallIcon fontSize="small" />
+            </ToggleButton>
+            <ToggleButton value="comfortable" aria-label="Comfortable density" title="Comfortable">
+              <DensityMediumIcon fontSize="small" />
+            </ToggleButton>
           </ToggleButtonGroup>
         </Box>
       </Box>
@@ -1011,6 +1712,18 @@ function TasksTableView({
                       </Typography>
                     )}
 
+                    {col.id !== 'actions' && (
+                      <Tooltip title="Filter">
+                        <IconButton
+                          size="small"
+                          onClick={(e) => handleFilterOpen(e, col.id)}
+                          color={isColumnFiltered(col.id) ? 'primary' : 'default'}
+                        >
+                          <FilterListIcon fontSize="inherit" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+
                     {/* resize handle (not for Task/actions) */}
                     {col.id !== 'name' && col.id !== 'actions' && (
                       <Box
@@ -1066,6 +1779,7 @@ function TasksTableView({
                               getTaskIndicators={getTaskIndicators}
                               density={density}
                               getBodyCellSx={getBodyCellSx}
+                              onDateFilterClick={onDateFilterClick}
                             />
                           );
                         })}
@@ -1090,6 +1804,7 @@ function TasksTableView({
                     getTaskIndicators={getTaskIndicators}
                     density={density}
                     getBodyCellSx={getBodyCellSx}
+                    onDateFilterClick={onDateFilterClick}
                   />
                 );
               })
@@ -1119,20 +1834,90 @@ function TasksTableView({
             )}
           </TableBody>
         </Table>
+
+        <Popover
+          open={Boolean(filterAnchorEl)}
+          anchorEl={filterAnchorEl}
+          onClose={handleFilterClose}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        >
+          <Box sx={{ p: 2, width: 260, display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Typography variant="subtitle2" fontWeight={700}>
+              {getColumnById(filterColumnId)?.label || 'Filter'}
+            </Typography>
+            {renderFilterContent()}
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', pt: 0.5 }}>
+              <Button size="small" onClick={() => clearColumnFilter(filterColumnId)}>
+                Clear
+              </Button>
+              <Button size="small" onClick={handleFilterClose}>
+                Close
+              </Button>
+            </Box>
+          </Box>
+        </Popover>
       </TableContainer>
 
-      <TablePagination
-        component="div"
-        count={total}
-        page={page - 1}
-        onPageChange={(e, newPage) => onPageChange(newPage + 1)}
-        rowsPerPage={limit}
-        onRowsPerPageChange={(e) => {
-          onLimitChange(parseInt(e.target.value, 10));
-          onPageChange(1);
-        }}
-        rowsPerPageOptions={[25, 50, 100]}
-      />
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <Tooltip title={hasSelection ? `${selectedCount} selected` : 'No tasks selected'}>
+            <span>
+              <IconButton size="small" disabled={!hasSelection}>
+                <Badge color="primary" badgeContent={selectedCount} invisible={!hasSelection}>
+                  <PlaylistAddCheckIcon fontSize="small" />
+                </Badge>
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="Bulk actions">
+            <span>
+              <IconButton
+                size="small"
+                onClick={onOpenBulkActions}
+                disabled={!hasSelection || typeof onOpenBulkActions !== 'function'}
+              >
+                <TuneIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="Generate link">
+            <span>
+              <IconButton
+                size="small"
+                onClick={onOpenShareLink}
+                disabled={!hasSelection || typeof onOpenShareLink !== 'function'}
+              >
+                <InsertLinkIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="Clear selection">
+            <span>
+              <IconButton
+                size="small"
+                onClick={onClearSelection}
+                disabled={!hasSelection || typeof onClearSelection !== 'function'}
+              >
+                <ClearIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        </Box>
+        <TablePagination
+          component="div"
+          sx={{ flex: 1 }}
+          count={total}
+          page={page - 1}
+          onPageChange={(e, newPage) => onPageChange(newPage + 1)}
+          rowsPerPage={limit}
+          onRowsPerPageChange={(e) => {
+            onLimitChange(parseInt(e.target.value, 10));
+            onPageChange(1);
+          }}
+          rowsPerPageOptions={[25, 50, 100]}
+        />
+      </Box>
     </Paper>
   );
 }

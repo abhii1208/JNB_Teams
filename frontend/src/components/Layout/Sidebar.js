@@ -31,7 +31,12 @@ function Sidebar({ currentPage, onNavigate, onLogout, user, workspace }) {
   const isPersonalWorkspace = Boolean(workspace?.is_personal)
     || (workspace?.name === 'Personal' && Number(workspace?.created_by) === Number(user?.id));
   const canViewTeam = !isPersonalWorkspace && (workspace?.role === 'Owner' || workspace?.role === 'Admin');
-  const canViewClients = !isPersonalWorkspace && (workspace?.role === 'Owner' || workspace?.role === 'Admin');
+  const canViewClients = !isPersonalWorkspace && (
+    workspace?.role === 'Owner'
+    || workspace?.role === 'Admin'
+    || workspace?.role === 'ProjectAdmin'
+    || workspace?.role === 'Project Admin'
+  );
   const canViewApprovals = !isPersonalWorkspace;
   const canViewAdmin = !isPersonalWorkspace && (workspace?.role === 'Owner' || workspace?.role === 'Admin');
 

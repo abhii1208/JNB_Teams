@@ -56,6 +56,7 @@ function SeriesDetail({ seriesId, workspace, onBack, onEdit }) {
     const [tabValue, setTabValue] = useState(0);
     const [generating, setGenerating] = useState(false);
     const [exceptionDialog, setExceptionDialog] = useState({ open: false, type: 'skip', date: '' });
+    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
     // Fetch series details
     const fetchSeries = useCallback(async () => {
@@ -89,7 +90,7 @@ function SeriesDetail({ seriesId, workspace, onBack, onEdit }) {
 
     const handleResume = async () => {
         try {
-            await apiClient.post(`/api/recurring/${seriesId}/resume`);
+            await apiClient.post(`/api/recurring/${seriesId}/resume`, {});
             fetchSeries();
         } catch (err) {
             console.error('Error resuming series:', err);
@@ -110,14 +111,13 @@ function SeriesDetail({ seriesId, workspace, onBack, onEdit }) {
     };
 
     const handleDelete = async () => {
-        if (!window.confirm('Delete this recurring series? Existing tasks will be preserved.')) {
-            return;
-        }
         try {
             await apiClient.delete(`/api/recurring/${seriesId}`);
             onBack();
         } catch (err) {
             console.error('Error deleting series:', err);
+        } finally {
+            setDeleteDialogOpen(false);
         }
     };
 
@@ -230,7 +230,7 @@ function SeriesDetail({ seriesId, workspace, onBack, onEdit }) {
                     >
                         Edit
                     </Button>
-                    <IconButton color="error" onClick={handleDelete}>
+                    <IconButton color="error" onClick={() => setDeleteDialogOpen(true)}>
                         <DeleteIcon />
                     </IconButton>
                 </Stack>
@@ -573,6 +573,28 @@ function SeriesDetail({ seriesId, workspace, onBack, onEdit }) {
                     </Button>
                     <Button variant="contained" onClick={handleAddException}>
                         Add Exception
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            <Dialog
+                open={deleteDialogOpen}
+                onClose={() => setDeleteDialogOpen(false)}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>Delete recurring series?</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" color="text.secondary">
+                        Delete "{series.title}"? Existing tasks will be preserved.
+                    </Typography>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setDeleteDialogOpen(false)}>
+                        Cancel
+                    </Button>
+                    <Button variant="contained" color="error" onClick={handleDelete}>
+                        Delete
                     </Button>
                 </DialogActions>
             </Dialog>

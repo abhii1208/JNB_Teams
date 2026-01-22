@@ -205,6 +205,8 @@ function Dashboard({ user, workspace, onNavigate }) {
     return { modeLabel, countToday, countTomorrow, countSoon, countOverdue, countNoDate };
   }, [allTasks, dateMode]);
 
+  const dateField = dateMode === 'due' ? 'due_date' : 'target_date';
+
   // Upcoming list:
   // ✅ show ALL tasks that have due/target date filled (based on toggle)
   // ✅ sort old -> new (earliest -> latest), includes overdue at top
@@ -238,6 +240,7 @@ function Dashboard({ user, workspace, onNavigate }) {
         icon: <FolderIcon />,
         color: '#7c3aed',
         bgColor: 'rgba(124, 58, 237, 0.1)',
+        navigateTo: 'projects',
       },
       {
         title: `Tasks ${modeLabel} Today`,
@@ -245,6 +248,8 @@ function Dashboard({ user, workspace, onNavigate }) {
         icon: <TaskAltIcon />,
         color: '#f59e0b',
         bgColor: 'rgba(245, 158, 11, 0.1)',
+        navigateTo: 'tasks',
+        taskFilter: { field: dateField, bucket: 'today' },
       },
       {
         title: `Tasks ${modeLabel} Tomorrow`,
@@ -252,6 +257,8 @@ function Dashboard({ user, workspace, onNavigate }) {
         icon: <TaskAltIcon />,
         color: '#06b6d4',
         bgColor: 'rgba(6, 182, 212, 0.1)',
+        navigateTo: 'tasks',
+        taskFilter: { field: dateField, bucket: 'tomorrow' },
       },
       {
         title: `${modeLabel} Soon (3 days)`,
@@ -259,6 +266,8 @@ function Dashboard({ user, workspace, onNavigate }) {
         icon: <TrendingUpIcon />,
         color: '#0f766e',
         bgColor: 'rgba(15, 118, 110, 0.1)',
+        navigateTo: 'tasks',
+        taskFilter: { field: dateField, bucket: 'soon' },
       },
       {
         title: `${modeLabel} Overdue`,
@@ -266,6 +275,8 @@ function Dashboard({ user, workspace, onNavigate }) {
         icon: <AssignmentLateIcon />,
         color: '#dc2626',
         bgColor: 'rgba(220, 38, 38, 0.10)',
+        navigateTo: 'tasks',
+        taskFilter: { field: dateField, bucket: 'overdue' },
       },
       {
         title: `No ${modeLabel} Date`,
@@ -273,6 +284,8 @@ function Dashboard({ user, workspace, onNavigate }) {
         icon: <AssignmentIcon />,
         color: '#ef4444',
         bgColor: 'rgba(239, 68, 68, 0.1)',
+        navigateTo: 'tasks',
+        taskFilter: { field: dateField, bucket: 'none' },
       },
       {
         title: 'Pending Approvals',
@@ -280,9 +293,19 @@ function Dashboard({ user, workspace, onNavigate }) {
         icon: <PendingActionsIcon />,
         color: '#ec4899',
         bgColor: 'rgba(236, 72, 153, 0.1)',
+        navigateTo: 'approvals',
       },
     ];
-  }, [activeProjectsCount, pendingApprovals, stats]);
+  }, [activeProjectsCount, pendingApprovals, stats, dateField]);
+
+  const handleStatCardClick = (stat) => {
+    if (!stat?.navigateTo || typeof onNavigate !== 'function') return;
+    if (stat.taskFilter) {
+      onNavigate(stat.navigateTo, { taskFilter: stat.taskFilter });
+      return;
+    }
+    onNavigate(stat.navigateTo);
+  };
 
   const renderTaskRow = (task) => {
     const labelPrefix = dateMode === 'due' ? 'Due' : 'Target';
@@ -420,6 +443,7 @@ function Dashboard({ user, workspace, onNavigate }) {
           <Card
             key={index}
             elevation={0}
+            onClick={() => handleStatCardClick(stat)}
             sx={{
               height: SCORECARD_HEIGHT, // ✅ fixed same size
               minWidth: 0, // ✅ prevents weird width expansion

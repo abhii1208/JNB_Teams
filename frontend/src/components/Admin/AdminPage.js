@@ -10,6 +10,7 @@ import {
 import AdminProjectsTab from './AdminProjectsTab';
 import AdminTeamTab from './AdminTeamTab';
 import AdminDateRangeControl from './AdminDateRangeControl';
+import AdminShareLinksTab from './AdminShareLinksTab';
 
 function AdminPage({ workspace, user }) {
 
@@ -114,6 +115,7 @@ function AdminPage({ workspace, user }) {
         >
           <Tab label="Projects" />
           <Tab label="Team" />
+          <Tab label="Links" />
         </Tabs>
       </Paper>
 
@@ -124,6 +126,9 @@ function AdminPage({ workspace, user }) {
         )}
         {activeTab === 1 && (
           <AdminTeamTab workspace={workspace} dateRange={dateRange} />
+        )}
+        {activeTab === 2 && (
+          <AdminShareLinksTab workspace={workspace} />
         )}
       </Box>
     </Box>

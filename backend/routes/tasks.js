@@ -15,6 +15,67 @@ const normalizeClientIdInput = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const normalizeLinkedProjectIds = (value) => {
+  if (value === undefined) return { ids: null };
+  if (value === null) return { ids: [] };
+  if (!Array.isArray(value)) {
+    return { error: 'linked_project_ids must be an array', ids: [] };
+  }
+  const ids = value
+    .map((id) => Number(id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  const unique = [];
+  const seen = new Set();
+  ids.forEach((id) => {
+    if (!seen.has(id)) {
+      seen.add(id);
+      unique.push(id);
+    }
+  });
+  return { ids: unique };
+};
+
+const ensureLinkedProjectsAccessible = async (dbClient, {
+  workspaceId,
+  userId,
+  projectIds,
+}) => {
+  if (!projectIds || projectIds.length === 0) return;
+  const result = await dbClient.query(
+    `SELECT p.id
+     FROM projects p
+     JOIN project_members pm ON pm.project_id = p.id
+     WHERE p.workspace_id = $1
+       AND pm.user_id = $2
+       AND p.id = ANY($3::int[])`,
+    [workspaceId, userId, projectIds]
+  );
+  if (result.rows.length !== projectIds.length) {
+    const err = new Error('Not allowed to link one or more projects');
+    err.status = 403;
+    throw err;
+  }
+};
+
+const syncTaskProjectLinks = async (dbClient, taskId, projectIds, userId) => {
+  if (!projectIds || projectIds.length === 0) {
+    await dbClient.query('DELETE FROM task_project_links WHERE task_id = $1', [taskId]);
+    return;
+  }
+
+  await dbClient.query(
+    'DELETE FROM task_project_links WHERE task_id = $1 AND NOT (project_id = ANY($2::int[]))',
+    [taskId, projectIds]
+  );
+
+  await dbClient.query(
+    `INSERT INTO task_project_links (task_id, project_id, created_by)
+     SELECT $1, unnest($2::int[]), $3
+     ON CONFLICT DO NOTHING`,
+    [taskId, projectIds, userId]
+  );
+};
+
 const getPrimaryProjectClientId = async (dbClient, projectId) => {
   const result = await dbClient.query(
     `SELECT client_id
@@ -55,8 +116,26 @@ router.get('/workspace/:workspaceId', async (req, res) => {
     stage, // comma-separated stages
     priority, // comma-separated priorities
     assignee, // 'me', 'unassigned', or comma-separated user IDs
+    name,
+    client_name,
+    notes,
+    category,
+    section,
+    tags,
+    external_id,
+    estimated_hours_min,
+    estimated_hours_max,
+    actual_hours_min,
+    actual_hours_max,
+    completion_percentage_min,
+    completion_percentage_max,
+    target_date_from,
+    target_date_to,
+    no_target_date,
+    collaborator_ids,
     due_date_from,
     due_date_to,
+    no_due_date,
     overdue, // 'true' or 'false'
     recurring, // 'true' or 'false'
     approval_status, // 'pending', 'approved', 'rejected'
@@ -69,6 +148,8 @@ router.get('/workspace/:workspaceId', async (req, res) => {
     has_reminders, // 'true' or 'false'
     search,
     include_archived,
+    hide_completed, // Feature 4: 'true' to hide completed/closed tasks
+    due_date_filter, // Feature 7: 'today', 'overdue', 'tomorrow', 'week', 'month'
     // Sorting
     sort_by = 'created_at',
     sort_order = 'desc',
@@ -112,7 +193,13 @@ router.get('/workspace/:workspaceId', async (req, res) => {
          WHERE tc.task_id = t.id) as collaborators,
         CASE WHEN t.due_date < CURRENT_DATE AND t.status NOT IN ('Closed', 'Completed') THEN true ELSE false END as is_overdue,
         CASE WHEN rs.id IS NOT NULL THEN true ELSE false END as is_recurring,
-        (SELECT status FROM approvals WHERE task_id = t.id ORDER BY created_at DESC LIMIT 1) as latest_approval_status
+        (SELECT status FROM approvals WHERE task_id = t.id ORDER BY created_at DESC LIMIT 1) as latest_approval_status,
+        COALESCE(
+          (SELECT array_agg(DISTINCT tpl.project_id)
+           FROM task_project_links tpl
+           WHERE tpl.task_id = t.id),
+          ARRAY[]::int[]
+        ) as linked_project_ids
       FROM tasks t
       JOIN projects p ON t.project_id = p.id
       LEFT JOIN clients task_client ON task_client.id = t.client_id
@@ -129,21 +216,44 @@ router.get('/workspace/:workspaceId', async (req, res) => {
       LEFT JOIN recurring_series rs ON t.series_id = rs.id
       WHERE p.workspace_id = $1 
         AND t.deleted_at IS NULL
-        AND t.project_id = ANY($2::int[])
+        AND (
+          t.project_id = ANY($2::int[])
+          OR EXISTS (
+            SELECT 1
+            FROM task_project_links tpl
+            WHERE tpl.task_id = t.id AND tpl.project_id = ANY($2::int[])
+          )
+        )
     `;
 
     const params = [workspaceId, userProjectIds];
     let paramIndex = 3;
 
     // Apply filters
-    if (!include_archived || include_archived !== 'true') {
-      query += ` AND t.archived_at IS NULL`;
+    const includeArchived = include_archived === 'true';
+    const showCompleted = hide_completed !== 'true';
+    const noDueDate = no_due_date === 'true';
+    const noTargetDate = no_target_date === 'true';
+
+    if (!includeArchived) {
+      if (showCompleted) {
+        query += ` AND (t.archived_at IS NULL OR t.status IN ('Closed', 'Completed'))`;
+      } else {
+        query += ` AND t.archived_at IS NULL`;
+      }
     }
 
     if (projects) {
       const projectIds = projects.split(',').map(Number).filter(id => userProjectIds.includes(id));
       if (projectIds.length > 0) {
-        query += ` AND t.project_id = ANY($${paramIndex}::int[])`;
+        query += ` AND (
+          t.project_id = ANY($${paramIndex}::int[])
+          OR EXISTS (
+            SELECT 1
+            FROM task_project_links tpl
+            WHERE tpl.task_id = t.id AND tpl.project_id = ANY($${paramIndex}::int[])
+          )
+        )`;
         params.push(projectIds);
         paramIndex++;
       }
@@ -185,26 +295,200 @@ router.get('/workspace/:workspaceId', async (req, res) => {
       }
     }
 
-    if (due_date_from) {
-      query += ` AND t.due_date >= $${paramIndex}`;
-      params.push(due_date_from);
+    if (name) {
+      const trimmed = String(name).trim();
+      if (trimmed) {
+        query += ` AND t.name ILIKE $${paramIndex}`;
+        params.push(`%${trimmed}%`);
+        paramIndex++;
+      }
+    }
+
+    if (client_name) {
+      const trimmed = String(client_name).trim();
+      if (trimmed) {
+        query += ` AND (
+          COALESCE(task_client.client_name, pc_client.client_name) ILIKE $${paramIndex}
+          OR COALESCE(task_client.legal_name, pc_client.legal_name) ILIKE $${paramIndex}
+          OR COALESCE(task_client.series_no, pc_client.series_no) ILIKE $${paramIndex}
+        )`;
+        params.push(`%${trimmed}%`);
+        paramIndex++;
+      }
+    }
+
+    if (notes) {
+      const trimmed = String(notes).trim();
+      if (trimmed) {
+        query += ` AND t.notes ILIKE $${paramIndex}`;
+        params.push(`%${trimmed}%`);
+        paramIndex++;
+      }
+    }
+
+    if (category) {
+      const trimmed = String(category).trim();
+      if (trimmed) {
+        query += ` AND t.category ILIKE $${paramIndex}`;
+        params.push(`%${trimmed}%`);
+        paramIndex++;
+      }
+    }
+
+    if (section) {
+      const trimmed = String(section).trim();
+      if (trimmed) {
+        query += ` AND t.section ILIKE $${paramIndex}`;
+        params.push(`%${trimmed}%`);
+        paramIndex++;
+      }
+    }
+
+    if (tags) {
+      const tagList = String(tags)
+        .split(',')
+        .map((tag) => tag.trim())
+        .filter((tag) => tag.length > 0);
+      if (tagList.length > 0) {
+        query += ` AND t.tags && $${paramIndex}::text[]`;
+        params.push(tagList);
+        paramIndex++;
+      }
+    }
+
+    if (external_id) {
+      const trimmed = String(external_id).trim();
+      if (trimmed) {
+        query += ` AND t.external_id ILIKE $${paramIndex}`;
+        params.push(`%${trimmed}%`);
+        paramIndex++;
+      }
+    }
+
+    const estimatedMin = Number(estimated_hours_min);
+    if (Number.isFinite(estimatedMin)) {
+      query += ` AND t.estimated_hours >= $${paramIndex}`;
+      params.push(estimatedMin);
       paramIndex++;
     }
 
-    if (due_date_to) {
-      query += ` AND t.due_date <= $${paramIndex}`;
-      params.push(due_date_to);
+    const estimatedMax = Number(estimated_hours_max);
+    if (Number.isFinite(estimatedMax)) {
+      query += ` AND t.estimated_hours <= $${paramIndex}`;
+      params.push(estimatedMax);
       paramIndex++;
     }
 
-    if (overdue === 'true') {
-      query += ` AND t.due_date < CURRENT_DATE AND t.status NOT IN ('Closed', 'Completed')`;
+    const actualMin = Number(actual_hours_min);
+    if (Number.isFinite(actualMin)) {
+      query += ` AND t.actual_hours >= $${paramIndex}`;
+      params.push(actualMin);
+      paramIndex++;
+    }
+
+    const actualMax = Number(actual_hours_max);
+    if (Number.isFinite(actualMax)) {
+      query += ` AND t.actual_hours <= $${paramIndex}`;
+      params.push(actualMax);
+      paramIndex++;
+    }
+
+    const completionMin = Number(completion_percentage_min);
+    if (Number.isFinite(completionMin)) {
+      query += ` AND t.completion_percentage >= $${paramIndex}`;
+      params.push(completionMin);
+      paramIndex++;
+    }
+
+    const completionMax = Number(completion_percentage_max);
+    if (Number.isFinite(completionMax)) {
+      query += ` AND t.completion_percentage <= $${paramIndex}`;
+      params.push(completionMax);
+      paramIndex++;
+    }
+
+    if (noTargetDate) {
+      query += ` AND t.target_date IS NULL`;
+    } else {
+      if (target_date_from) {
+        query += ` AND t.target_date >= $${paramIndex}`;
+        params.push(target_date_from);
+        paramIndex++;
+      }
+
+      if (target_date_to) {
+        query += ` AND t.target_date <= $${paramIndex}`;
+        params.push(target_date_to);
+        paramIndex++;
+      }
+    }
+
+    if (collaborator_ids) {
+      const collaboratorIds = String(collaborator_ids)
+        .split(',')
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0);
+      if (collaboratorIds.length > 0) {
+        query += ` AND EXISTS (
+          SELECT 1
+          FROM task_collaborators tc
+          WHERE tc.task_id = t.id AND tc.user_id = ANY($${paramIndex}::int[])
+        )`;
+        params.push(collaboratorIds);
+        paramIndex++;
+      }
+    }
+
+    if (noDueDate) {
+      query += ` AND t.due_date IS NULL`;
+    } else {
+      if (due_date_from) {
+        query += ` AND t.due_date >= $${paramIndex}`;
+        params.push(due_date_from);
+        paramIndex++;
+      }
+
+      if (due_date_to) {
+        query += ` AND t.due_date <= $${paramIndex}`;
+        params.push(due_date_to);
+        paramIndex++;
+      }
+
+      if (overdue === 'true') {
+        query += ` AND t.due_date < CURRENT_DATE AND t.status NOT IN ('Closed', 'Completed')`;
+      }
     }
 
     if (recurring === 'true') {
       query += ` AND t.series_id IS NOT NULL`;
     } else if (recurring === 'false') {
       query += ` AND t.series_id IS NULL`;
+    }
+
+    // Feature 4: Hide completed tasks
+    if (hide_completed === 'true') {
+      query += ` AND t.status NOT IN ('Closed', 'Completed')`;
+    }
+
+    // Feature 7: Date filter from label click
+    if (!noDueDate && due_date_filter) {
+      switch (due_date_filter) {
+        case 'today':
+          query += ` AND t.due_date = CURRENT_DATE`;
+          break;
+        case 'overdue':
+          query += ` AND t.due_date < CURRENT_DATE AND t.status NOT IN ('Closed', 'Completed')`;
+          break;
+        case 'tomorrow':
+          query += ` AND t.due_date = CURRENT_DATE + INTERVAL '1 day'`;
+          break;
+        case 'week':
+          query += ` AND t.due_date > CURRENT_DATE AND t.due_date <= CURRENT_DATE + INTERVAL '7 days'`;
+          break;
+        case 'month':
+          query += ` AND t.due_date > CURRENT_DATE + INTERVAL '7 days' AND t.due_date <= CURRENT_DATE + INTERVAL '31 days'`;
+          break;
+      }
     }
 
     if (created_by) {
@@ -294,9 +578,19 @@ async function getGroupMetadata(workspaceId, projectIds, groupBy, pool) {
   
   if (groupBy === 'project') {
     const result = await pool.query(`
-      SELECT p.id, p.name, COUNT(t.id) as task_count
+      SELECT p.id, p.name, COUNT(DISTINCT t.id) as task_count
       FROM projects p
-      LEFT JOIN tasks t ON p.id = t.project_id AND t.deleted_at IS NULL AND t.archived_at IS NULL
+      LEFT JOIN tasks t
+        ON t.deleted_at IS NULL
+       AND t.archived_at IS NULL
+       AND (
+         t.project_id = p.id
+         OR EXISTS (
+           SELECT 1
+           FROM task_project_links tpl
+           WHERE tpl.task_id = t.id AND tpl.project_id = p.id
+         )
+       )
       WHERE p.id = ANY($1::int[])
       GROUP BY p.id, p.name
       ORDER BY p.name
@@ -306,7 +600,16 @@ async function getGroupMetadata(workspaceId, projectIds, groupBy, pool) {
     const result = await pool.query(`
       SELECT t.status, COUNT(*) as task_count
       FROM tasks t
-      WHERE t.project_id = ANY($1::int[]) AND t.deleted_at IS NULL AND t.archived_at IS NULL
+      WHERE t.deleted_at IS NULL
+        AND t.archived_at IS NULL
+        AND (
+          t.project_id = ANY($1::int[])
+          OR EXISTS (
+            SELECT 1
+            FROM task_project_links tpl
+            WHERE tpl.task_id = t.id AND tpl.project_id = ANY($1::int[])
+          )
+        )
       GROUP BY t.status
       ORDER BY t.status
     `, [projectIds]);
@@ -316,7 +619,16 @@ async function getGroupMetadata(workspaceId, projectIds, groupBy, pool) {
       SELECT u.id, u.first_name || ' ' || u.last_name as name, COUNT(t.id) as task_count
       FROM tasks t
       LEFT JOIN users u ON t.assignee_id = u.id
-      WHERE t.project_id = ANY($1::int[]) AND t.deleted_at IS NULL AND t.archived_at IS NULL
+      WHERE t.deleted_at IS NULL
+        AND t.archived_at IS NULL
+        AND (
+          t.project_id = ANY($1::int[])
+          OR EXISTS (
+            SELECT 1
+            FROM task_project_links tpl
+            WHERE tpl.task_id = t.id AND tpl.project_id = ANY($1::int[])
+          )
+        )
       GROUP BY u.id, u.first_name, u.last_name
       ORDER BY u.first_name NULLS LAST
     `, [projectIds]);
@@ -325,7 +637,16 @@ async function getGroupMetadata(workspaceId, projectIds, groupBy, pool) {
     const result = await pool.query(`
       SELECT t.priority, COUNT(*) as task_count
       FROM tasks t
-      WHERE t.project_id = ANY($1::int[]) AND t.deleted_at IS NULL AND t.archived_at IS NULL
+      WHERE t.deleted_at IS NULL
+        AND t.archived_at IS NULL
+        AND (
+          t.project_id = ANY($1::int[])
+          OR EXISTS (
+            SELECT 1
+            FROM task_project_links tpl
+            WHERE tpl.task_id = t.id AND tpl.project_id = ANY($1::int[])
+          )
+        )
       GROUP BY t.priority
       ORDER BY 
         CASE t.priority 
@@ -351,7 +672,16 @@ async function getGroupMetadata(workspaceId, projectIds, groupBy, pool) {
         END as bucket,
         COUNT(*) as task_count
       FROM tasks t
-      WHERE t.project_id = ANY($1::int[]) AND t.deleted_at IS NULL AND t.archived_at IS NULL
+      WHERE t.deleted_at IS NULL
+        AND t.archived_at IS NULL
+        AND (
+          t.project_id = ANY($1::int[])
+          OR EXISTS (
+            SELECT 1
+            FROM task_project_links tpl
+            WHERE tpl.task_id = t.id AND tpl.project_id = ANY($1::int[])
+          )
+        )
       GROUP BY bucket
     `, [projectIds]);
     metadata.groups = result.rows;
@@ -396,7 +726,14 @@ router.get('/workspace/:workspaceId/calendar', async (req, res) => {
       JOIN projects p ON t.project_id = p.id
       LEFT JOIN users u ON t.assignee_id = u.id
       LEFT JOIN recurring_series rs ON t.series_id = rs.id
-      WHERE t.project_id = ANY($1::int[])
+      WHERE (
+        t.project_id = ANY($1::int[])
+        OR EXISTS (
+          SELECT 1
+          FROM task_project_links tpl
+          WHERE tpl.task_id = t.id AND tpl.project_id = ANY($1::int[])
+        )
+      )
         AND t.deleted_at IS NULL
         AND t.archived_at IS NULL
         AND (
@@ -572,6 +909,12 @@ router.get('/project/:projectId', async (req, res) => {
         u.first_name || ' ' || u.last_name as assignee_name,
         u.username as assignee_username,
         creator.first_name || ' ' || creator.last_name as created_by_name,
+        COALESCE(
+          (SELECT array_agg(DISTINCT tpl.project_id)
+           FROM task_project_links tpl
+           WHERE tpl.task_id = t.id),
+          ARRAY[]::int[]
+        ) as linked_project_ids,
         (SELECT json_agg(json_build_object('id', u2.id, 'name', u2.first_name || ' ' || u2.last_name))
          FROM task_collaborators tc
          JOIN users u2 ON tc.user_id = u2.id
@@ -588,7 +931,15 @@ router.get('/project/:projectId', async (req, res) => {
       ) pc_client ON true
       LEFT JOIN users u ON t.assignee_id = u.id
       JOIN users creator ON t.created_by = creator.id
-      WHERE t.project_id = $1 AND t.deleted_at IS NULL ${archiveCondition}
+      WHERE (
+        t.project_id = $1
+        OR EXISTS (
+          SELECT 1
+          FROM task_project_links tpl
+          WHERE tpl.task_id = t.id AND tpl.project_id = $1
+        )
+      )
+      AND t.deleted_at IS NULL ${archiveCondition}
       ORDER BY t.created_at DESC
     `, [req.params.projectId]);
     
@@ -633,14 +984,72 @@ router.post('/', async (req, res) => {
   const normalizedExternalId = external_id ?? externalId ?? null;
   const normalizedTags = Array.isArray(tags) ? tags : null;
   const requestedClientId = normalizeClientIdInput(client_id ?? clientId);
+  const rawLinkedProjectIds = req.body.linked_project_ids ?? req.body.linkedProjectIds;
+  const {
+    ids: linkedProjectIds,
+    error: linkedProjectIdsError,
+  } = normalizeLinkedProjectIds(rawLinkedProjectIds);
   
   if (!name || !project_id) {
     return res.status(400).json({ error: 'Name and project_id are required' });
+  }
+  if (linkedProjectIdsError) {
+    return res.status(400).json({ error: linkedProjectIdsError });
   }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    const projectMetaRes = await client.query(
+      `SELECT p.workspace_id,
+              p.enable_multi_project_links,
+              p.members_can_create_tasks,
+              p.created_by,
+              pm.role
+       FROM projects p
+       LEFT JOIN project_members pm
+         ON pm.project_id = p.id AND pm.user_id = $2
+       WHERE p.id = $1`,
+      [project_id, req.userId]
+    );
+    if (projectMetaRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const {
+      workspace_id: workspaceId,
+      enable_multi_project_links: allowMultiProjectLinks,
+      members_can_create_tasks: membersCanCreateTasks,
+      created_by: projectOwnerId,
+      role: projectRole,
+    } = projectMetaRes.rows[0];
+    const isProjectOwner = Number(projectOwnerId) === Number(req.userId);
+    const normalizedRole = (projectRole || '').toLowerCase();
+
+    if (!isProjectOwner && !projectRole) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Access denied to this project' });
+    }
+
+    if (!isProjectOwner && membersCanCreateTasks === false && normalizedRole !== 'admin' && normalizedRole !== 'owner') {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Members cannot create tasks in this project' });
+    }
+    const filteredLinkedProjectIds = (linkedProjectIds || [])
+      .filter((id) => Number(id) !== Number(project_id));
+
+    if (filteredLinkedProjectIds.length > 0 && !allowMultiProjectLinks) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Multi-project linking is disabled for this project' });
+    }
+
+    await ensureLinkedProjectsAccessible(client, {
+      workspaceId,
+      userId: req.userId,
+      projectIds: filteredLinkedProjectIds,
+    });
 
     const resolvedClientId = requestedClientId
       ? await validateProjectClientLink(client, project_id, requestedClientId)
@@ -674,12 +1083,9 @@ router.post('/', async (req, res) => {
     );
     
     const task = taskResult.rows[0];
-    
-    const projectResult = await client.query(
-      'SELECT workspace_id FROM projects WHERE id = $1',
-      [project_id]
-    );
-    const workspaceId = projectResult.rows[0].workspace_id;
+
+    await syncTaskProjectLinks(client, task.id, filteredLinkedProjectIds, req.userId);
+    task.linked_project_ids = filteredLinkedProjectIds;
     
     await client.query(
       'INSERT INTO activity_logs (user_id, workspace_id, project_id, task_id, type, action, item_name, details) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
@@ -763,20 +1169,43 @@ router.put('/:taskId', async (req, res) => {
   const normalizedTags = Array.isArray(tags) ? tags : null;
   const hasClientId = Object.prototype.hasOwnProperty.call(req.body, 'client_id')
     || Object.prototype.hasOwnProperty.call(req.body, 'clientId');
+  const rawLinkedProjectIds = req.body.linked_project_ids ?? req.body.linkedProjectIds;
+  const {
+    ids: linkedProjectIds,
+    error: linkedProjectIdsError,
+  } = normalizeLinkedProjectIds(rawLinkedProjectIds);
+  const hasLinkedProjectUpdate = rawLinkedProjectIds !== undefined;
   
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    if (linkedProjectIdsError) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: linkedProjectIdsError });
+    }
 
     const accessRes = await client.query(
       `SELECT t.id, t.project_id, t.assignee_id,
         p.created_by AS project_owner,
         p.admins_can_approve,
         p.only_owner_approves,
-        pm.role as user_project_role
+        p.enable_multi_project_links,
+        pm_primary.role as primary_role,
+        (SELECT pm.role
+         FROM task_project_links tpl
+         JOIN project_members pm
+           ON pm.project_id = tpl.project_id AND pm.user_id = $2
+         WHERE tpl.task_id = t.id
+         ORDER BY CASE pm.role
+           WHEN 'Owner' THEN 3
+           WHEN 'Admin' THEN 2
+           ELSE 1
+         END DESC
+         LIMIT 1) as linked_role
        FROM tasks t
        JOIN projects p ON t.project_id = p.id
-       LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
+       LEFT JOIN project_members pm_primary ON pm_primary.project_id = p.id AND pm_primary.user_id = $2
        WHERE t.id = $1`,
       [req.params.taskId, req.userId]
     );
@@ -788,8 +1217,10 @@ router.put('/:taskId', async (req, res) => {
 
     const access = accessRes.rows[0];
     const isProjectOwner = Number(access.project_owner) === Number(req.userId);
-    const userProjectRole = access.user_project_role;
-    const isProjectAdmin = userProjectRole === 'Admin' || userProjectRole === 'Owner';
+    const primaryRole = access.primary_role;
+    const linkedRole = access.linked_role;
+    const userProjectRole = primaryRole || linkedRole;
+    const isProjectAdmin = primaryRole === 'Admin' || primaryRole === 'Owner';
     const adminsCanApprove = access.admins_can_approve !== null ? access.admins_can_approve : true;
     const onlyOwnerApproves = access.only_owner_approves !== null ? access.only_owner_approves : false;
     const canApprove = isProjectOwner || (!onlyOwnerApproves && adminsCanApprove && isProjectAdmin);
@@ -799,11 +1230,69 @@ router.put('/:taskId', async (req, res) => {
       return res.status(403).json({ error: 'Access denied to this task' });
     }
 
+    const allowMultiProjectLinks = access.enable_multi_project_links ?? false;
+    const filteredLinkedProjectIds = hasLinkedProjectUpdate
+      ? (linkedProjectIds || []).filter((id) => Number(id) !== Number(access.project_id))
+      : null;
+
+    if (hasLinkedProjectUpdate && filteredLinkedProjectIds.length > 0 && !allowMultiProjectLinks) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Multi-project linking is disabled for this project' });
+    }
+
+    if (hasLinkedProjectUpdate) {
+      const workspaceRes = await client.query(
+        'SELECT workspace_id FROM projects WHERE id = $1',
+        [access.project_id]
+      );
+      if (workspaceRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Project not found' });
+      }
+      await ensureLinkedProjectsAccessible(client, {
+        workspaceId: workspaceRes.rows[0].workspace_id,
+        userId: req.userId,
+        projectIds: filteredLinkedProjectIds,
+      });
+    }
+
     const requestedStatus = typeof status === 'string' ? status.toLowerCase() : null;
     const isApprovalStatus = requestedStatus === 'closed' || requestedStatus === 'rejected';
     if (isApprovalStatus && !canApprove) {
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Insufficient permissions to approve or reject this task' });
+    }
+
+    // Feature 5: Check if auto-approve is enabled for owner/admin
+    // Get project settings for auto-approve
+    const projectSettingsRes = await client.query(
+      `SELECT auto_approve_owner_tasks, auto_approve_admin_tasks, task_approval_required FROM projects WHERE id = $1`,
+      [access.project_id]
+    );
+    const projectSettings = projectSettingsRes.rows[0] || {};
+    const autoApproveOwnerTasks = projectSettings.auto_approve_owner_tasks ?? false;
+    const autoApproveAdminTasks = projectSettings.auto_approve_admin_tasks ?? false;
+    const taskApprovalRequired = projectSettings.task_approval_required ?? true;
+
+    // Determine if task should be auto-approved
+    let finalStatus = status;
+    let shouldAutoApprove = false;
+    
+    // If status is being set to Completed/Pending Approval and auto-approve conditions are met
+    if (requestedStatus === 'completed' || requestedStatus === 'pending approval' || requestedStatus === 'pending') {
+      if (!taskApprovalRequired) {
+        // If approval not required, auto-close the task
+        finalStatus = 'Closed';
+        shouldAutoApprove = true;
+      } else if (isProjectOwner && autoApproveOwnerTasks) {
+        // Auto-approve if owner is completing and auto-approve owner tasks is enabled
+        finalStatus = 'Closed';
+        shouldAutoApprove = true;
+      } else if (isProjectAdmin && autoApproveAdminTasks && !isProjectOwner) {
+        // Auto-approve if admin is completing and auto-approve admin tasks is enabled
+        finalStatus = 'Closed';
+        shouldAutoApprove = true;
+      }
     }
 
     let resolvedClientId = null;
@@ -815,7 +1304,7 @@ router.put('/:taskId', async (req, res) => {
     }
     
     // Auto-archive when task is closed
-    const shouldArchive = status && status.toLowerCase() === 'closed';
+    const shouldArchive = finalStatus && finalStatus.toLowerCase() === 'closed';
     
     const result = await client.query(
       `UPDATE tasks 
@@ -845,7 +1334,7 @@ router.put('/:taskId', async (req, res) => {
         description,
         assignee_id,
         stage,
-        status,
+        finalStatus || status,  // Use finalStatus which may be auto-approved
         priority,
         due_date,
         target_date,
@@ -870,6 +1359,11 @@ router.put('/:taskId', async (req, res) => {
     }
     
     const task = result.rows[0];
+
+    if (hasLinkedProjectUpdate) {
+      await syncTaskProjectLinks(client, task.id, filteredLinkedProjectIds, req.userId);
+      task.linked_project_ids = filteredLinkedProjectIds;
+    }
     
     const projectResult = await client.query(
       'SELECT workspace_id FROM projects WHERE id = $1',

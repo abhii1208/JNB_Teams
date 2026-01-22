@@ -3,7 +3,8 @@ const router = express.Router();
 const { pool } = require('../db');
 const { checkWorkspaceMember } = require('./workspaces');
 
-const MANAGE_ROLES = new Set(['Owner', 'Admin']);
+const MANAGE_ROLES = new Set(['owner', 'admin']);
+const VIEW_ROLES = new Set(['owner', 'admin', 'projectadmin']);
 const STATUS_VALUES = new Set(['Active', 'Inactive']);
 const GSTIN_REGEX = /^[0-9A-Z]{15}$/;
 const PAYMENT_TERMS_ALLOWED = new Set([7, 15, 30]);
@@ -27,6 +28,21 @@ function toBool(value) {
 
 function normalizeClientName(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeRole(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[^a-z]/gi, '')
+    .toLowerCase();
+}
+
+function canManageRole(value) {
+  return MANAGE_ROLES.has(normalizeRole(value));
+}
+
+function canViewRole(value) {
+  return VIEW_ROLES.has(normalizeRole(value));
 }
 
 function normalizeGstin(value) {
@@ -149,7 +165,7 @@ router.get('/workspace/:workspaceId', checkWorkspaceMember, async (req, res) => 
   try {
     const { workspaceId } = req.params;
     const { status } = req.query;
-    if (!MANAGE_ROLES.has(req.workspaceRole)) {
+    if (!canViewRole(req.workspaceRole)) {
       return res.status(403).json({ error: 'Insufficient permissions to view clients' });
     }
     const params = [workspaceId];
@@ -208,7 +224,7 @@ router.get('/:clientId', async (req, res) => {
     if (!access) {
       return res.status(403).json({ error: 'Access denied' });
     }
-    if (!MANAGE_ROLES.has(access.role)) {
+    if (!canViewRole(access.role)) {
       return res.status(403).json({ error: 'Insufficient permissions to view client' });
     }
 
@@ -287,7 +303,7 @@ router.post('/', checkWorkspaceMember, async (req, res) => {
     return res.status(400).json({ error: 'workspace_id and client_name are required' });
   }
 
-  if (!MANAGE_ROLES.has(req.workspaceRole)) {
+  if (!canManageRole(req.workspaceRole)) {
     return res.status(403).json({ error: 'Insufficient permissions to create client' });
   }
 
@@ -400,7 +416,7 @@ router.put('/:clientId', async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    if (!MANAGE_ROLES.has(access.role)) {
+    if (!canManageRole(access.role)) {
       return res.status(403).json({ error: 'Insufficient permissions to update client' });
     }
 
@@ -538,7 +554,7 @@ router.delete('/:clientId', async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    if (!MANAGE_ROLES.has(access.role)) {
+    if (!canManageRole(access.role)) {
       return res.status(403).json({ error: 'Insufficient permissions to deactivate client' });
     }
 

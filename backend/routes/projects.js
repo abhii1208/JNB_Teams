@@ -245,7 +245,11 @@ router.put('/:projectId', async (req, res) => {
     auto_close_after_days,
     member_task_approval,
     admin_task_approval,
+    auto_approve_owner_tasks,
+    auto_approve_admin_tasks,
+    task_approval_required,
     show_settings_to_admin,
+    enable_multi_project_links,
     freeze_columns,
     client_ids,
     primary_client_id,
@@ -277,10 +281,14 @@ router.put('/:projectId', async (req, res) => {
            auto_close_after_days = COALESCE($11, auto_close_after_days),
            member_task_approval = COALESCE($12, member_task_approval),
            admin_task_approval = COALESCE($13, admin_task_approval),
-           show_settings_to_admin = COALESCE($14, show_settings_to_admin),
-           freeze_columns = COALESCE($15::jsonb, freeze_columns),
+           auto_approve_owner_tasks = COALESCE($14, auto_approve_owner_tasks),
+           auto_approve_admin_tasks = COALESCE($15, auto_approve_admin_tasks),
+           task_approval_required = COALESCE($16, task_approval_required),
+           show_settings_to_admin = COALESCE($17, show_settings_to_admin),
+           enable_multi_project_links = COALESCE($18, enable_multi_project_links),
+           freeze_columns = COALESCE($19::jsonb, freeze_columns),
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $16 
+       WHERE id = $20 
        RETURNING *`,
       [
         name,
@@ -296,7 +304,11 @@ router.put('/:projectId', async (req, res) => {
         auto_close_after_days,
         member_task_approval,
         admin_task_approval,
+        auto_approve_owner_tasks,
+        auto_approve_admin_tasks,
+        task_approval_required,
         show_settings_to_admin,
+        enable_multi_project_links,
         normalizedFreezeColumns,
         req.params.projectId,
       ]

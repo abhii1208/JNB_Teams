@@ -8,6 +8,12 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+const publicApi = axios.create({
+  baseURL: API_BASE,
+  timeout: 10000,
+  headers: { 'Content-Type': 'application/json' },
+});
+
 const getStoredToken = () => {
   if (typeof window === 'undefined') return null;
   const token = localStorage.getItem('authToken');
@@ -46,6 +52,8 @@ export const updateWorkspaceMember = (workspaceId, userId, role) =>
   api.put(`/api/workspaces/${workspaceId}/members/${userId}`, { role });
 export const removeWorkspaceMember = (workspaceId, userId) =>
   api.delete(`/api/workspaces/${workspaceId}/members/${userId}`);
+export const updateWorkspace = (workspaceId, payload) =>
+  api.patch(`/api/workspaces/${workspaceId}`, payload);
 
 // Projects API
 export const getProjects = (workspaceId, includeArchived = false) => 
@@ -184,3 +192,17 @@ export const getAdminMemberDetails = (workspaceId, userId, params = {}) =>
   api.get(`/api/admin/${workspaceId}/team/${userId}/details`, { params });
 export const getAdminProjectTasks = (workspaceId, projectId, params = {}) => 
   api.get(`/api/admin/${workspaceId}/projects/${projectId}/tasks`, { params });
+
+// Share Links API (authenticated)
+export const createShareLink = (payload) => api.post('/api/share-links', payload);
+export const listShareLinks = (workspaceId, params = {}) =>
+  api.get('/api/share-links', { params: { workspaceId, ...params } });
+export const revokeShareLink = (linkId) => api.delete(`/api/share-links/${linkId}`);
+export const updateShareLink = (linkId, payload) => api.patch(`/api/share-links/${linkId}`, payload);
+
+// Share Links API (public)
+export const getPublicShareMeta = (slug) => publicApi.get(`/public/share/${slug}/meta`);
+export const unlockPublicShare = (slug, password) =>
+  publicApi.post(`/public/share/${slug}/unlock`, { password });
+export const getPublicShareTasks = (slug, token) =>
+  publicApi.get(`/public/share/${slug}/tasks`, token ? { headers: { Authorization: `Bearer ${token}` } } : {});

@@ -9,6 +9,10 @@ import {
     IconButton,
     Menu,
     MenuItem,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
     TextField,
     InputAdornment,
     CircularProgress,
@@ -48,6 +52,7 @@ function SeriesList({ workspace, onCreateNew, onEdit, onViewDetail }) {
     const [filterAnchorEl, setFilterAnchorEl] = useState(null);
     const [menuAnchor, setMenuAnchor] = useState(null);
     const [selectedSeries, setSelectedSeries] = useState(null);
+    const [deleteDialog, setDeleteDialog] = useState({ open: false, series: null });
 
     // Fetch series
     const fetchSeries = useCallback(async () => {
@@ -118,7 +123,7 @@ function SeriesList({ workspace, onCreateNew, onEdit, onViewDetail }) {
 
     const handleResumeSeries = async (seriesId) => {
         try {
-            await apiClient.post(`/api/recurring/${seriesId}/resume`);
+            await apiClient.post(`/api/recurring/${seriesId}/resume`, {});
             fetchSeries();
         } catch (err) {
             console.error('Error resuming series:', err);
@@ -126,8 +131,15 @@ function SeriesList({ workspace, onCreateNew, onEdit, onViewDetail }) {
         handleMenuClose();
     };
 
-    const handleDeleteSeries = async (seriesId) => {
-        if (!window.confirm('Delete this recurring series? Existing tasks will be preserved.')) {
+    const openDeleteDialog = (series) => {
+        setDeleteDialog({ open: true, series });
+        handleMenuClose();
+    };
+
+    const handleConfirmDelete = async () => {
+        const seriesId = deleteDialog.series?.id;
+        if (!seriesId) {
+            setDeleteDialog({ open: false, series: null });
             return;
         }
         try {
@@ -135,8 +147,9 @@ function SeriesList({ workspace, onCreateNew, onEdit, onViewDetail }) {
             fetchSeries();
         } catch (err) {
             console.error('Error deleting series:', err);
+        } finally {
+            setDeleteDialog({ open: false, series: null });
         }
-        handleMenuClose();
     };
 
     const handleGenerateNow = async (seriesId) => {
@@ -567,11 +580,37 @@ function SeriesList({ workspace, onCreateNew, onEdit, onViewDetail }) {
                     <RefreshIcon fontSize="small" sx={{ mr: 1.5 }} />
                     Generate Now
                 </MenuItem>
-                <MenuItem onClick={() => handleDeleteSeries(selectedSeries?.id)} sx={{ color: 'error.main' }}>
+                <MenuItem onClick={() => openDeleteDialog(selectedSeries)} sx={{ color: 'error.main' }}>
                     <DeleteIcon fontSize="small" sx={{ mr: 1.5 }} />
                     Delete
                 </MenuItem>
             </Menu>
+
+            <Dialog
+                open={deleteDialog.open}
+                onClose={() => setDeleteDialog({ open: false, series: null })}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>Delete recurring series?</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" color="text.secondary">
+                        Delete "{deleteDialog.series?.title || 'this series'}"? Existing tasks will be preserved.
+                    </Typography>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setDeleteDialog({ open: false, series: null })}>
+                        Cancel
+                    </Button>
+                    <Button
+                        variant="contained"
+                        color="error"
+                        onClick={handleConfirmDelete}
+                    >
+                        Delete
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </Box>
     );
 }

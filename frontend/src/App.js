@@ -3,9 +3,15 @@ import { CssBaseline, GlobalStyles, ThemeProvider, createTheme } from '@mui/mate
 import { SnackbarProvider } from 'notistack';
 import Auth from './Auth';
 import Landing from './Landing';
+import PublicSharePage from './components/ShareLinks/PublicSharePage';
 
 function App() {
   const [userId, setUserId] = useState(null);
+  const shareSlug = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    const match = window.location.pathname.match(/^\/share\/([^/]+)/);
+    return match ? match[1] : null;
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -73,10 +79,14 @@ function App() {
         autoHideDuration={4000}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
       >
-        {userId ? (
-          <Landing userId={userId} onLogout={handleLogout} />
+        {shareSlug ? (
+          <PublicSharePage slug={shareSlug} />
         ) : (
-          <Auth onLogin={handleLogin} />
+          userId ? (
+            <Landing userId={userId} onLogout={handleLogout} />
+          ) : (
+            <Auth onLogin={handleLogin} />
+          )
         )}
       </SnackbarProvider>
     </ThemeProvider>

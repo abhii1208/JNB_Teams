@@ -24,9 +24,9 @@ import NotificationsIcon from '@mui/icons-material/Notifications';
 import SecurityIcon from '@mui/icons-material/Security';
 import PaletteIcon from '@mui/icons-material/Palette';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
-import { getUserSettings, updateUserProfile, changePassword, getWorkspaces } from '../../apiClient';
+import { getUserSettings, updateUserProfile, changePassword, getWorkspaces, updateWorkspace } from '../../apiClient';
 
-function SettingsPage({ user }) {
+function SettingsPage({ user, workspace }) {
   const [activeTab, setActiveTab] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -41,6 +41,8 @@ function SettingsPage({ user }) {
     createdAt: ''
   });
   const [workspaceMemberships, setWorkspaceMemberships] = useState([]);
+  const [workspaceLogoUrl, setWorkspaceLogoUrl] = useState('');
+  const [workspaceSaving, setWorkspaceSaving] = useState(false);
 
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
@@ -80,6 +82,11 @@ function SettingsPage({ user }) {
 
     fetchSettings();
   }, []);
+
+  useEffect(() => {
+    if (!workspace) return;
+    setWorkspaceLogoUrl(workspace.logo_url || workspace.logoUrl || '');
+  }, [workspace?.id, workspace?.logo_url, workspace?.logoUrl]);
 
   const [notifications, setNotifications] = useState({
     taskAssigned: true,
@@ -144,6 +151,33 @@ function SettingsPage({ user }) {
       setSuccess(null);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const canEditWorkspace = workspace?.role === 'Owner' || workspace?.role === 'Admin';
+
+  const handleSaveWorkspaceBranding = async () => {
+    if (!workspace?.id) return;
+    if (!canEditWorkspace) {
+      setError('Only workspace owners and admins can update branding.');
+      return;
+    }
+
+    setWorkspaceSaving(true);
+    try {
+      const trimmed = workspaceLogoUrl.trim();
+      const payload = { logo_url: trimmed || null };
+      const res = await updateWorkspace(workspace.id, payload);
+      setWorkspaceLogoUrl(res.data.logo_url || '');
+      setSuccess('Workspace branding updated successfully');
+      setError(null);
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      console.error('Error updating workspace branding:', err);
+      setError(err.response?.data?.error || 'Failed to update workspace branding');
+      setSuccess(null);
+    } finally {
+      setWorkspaceSaving(false);
     }
   };
 
@@ -619,6 +653,59 @@ function SettingsPage({ user }) {
           {/* Account Tab */}
           {activeTab === 4 && (
             <Box sx={{ maxWidth: 600 }}>
+              {workspace && (
+                <>
+                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
+                    Workspace Branding
+                  </Typography>
+
+                  <Card elevation={0} sx={{ mb: 3, border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2 }}>
+                    <CardContent>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                        <Avatar
+                          src={workspaceLogoUrl || ''}
+                          sx={{ width: 56, height: 56, bgcolor: '#0f766e' }}
+                        >
+                          {workspace.name?.[0] || 'W'}
+                        </Avatar>
+                        <Box>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                            {workspace.name}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            Logo is used on public share pages
+                          </Typography>
+                        </Box>
+                      </Box>
+                      <TextField
+                        fullWidth
+                        label="Logo URL"
+                        value={workspaceLogoUrl}
+                        onChange={(e) => setWorkspaceLogoUrl(e.target.value)}
+                        helperText="Use a full https URL. Leave blank to remove."
+                        sx={{ mb: 2 }}
+                        disabled={!canEditWorkspace}
+                      />
+                      {!canEditWorkspace && (
+                        <Alert severity="info" sx={{ mb: 2 }}>
+                          Only workspace owners and admins can update branding.
+                        </Alert>
+                      )}
+                      <Button
+                        variant="contained"
+                        onClick={handleSaveWorkspaceBranding}
+                        disabled={!canEditWorkspace || workspaceSaving}
+                        sx={{ textTransform: 'none' }}
+                      >
+                        {workspaceSaving ? 'Saving...' : 'Save Branding'}
+                      </Button>
+                    </CardContent>
+                  </Card>
+
+                  <Divider sx={{ my: 4 }} />
+                </>
+              )}
+
               <Typography variant="h6" sx={{ mb: 3, fontWeight: 600 }}>
                 Account Information
               </Typography>

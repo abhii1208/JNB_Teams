@@ -106,9 +106,19 @@ router.post('/preview', (req, res) => {
 // ============================================
 // GET /recurring/workspace/:workspaceId - List series in workspace
 // ============================================
+const parseBooleanFlag = (value, defaultValue) => {
+    if (value === undefined || value === null || value === '') return defaultValue;
+    if (typeof value === 'boolean') return value;
+    const normalized = String(value).toLowerCase();
+    if (['true', '1', 'yes'].includes(normalized)) return true;
+    if (['false', '0', 'no'].includes(normalized)) return false;
+    return defaultValue;
+};
+
 router.get('/workspace/:workspaceId', async (req, res) => {
     const { workspaceId } = req.params;
-    const { includeDeleted = false, includePaused = true } = req.query;
+    const includeDeleted = parseBooleanFlag(req.query.includeDeleted, false);
+    const includePaused = parseBooleanFlag(req.query.includePaused, true);
 
     try {
         // Cast workspaceId to integer to prevent type mismatch
@@ -542,39 +552,59 @@ router.post('/:id/pause', async (req, res) => {
 // ============================================
 router.post('/:id/resume', async (req, res) => {
     const { id } = req.params;
-    const { backfill = false } = req.body;
+    const { backfill = false } = req.body || {};
 
     try {
         const seriesId = parseInt(id, 10);
         if (isNaN(seriesId)) {
             return res.status(400).json({ error: 'Invalid series ID' });
         }
-        const result = await pool.query(`
-            UPDATE recurring_series 
-            SET paused_at = NULL
-            WHERE id = $1 AND paused_at IS NOT NULL AND deleted_at IS NULL
-            RETURNING *
-        `, [seriesId]);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
 
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Series not found or not paused' });
-        }
+            const existing = await client.query(`
+                SELECT id, paused_at
+                FROM recurring_series
+                WHERE id = $1 AND deleted_at IS NULL
+            `, [seriesId]);
 
-        const series = result.rows[0];
-
-        // Generate instances after resume
-        setImmediate(async () => {
-            try {
-                await generateInstancesForSeries(seriesId);
-            } catch (err) {
-                console.error('Post-resume generation error:', err);
+            if (existing.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ error: 'Series not found' });
             }
-        });
 
-        res.json({
-            message: 'Series resumed',
-            series
-        });
+            const wasPaused = existing.rows[0].paused_at !== null;
+
+            const updated = await client.query(`
+                UPDATE recurring_series
+                SET paused_at = NULL
+                WHERE id = $1
+                RETURNING *
+            `, [seriesId]);
+
+            await client.query('COMMIT');
+
+            const series = { ...updated.rows[0], was_paused: wasPaused };
+
+            // Generate instances after resume
+            if (wasPaused) {
+                setImmediate(async () => {
+                    try {
+                        await generateInstancesForSeries(seriesId);
+                    } catch (err) {
+                        console.error('Post-resume generation error:', err);
+                    }
+                });
+            }
+
+            res.json({
+                message: wasPaused ? 'Series resumed' : 'Series already active',
+                series
+            });
+        } finally {
+            client.release();
+        }
     } catch (err) {
         console.error('Resume series error:', err);
         res.status(500).json({ error: 'Failed to resume series' });

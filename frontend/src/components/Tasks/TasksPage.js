@@ -56,11 +56,17 @@ import BusinessIcon from '@mui/icons-material/Business';
 import PersonIcon from '@mui/icons-material/Person';
 import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import InsertLinkIcon from '@mui/icons-material/InsertLink';
+
 import TasksTableView from './TasksTableView';
 import TasksCalendarView from './TasksCalendarView';
 import TasksBoardView from './TasksBoardView';
 import TaskFormWithProjectSelect from './TaskFormWithProjectSelect';
 import EditColumnsDialog, { DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_ORDER } from './EditColumnsDialog';
+import ShareLinkDialog from '../ShareLinks/ShareLinkDialog';
+import ShareLinksManagerDialog from '../ShareLinks/ShareLinksManagerDialog';
+import { DEFAULT_SHARE_COLUMNS, SHAREABLE_FIELDS, ADMIN_ONLY_FIELDS } from '../ShareLinks/shareLinkFields';
 
 import {
   getWorkspaceTasks,
@@ -111,10 +117,35 @@ const DEFAULT_FILTERS = {
   stage: [],
   priority: [],
   assignee: 'all',
+  created_by: [],
+  collaborators: [],
+  name: '',
+  client_name: '',
+  notes: '',
+  category: '',
+  section: '',
+  tags: '',
+  external_id: '',
+  due_date_from: '',
+  due_date_to: '',
+  no_due_date: false,
+  target_date_from: '',
+  target_date_to: '',
+  no_target_date: false,
+  created_date_from: '',
+  created_date_to: '',
+  estimated_hours_min: '',
+  estimated_hours_max: '',
+  actual_hours_min: '',
+  actual_hours_max: '',
+  completion_percentage_min: '',
+  completion_percentage_max: '',
   overdue: false,
   recurring: null,
   search: '',
   include_archived: false,
+  hideCompleted: true, // Feature 4: Hide completed tasks by default
+  dueDateFilter: null, // Feature 7: Auto filter by date label - 'today', 'overdue', 'tomorrow', 'week', 'month'
 };
 
 const CUSTOM_COLUMN_IDS = [
@@ -142,7 +173,15 @@ const insertColumnAfter = (columns, afterId, newId) => {
   return next;
 };
 
-function TasksPage({ workspace, user }) {
+const formatDateInput = (date) => {
+  if (!(date instanceof Date)) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
   // View state
   const [viewType, setViewType] = useState('table');
   const [loading, setLoading] = useState(true);
@@ -224,6 +263,17 @@ function TasksPage({ workspace, user }) {
     setColumnOrder((prev) => insertColumnAfter(prev, CLIENT_COLUMN_AFTER, CLIENT_COLUMN_ID));
     setVisibleColumns((prev) => insertColumnAfter(prev, CLIENT_COLUMN_AFTER, CLIENT_COLUMN_ID));
   }, [preferencesLoaded, columnOrder]);
+
+  const shareDefaultColumns = useMemo(() => {
+    const shareable = new Set(SHAREABLE_FIELDS.map((field) => field.key));
+    const adminOnly = new Set(ADMIN_ONLY_FIELDS);
+    const isAdmin = workspace?.role === 'Owner' || workspace?.role === 'Admin';
+    const fromVisible = visibleColumns.filter(
+      (column) => shareable.has(column) && (isAdmin || !adminOnly.has(column))
+    );
+    const fallback = DEFAULT_SHARE_COLUMNS.filter((column) => isAdmin || !adminOnly.has(column));
+    return fromVisible.length ? fromVisible : fallback;
+  }, [visibleColumns, workspace?.role]);
   
   // Saved Views
   const [savedViews, setSavedViews] = useState([]);
@@ -238,6 +288,8 @@ function TasksPage({ workspace, user }) {
   const [editingTask, setEditingTask] = useState(null);
   const [selectedProject, setSelectedProject] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [showShareLinkDialog, setShowShareLinkDialog] = useState(false);
+  const [showLinksManager, setShowLinksManager] = useState(false);
   
   // Menu anchors
   const [filterAnchor, setFilterAnchor] = useState(null);
@@ -253,6 +305,116 @@ function TasksPage({ workspace, user }) {
   // Calendar state
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [calendarTasks, setCalendarTasks] = useState([]);
+
+  const buildDashboardFilterPatch = useCallback((taskFilter) => {
+    if (!taskFilter || !taskFilter.field || !taskFilter.bucket) return null;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const dayAfterTomorrow = new Date(today);
+    dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
+    const day3 = new Date(today);
+    day3.setDate(day3.getDate() + 3);
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const basePatch = {
+      due_date_from: '',
+      due_date_to: '',
+      target_date_from: '',
+      target_date_to: '',
+      dueDateFilter: null,
+      overdue: false,
+      no_due_date: false,
+      no_target_date: false,
+    };
+
+    if (taskFilter.field === 'due_date') {
+      switch (taskFilter.bucket) {
+        case 'today':
+          return {
+            ...basePatch,
+            due_date_from: formatDateInput(today),
+            due_date_to: formatDateInput(today),
+          };
+        case 'tomorrow':
+          return {
+            ...basePatch,
+            due_date_from: formatDateInput(tomorrow),
+            due_date_to: formatDateInput(tomorrow),
+          };
+        case 'soon':
+          return {
+            ...basePatch,
+            due_date_from: formatDateInput(dayAfterTomorrow),
+            due_date_to: formatDateInput(day3),
+          };
+        case 'overdue':
+          return {
+            ...basePatch,
+            overdue: true,
+          };
+        case 'none':
+          return {
+            ...basePatch,
+            no_due_date: true,
+          };
+        default:
+          return null;
+      }
+    }
+
+    if (taskFilter.field === 'target_date') {
+      switch (taskFilter.bucket) {
+        case 'today':
+          return {
+            ...basePatch,
+            target_date_from: formatDateInput(today),
+            target_date_to: formatDateInput(today),
+          };
+        case 'tomorrow':
+          return {
+            ...basePatch,
+            target_date_from: formatDateInput(tomorrow),
+            target_date_to: formatDateInput(tomorrow),
+          };
+        case 'soon':
+          return {
+            ...basePatch,
+            target_date_from: formatDateInput(dayAfterTomorrow),
+            target_date_to: formatDateInput(day3),
+          };
+        case 'overdue':
+          return {
+            ...basePatch,
+            target_date_to: formatDateInput(yesterday),
+          };
+        case 'none':
+          return {
+            ...basePatch,
+            no_target_date: true,
+          };
+        default:
+          return null;
+      }
+    }
+
+    return null;
+  }, []);
+
+  useEffect(() => {
+    if (!preferencesLoaded || !navigationState?.taskFilter) return;
+    const patch = buildDashboardFilterPatch(navigationState.taskFilter);
+    if (patch) {
+      setFilters((prev) => ({ ...prev, ...patch }));
+      setPage(1);
+    }
+    if (typeof onNavigationConsumed === 'function') {
+      onNavigationConsumed();
+    }
+  }, [preferencesLoaded, navigationState, buildDashboardFilterPatch, onNavigationConsumed]);
 
   // Fetch projects
   useEffect(() => {
@@ -367,9 +529,34 @@ function TasksPage({ workspace, user }) {
           stage: filters.stage,
           priority: filters.priority,
           assignee: filters.assignee,
+          created_by: filters.created_by,
+          collaborators: filters.collaborators,
+          name: filters.name,
+          client_name: filters.client_name,
+          notes: filters.notes,
+          category: filters.category,
+          section: filters.section,
+          tags: filters.tags,
+          external_id: filters.external_id,
+          due_date_from: filters.due_date_from,
+          due_date_to: filters.due_date_to,
+          no_due_date: filters.no_due_date,
+          target_date_from: filters.target_date_from,
+          target_date_to: filters.target_date_to,
+          no_target_date: filters.no_target_date,
+          created_date_from: filters.created_date_from,
+          created_date_to: filters.created_date_to,
+          estimated_hours_min: filters.estimated_hours_min,
+          estimated_hours_max: filters.estimated_hours_max,
+          actual_hours_min: filters.actual_hours_min,
+          actual_hours_max: filters.actual_hours_max,
+          completion_percentage_min: filters.completion_percentage_min,
+          completion_percentage_max: filters.completion_percentage_max,
           overdue: filters.overdue,
           recurring: filters.recurring,
           include_archived: filters.include_archived,
+          hideCompleted: filters.hideCompleted,
+          dueDateFilter: filters.dueDateFilter,
         },
         sort_by: sortBy,
         sort_order: sortOrder,
@@ -420,14 +607,71 @@ function TasksPage({ workspace, user }) {
     if (filters.stage.length > 0) params.stage = filters.stage.join(',');
     if (filters.priority.length > 0) params.priority = filters.priority.join(',');
     if (filters.assignee && filters.assignee !== 'all') params.assignee = filters.assignee;
-    if (filters.overdue) params.overdue = 'true';
+    if (filters.created_by && filters.created_by.length > 0) params.created_by = filters.created_by.join(',');
+    if (filters.collaborators && filters.collaborators.length > 0) {
+      params.collaborator_ids = filters.collaborators.join(',');
+    }
+    if (filters.name) params.name = filters.name;
+    if (filters.client_name) params.client_name = filters.client_name;
+    if (filters.notes) params.notes = filters.notes;
+    if (filters.category) params.category = filters.category;
+    if (filters.section) params.section = filters.section;
+    if (filters.tags) params.tags = filters.tags;
+    if (filters.external_id) params.external_id = filters.external_id;
+    if (filters.no_due_date) {
+      params.no_due_date = 'true';
+    } else {
+      if (filters.due_date_from) params.due_date_from = filters.due_date_from;
+      if (filters.due_date_to) params.due_date_to = filters.due_date_to;
+      if (filters.overdue) params.overdue = 'true';
+      if (filters.dueDateFilter) params.due_date_filter = filters.dueDateFilter;
+    }
+
+    if (filters.no_target_date) {
+      params.no_target_date = 'true';
+    } else {
+      if (filters.target_date_from) params.target_date_from = filters.target_date_from;
+      if (filters.target_date_to) params.target_date_to = filters.target_date_to;
+    }
+    if (filters.created_date_from) params.created_date_from = filters.created_date_from;
+    if (filters.created_date_to) params.created_date_to = filters.created_date_to;
+    if (filters.estimated_hours_min !== '') params.estimated_hours_min = filters.estimated_hours_min;
+    if (filters.estimated_hours_max !== '') params.estimated_hours_max = filters.estimated_hours_max;
+    if (filters.actual_hours_min !== '') params.actual_hours_min = filters.actual_hours_min;
+    if (filters.actual_hours_max !== '') params.actual_hours_max = filters.actual_hours_max;
+    if (filters.completion_percentage_min !== '') {
+      params.completion_percentage_min = filters.completion_percentage_min;
+    }
+    if (filters.completion_percentage_max !== '') {
+      params.completion_percentage_max = filters.completion_percentage_max;
+    }
     if (filters.recurring !== null) params.recurring = filters.recurring ? 'true' : 'false';
     if (filters.search) params.search = filters.search;
     if (filters.include_archived) params.include_archived = 'true';
     if (groupBy) params.group_by = groupBy;
+    // Feature 4: Hide completed tasks
+    if (filters.hideCompleted) params.hide_completed = 'true';
     
     return params;
   }, [page, limit, sortBy, sortOrder, filters, groupBy]);
+
+  // Feature 7: Handle date filter click from TasksTableView
+  const handleDateFilterClick = useCallback((filterKey) => {
+    setFilters(prev => ({
+      ...prev,
+      dueDateFilter: prev.dueDateFilter === filterKey ? null : filterKey, // Toggle filter
+      overdue: filterKey === 'overdue' ? !prev.overdue : false,
+      due_date_from: '',
+      due_date_to: '',
+      no_due_date: false,
+    }));
+    setPage(1);
+  }, []);
+
+  const handleColumnFiltersChange = useCallback((patch) => {
+    if (!patch || typeof patch !== 'object') return;
+    setFilters((prev) => ({ ...prev, ...patch }));
+  }, []);
 
   // Fetch tasks
   const fetchTasks = useCallback(async () => {
@@ -488,10 +732,35 @@ function TasksPage({ workspace, user }) {
       filters.stage.length > 0 ||
       filters.priority.length > 0 ||
       filters.assignee !== 'all' ||
+      (filters.created_by && filters.created_by.length > 0) ||
+      (filters.collaborators && filters.collaborators.length > 0) ||
+      Boolean(filters.name) ||
+      Boolean(filters.client_name) ||
+      Boolean(filters.notes) ||
+      Boolean(filters.category) ||
+      Boolean(filters.section) ||
+      Boolean(filters.tags) ||
+      Boolean(filters.external_id) ||
+      Boolean(filters.due_date_from) ||
+      Boolean(filters.due_date_to) ||
+      filters.no_due_date ||
+      Boolean(filters.target_date_from) ||
+      Boolean(filters.target_date_to) ||
+      filters.no_target_date ||
+      Boolean(filters.created_date_from) ||
+      Boolean(filters.created_date_to) ||
+      filters.estimated_hours_min !== '' ||
+      filters.estimated_hours_max !== '' ||
+      filters.actual_hours_min !== '' ||
+      filters.actual_hours_max !== '' ||
+      filters.completion_percentage_min !== '' ||
+      filters.completion_percentage_max !== '' ||
       filters.overdue ||
       filters.recurring !== null ||
       filters.search ||
-      filters.include_archived;
+      filters.include_archived ||
+      !filters.hideCompleted ||
+      filters.dueDateFilter !== null;
   }, [filters]);
 
   const activeFilterCount = useMemo(() => {
@@ -501,9 +770,34 @@ function TasksPage({ workspace, user }) {
     if (filters.stage.length > 0) count++;
     if (filters.priority.length > 0) count++;
     if (filters.assignee !== 'all') count++;
+    if (filters.created_by && filters.created_by.length > 0) count++;
+    if (filters.collaborators && filters.collaborators.length > 0) count++;
+    if (filters.name) count++;
+    if (filters.client_name) count++;
+    if (filters.notes) count++;
+    if (filters.category) count++;
+    if (filters.section) count++;
+    if (filters.tags) count++;
+    if (filters.external_id) count++;
+    if (filters.due_date_from) count++;
+    if (filters.due_date_to) count++;
+    if (filters.no_due_date) count++;
+    if (filters.target_date_from) count++;
+    if (filters.target_date_to) count++;
+    if (filters.no_target_date) count++;
+    if (filters.created_date_from) count++;
+    if (filters.created_date_to) count++;
+    if (filters.estimated_hours_min !== '') count++;
+    if (filters.estimated_hours_max !== '') count++;
+    if (filters.actual_hours_min !== '') count++;
+    if (filters.actual_hours_max !== '') count++;
+    if (filters.completion_percentage_min !== '') count++;
+    if (filters.completion_percentage_max !== '') count++;
     if (filters.overdue) count++;
     if (filters.recurring !== null) count++;
     if (filters.include_archived) count++;
+    if (!filters.hideCompleted) count++;
+    if (filters.dueDateFilter) count++;
     return count;
   }, [filters]);
 
@@ -518,7 +812,7 @@ function TasksPage({ workspace, user }) {
     
     const config = view.config;
     setViewType(config.viewType || 'table');
-    setFilters(config.filters || DEFAULT_FILTERS);
+    setFilters({ ...DEFAULT_FILTERS, ...(config.filters || {}) });
     setSortBy(config.sortBy || 'created_at');
     setSortOrder(config.sortOrder || 'desc');
     setGroupBy(config.groupBy || null);
@@ -669,6 +963,36 @@ function TasksPage({ workspace, user }) {
     return indicators;
   };
 
+  // Export tasks to CSV
+  const handleExport = () => {
+    const headers = ['Task', 'Project', 'Client', 'Stage', 'Status', 'Priority', 'Assignee', 'Due Date', 'Target Date', 'Created By', 'Created Date', 'Notes'];
+    const csvData = tasks.map(task => [
+      task.name || '',
+      task.project_name || '',
+      task.client_name || '',
+      task.stage || '',
+      task.status || '',
+      task.priority || '',
+      task.assignee_name || '',
+      task.due_date ? new Date(task.due_date).toLocaleDateString() : '',
+      task.target_date ? new Date(task.target_date).toLocaleDateString() : '',
+      task.created_by_name || '',
+      task.created_at ? new Date(task.created_at).toLocaleDateString() : '',
+      (task.notes || '').replace(/"/g, '""')
+    ]);
+    
+    const csvContent = [
+      headers.join(','),
+      ...csvData.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `tasks_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+  };
+
   // Render filter menu
   const renderFilterMenu = () => (
     <Popover
@@ -802,6 +1126,20 @@ function TasksPage({ workspace, user }) {
             />
           }
           label={<Typography variant="body2">Include archived</Typography>}
+        />
+      </Box>
+
+      {/* Feature 4: Show completed tasks toggle */}
+      <Box sx={{ mb: 2 }}>
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={!filters.hideCompleted}
+              onChange={(e) => setFilters(prev => ({ ...prev, hideCompleted: !e.target.checked }))}
+              size="small"
+            />
+          }
+          label={<Typography variant="body2">Show completed tasks</Typography>}
         />
       </Box>
 
@@ -1166,27 +1504,31 @@ function TasksPage({ workspace, user }) {
           <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
 
           {/* Filters Button */}
-          <Button
-            size="small"
-            startIcon={
-              <Badge badgeContent={activeFilterCount} color="primary">
-                <FilterListIcon />
-              </Badge>
-            }
-            onClick={(e) => setFilterAnchor(e.currentTarget)}
-            color={hasActiveFilters ? 'primary' : 'inherit'}
-          >
-            Filters
-          </Button>
+          {viewType !== 'table' && (
+            <Button
+              size="small"
+              startIcon={
+                <Badge badgeContent={activeFilterCount} color="primary">
+                  <FilterListIcon />
+                </Badge>
+              }
+              onClick={(e) => setFilterAnchor(e.currentTarget)}
+              color={hasActiveFilters ? 'primary' : 'inherit'}
+            >
+              Filters
+            </Button>
+          )}
 
-          {/* Sort Button */}
-          <Button
-            size="small"
-            startIcon={<SortIcon />}
-            onClick={(e) => setSortAnchor(e.currentTarget)}
-          >
-            Sort: {SORT_OPTIONS.find(o => o.id === sortBy)?.label}
-          </Button>
+          {/* Sort Button (hidden in table view; column headers handle sort) */}
+          {viewType !== 'table' && (
+            <Button
+              size="small"
+              startIcon={<SortIcon />}
+              onClick={(e) => setSortAnchor(e.currentTarget)}
+            >
+              Sort: {SORT_OPTIONS.find(o => o.id === sortBy)?.label}
+            </Button>
+          )}
 
           {/* Group Button */}
           <Button
@@ -1225,10 +1567,26 @@ function TasksPage({ workspace, user }) {
           <IconButton size="small" onClick={fetchTasks}>
             <RefreshIcon />
           </IconButton>
+
+          {/* Links Manager */}
+          <Tooltip title="Links Manager">
+            <IconButton size="small" onClick={() => setShowLinksManager(true)}>
+              <InsertLinkIcon />
+            </IconButton>
+          </Tooltip>
+
+          {/* Export */}
+          <Button
+            size="small"
+            startIcon={<FileDownloadIcon />}
+            onClick={handleExport}
+          >
+            Export
+          </Button>
         </Paper>
 
         {/* Active Filters Display */}
-        {hasActiveFilters && (
+        {viewType !== 'table' && hasActiveFilters && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, flexWrap: 'wrap' }}>
             <Typography variant="caption" color="text.secondary">Active filters:</Typography>
             {filters.projects.length > 0 && (
@@ -1280,18 +1638,7 @@ function TasksPage({ workspace, user }) {
           </Box>
         )}
 
-        {/* Bulk Actions Bar */}
-        {selectedTasks.length > 0 && (
-          <Paper sx={{ mt: 1, p: 1, display: 'flex', alignItems: 'center', gap: 2, bgcolor: '#e0f2fe' }}>
-            <Typography variant="body2">{selectedTasks.length} tasks selected</Typography>
-            <Button size="small" onClick={(e) => setBulkActionAnchor(e.currentTarget)}>
-              Bulk Actions
-            </Button>
-            <Button size="small" onClick={() => setSelectedTasks([])}>
-              Clear Selection
-            </Button>
-          </Paper>
-        )}
+        {/* Bulk Actions moved to table footer */}
       </Box>
 
       {/* Main Content */}
@@ -1322,6 +1669,20 @@ function TasksPage({ workspace, user }) {
                 loading={loading}
                 visibleColumns={visibleColumns}
                 columnOrder={columnOrder}
+                onDateFilterClick={handleDateFilterClick}
+                filters={filters}
+                onFiltersChange={handleColumnFiltersChange}
+                projects={projects}
+                workspaceMembers={workspaceMembers}
+                statusOptions={STATUS_OPTIONS}
+                stageOptions={BULK_STAGE_OPTIONS}
+                priorityOptions={PRIORITY_OPTIONS}
+                hasActiveFilters={hasActiveFilters}
+                activeFilterCount={activeFilterCount}
+                onClearFilters={clearFilters}
+                onOpenBulkActions={(event) => setBulkActionAnchor(event.currentTarget)}
+                onOpenShareLink={() => setShowShareLinkDialog(true)}
+                onClearSelection={() => setSelectedTasks([])}
               />
             )}
             {viewType === 'calendar' && (
@@ -1356,8 +1717,8 @@ function TasksPage({ workspace, user }) {
       </Box>
 
       {/* Menus and Dialogs */}
-      {renderFilterMenu()}
-      {renderSortMenu()}
+      {viewType !== 'table' && renderFilterMenu()}
+      {viewType !== 'table' && renderSortMenu()}
       {renderGroupMenu()}
       {renderSavedViewsMenu()}
       {renderBulkActionsMenu()}
@@ -1371,6 +1732,22 @@ function TasksPage({ workspace, user }) {
         columnOrder={columnOrder}
         onSave={handleSaveColumnSettings}
         enabledProjectColumns={enabledProjectColumns}
+      />
+
+      <ShareLinkDialog
+        open={showShareLinkDialog}
+        onClose={() => setShowShareLinkDialog(false)}
+        workspaceId={workspace?.id}
+        taskIds={selectedTasks}
+        defaultColumns={shareDefaultColumns}
+        workspaceRole={workspace?.role}
+        onCreated={() => setSnackbar({ open: true, message: 'Share link created', severity: 'success' })}
+      />
+
+      <ShareLinksManagerDialog
+        open={showLinksManager}
+        onClose={() => setShowLinksManager(false)}
+        workspaceId={workspace?.id}
       />
 
       {/* Task Form Dialog - Need to select project first for new tasks */}

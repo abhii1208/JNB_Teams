@@ -108,6 +108,10 @@ function TaskFormWithProjectSelect({
         external_id: normalizeNullableString(taskData.external_id ?? taskData.externalId ?? null),
       };
 
+      if (Array.isArray(taskData.linkedProjectIds)) {
+        payload.linked_project_ids = taskData.linkedProjectIds;
+      }
+
       if (task && task.id) {
         await updateTask(task.id, payload);
         setSnackbar({ open: true, message: 'Task updated', severity: 'success' });
@@ -140,6 +144,10 @@ function TaskFormWithProjectSelect({
         primaryClient={internalProject?.primary_client || null}
         userRole={effectiveProjectRole}
         currentUserId={user?.id}
+        workspaceProjects={projects}
+        enableMultiProjectLinks={Boolean(
+          internalProject?.enable_multi_project_links ?? internalProject?.enableMultiProjectLinks
+        )}
       />
     );
   }

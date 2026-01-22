@@ -66,7 +66,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import TaskForm from '../Tasks/TaskForm';
 import CustomColumnSettings from './CustomColumnSettings';
 import { differenceInCalendarDays, isValid } from 'date-fns';
-import { getTasks, createTask, updateTask, deleteTask, updateProject, getProjectMembers, getWorkspaceMembers, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator, getProjectColumnSettings } from '../../apiClient';
+import { getTasks, createTask, updateTask, deleteTask, updateProject, getProjectMembers, getWorkspaceMembers, getWorkspaceProjects, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator, getProjectColumnSettings } from '../../apiClient';
 import { formatShortDate } from '../../utils/date';
 
 const roleColors = {
@@ -229,6 +229,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   }, [project, showArchived]);
   const [members, setMembers] = useState([]);
   const [workspaceMembers, setWorkspaceMembers] = useState([]);
+  const [workspaceProjects, setWorkspaceProjects] = useState([]);
   const [selectedNewMember, setSelectedNewMember] = useState('');
   const [selectedNewMemberRole, setSelectedNewMemberRole] = useState('Member');
   const [toast, setToast] = useState({ open: false, severity: 'success', message: '' });
@@ -247,6 +248,10 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     adminTaskApproval: true,
     showSettingsToAdmin: true,
     freezeColumns: [],
+    autoApproveOwnerTasks: false,
+    autoApproveAdminTasks: false,
+    taskApprovalRequired: true,
+    enableMultiProjectLinks: false,
   });
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [projectColumnSettings, setProjectColumnSettings] = useState(DEFAULT_CUSTOM_COLUMN_SETTINGS);
@@ -278,6 +283,10 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
       adminTaskApproval: source.admin_task_approval ?? true,
       showSettingsToAdmin: source.show_settings_to_admin ?? true,
       freezeColumns,
+      autoApproveOwnerTasks: source.auto_approve_owner_tasks ?? false,
+      autoApproveAdminTasks: source.auto_approve_admin_tasks ?? false,
+      taskApprovalRequired: source.task_approval_required ?? true,
+      enableMultiProjectLinks: source.enable_multi_project_links ?? false,
     };
   };
 
@@ -349,6 +358,28 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     if (addMemberOpen) fetchWorkspaceMembers();
   }, [workspace, addMemberOpen]);
 
+  useEffect(() => {
+    if (!workspace?.id) return;
+    let active = true;
+
+    const fetchWorkspaceProjects = async () => {
+      try {
+        const res = await getWorkspaceProjects(workspace.id);
+        if (!active) return;
+        setWorkspaceProjects(res.data || []);
+      } catch (err) {
+        console.error('Failed to fetch workspace projects:', err);
+        if (!active) return;
+        setWorkspaceProjects([]);
+      }
+    };
+
+    fetchWorkspaceProjects();
+    return () => {
+      active = false;
+    };
+  }, [workspace?.id]);
+
   const availableWorkspaceMembers = workspaceMembers.filter((wm) => !members.some((m) => m.id === wm.id));
 
   const showToast = (severity, message) => {
@@ -372,6 +403,10 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
         admin_task_approval: projectSettings.adminTaskApproval,
         show_settings_to_admin: projectSettings.showSettingsToAdmin,
         freeze_columns: projectSettings.freezeColumns || [],
+        auto_approve_owner_tasks: projectSettings.autoApproveOwnerTasks,
+        auto_approve_admin_tasks: projectSettings.autoApproveAdminTasks,
+        task_approval_required: projectSettings.taskApprovalRequired,
+        enable_multi_project_links: projectSettings.enableMultiProjectLinks,
       };
       const response = await updateProject(project.id, payload);
       if (response?.data) {
@@ -694,6 +729,9 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           tags: Array.isArray(taskData.tags) ? taskData.tags : null,
           external_id: normalizeNullableString(taskData.external_id ?? taskData.externalId ?? null),
         };
+        if (Array.isArray(taskData.linkedProjectIds)) {
+          payload.linked_project_ids = taskData.linkedProjectIds;
+        }
         const response = await updateTask(selectedTask.id, payload);
         setTasks(prev => prev.map(t => t.id === selectedTask.id ? response.data : t));
         // Sync collaborators: add any new collaborators selected in the form
@@ -737,6 +775,9 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           tags: Array.isArray(taskData.tags) ? taskData.tags : null,
           external_id: normalizeNullableString(taskData.external_id ?? taskData.externalId ?? null),
         };
+        if (Array.isArray(taskData.linkedProjectIds)) {
+          payload.linked_project_ids = taskData.linkedProjectIds;
+        }
         const response = await createTask(payload);
         const created = response.data;
         // add collaborators if provided
@@ -910,7 +951,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   );
 
   return (
-    <Box sx={{ p: 4 }}>
+    <Box sx={{ p: 4, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 4 }}>
         <IconButton onClick={onBack} sx={{ border: '1px solid rgba(148, 163, 184, 0.3)' }}>
@@ -1011,6 +1052,10 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
         sx={{
           border: '1px solid rgba(148, 163, 184, 0.2)',
           borderRadius: 3,
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0,
         }}
       >
           <Tabs
@@ -1031,11 +1076,11 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
             ))}
         </Tabs>
 
-        <Box sx={{ p: 3 }}>
+        <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
             {/* Overview Tab */}
             {activeKey === 'overview' && (
             <Fade in timeout={300}>
-              <Box>
+              <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
                 <Typography variant="h6" sx={{ fontWeight: 600, mb: 3 }}>
                   Project Statistics
                 </Typography>
@@ -1302,7 +1347,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           {/* Tasks Tab */}
           {activeKey === 'tasks' && (
             <Fade in timeout={300}>
-              <Box>
+              <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                 {/* View Controls */}
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, gap: 2, flexWrap: 'wrap' }}>
                   {/* Search and Filter Buttons */}
@@ -1618,18 +1663,24 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                   <MenuItem onClick={() => { setGroupBy('assignee'); setGroupAnchor(null); }}>By Assignee</MenuItem>
                 </Menu>
 
+                <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
                 {/* Table View */}
                 {taskView === 'table' && (
                   <Fade in timeout={300}>
-                    <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2, overflowX: 'auto' }}>
-                      <Table
-                        sx={{
-                          minWidth: 1200
-                            + (showCategoryColumn ? 120 : 0)
-                            + (showSectionColumn ? 120 : 0)
-                            + (showClientColumn ? 160 : 0),
-                        }}
+                    <Box sx={{ height: '100%', minHeight: 0, overflow: 'auto' }}>
+                      <TableContainer
+                        component={Paper}
+                        elevation={0}
+                        sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2, overflow: 'auto' }}
                       >
+                        <Table
+                          sx={{
+                            minWidth: 1200
+                              + (showCategoryColumn ? 120 : 0)
+                              + (showSectionColumn ? 120 : 0)
+                              + (showClientColumn ? 160 : 0),
+                          }}
+                        >
                         <TableHead>
                           <TableRow sx={{ backgroundColor: projectTheme.primaryLight }}>
                             <TableCell 
@@ -2011,15 +2062,16 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                             );
                           })}
                         </TableBody>
-                      </Table>
-                    </TableContainer>
+                        </Table>
+                      </TableContainer>
+                    </Box>
                   </Fade>
                 )}
 
                 {/* List View */}
                 {taskView === 'list' && (
                   <Fade in timeout={300}>
-                    <Box>
+                    <Box sx={{ height: '100%', minHeight: 0, overflowY: 'auto' }}>
                       {pendingTasks.length > 0 && (
                     <>
                       <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
@@ -2056,14 +2108,15 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       </Grid>
                     ))}
                   </Grid>
-                </Box>
+                    </Box>
               </Fade>
               )}
 
               {/* Board View (Kanban) */}
               {taskView === 'board' && (
                 <Fade in timeout={300}>
-                  <Box sx={{ display: 'flex', gap: 2, overflowX: 'auto', pb: 2 }}>
+                  <Box sx={{ height: '100%', minHeight: 0, overflowY: 'auto' }}>
+                    <Box sx={{ display: 'flex', gap: 2, overflowX: 'auto', pb: 2, minHeight: '100%' }}>
                   {/* Planned Column */}
                   <Paper
                     elevation={0}
@@ -2503,13 +2556,14 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                     </Box>
                   </Paper>
                 </Box>
+                </Box>
               </Fade>
               )}
 
               {/* Calendar View */}
               {taskView === 'calendar' && (
                 <Fade in timeout={300}>
-                  <Box>
+                  <Box sx={{ height: '100%', minHeight: 0, overflowY: 'auto' }}>
                   {/* Calendar Header */}
                   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
                     <Typography variant="h4" sx={{ fontWeight: 700, color: '#0f172a' }}>
@@ -2887,6 +2941,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                 </Box>
               </Fade>
               )}
+            </Box>
           </Box>
           </Fade>
           )}
@@ -2894,7 +2949,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           {/* Members Tab */}
           {activeKey === 'members' && (
             <Fade in timeout={300}>
-              <Box>
+              <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                 <Typography variant="h6">Project Members ({members.length})</Typography>
                 {canManageMembers && (
@@ -3023,7 +3078,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           {/* Settings Tab */}
           {activeKey === 'settings' && (
             <Fade in timeout={300}>
-              <Box sx={{ maxWidth: 700 }}>
+              <Box sx={{ maxWidth: 700, flex: 1, minHeight: 0, overflow: 'auto' }}>
               <Alert severity="info" sx={{ mb: 4, borderRadius: 2 }}>
                 These settings control task permissions and approval workflows for this project.
               </Alert>
@@ -3045,6 +3100,26 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         Allow project members to create new tasks
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{ mb: 2, alignItems: 'flex-start' }}
+                />
+
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={projectSettings.enableMultiProjectLinks}
+                      onChange={(e) => setProjectSettings({ ...projectSettings, enableMultiProjectLinks: e.target.checked })}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        Enable multi-project linking
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Allow tasks to appear in other projects as linked references
                       </Typography>
                     </Box>
                   }
@@ -3172,6 +3247,66 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         Admin-created tasks require approval before being active
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{ mb: 2, alignItems: 'flex-start' }}
+                />
+
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={projectSettings.taskApprovalRequired}
+                      onChange={(e) => setProjectSettings({ ...projectSettings, taskApprovalRequired: e.target.checked })}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        Task approval required
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        When disabled, completed tasks will be auto-closed without requiring approval
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{ mb: 2, alignItems: 'flex-start' }}
+                />
+
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={projectSettings.autoApproveOwnerTasks}
+                      onChange={(e) => setProjectSettings({ ...projectSettings, autoApproveOwnerTasks: e.target.checked })}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        Auto-approve owner's completed tasks
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Tasks marked complete by project owner are automatically closed (bypass approval)
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{ mb: 2, alignItems: 'flex-start' }}
+                />
+
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={projectSettings.autoApproveAdminTasks}
+                      onChange={(e) => setProjectSettings({ ...projectSettings, autoApproveAdminTasks: e.target.checked })}
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        Auto-approve admin's completed tasks
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Tasks marked complete by project admins are automatically closed (bypass approval)
                       </Typography>
                     </Box>
                   }
@@ -3353,6 +3488,8 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
         userRole={userRole}
         currentUserId={user?.id}
         projectRole={project?.role}
+        workspaceProjects={workspaceProjects}
+        enableMultiProjectLinks={projectSettings.enableMultiProjectLinks}
       />
       
       {/* Delete Confirmation Dialog */}

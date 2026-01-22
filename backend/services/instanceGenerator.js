@@ -40,6 +40,7 @@ async function generateInstancesForSeries(seriesId, options = {}) {
     const result = { generated: 0, skipped: 0, moved: 0, errors: [] };
     
     const client = await pool.connect();
+    let lockAcquired = false;
     
     try {
         // Acquire advisory lock to prevent concurrent generation
@@ -47,8 +48,9 @@ async function generateInstancesForSeries(seriesId, options = {}) {
             'SELECT pg_try_advisory_lock($1)',
             [seriesId]
         );
-        
-        if (!lockResult.rows[0].pg_try_advisory_lock) {
+
+        lockAcquired = Boolean(lockResult.rows[0]?.pg_try_advisory_lock);
+        if (!lockAcquired) {
             result.errors.push('Series is being processed by another worker');
             return result;
         }
@@ -131,7 +133,13 @@ async function generateInstancesForSeries(seriesId, options = {}) {
         // Determine if we should prevent future instances
         const shouldPreventFuture = preventFuture !== null ? preventFuture : (series.prevent_future ?? true);
 
-        if (futureCount >= targetCount && !forceRegenerate && !shouldBackfill) {
+        if (
+            futureCount >= targetCount
+            && !forceRegenerate
+            && !shouldBackfill
+            && lastGeneratedAt
+            && lastGeneratedAt >= today
+        ) {
             await client.query('COMMIT');
             return result;
         }
@@ -277,9 +285,6 @@ async function generateInstancesForSeries(seriesId, options = {}) {
 
         await client.query('COMMIT');
 
-        // Release advisory lock
-        await client.query('SELECT pg_advisory_unlock($1)', [seriesId]);
-
         return result;
 
     } catch (error) {
@@ -288,6 +293,13 @@ async function generateInstancesForSeries(seriesId, options = {}) {
         console.error('Generation error for series', seriesId, error);
         return result;
     } finally {
+        if (lockAcquired) {
+            try {
+                await client.query('SELECT pg_advisory_unlock($1)', [seriesId]);
+            } catch (unlockError) {
+                console.error('Failed to release advisory lock for series', seriesId, unlockError);
+            }
+        }
         client.release();
     }
 }

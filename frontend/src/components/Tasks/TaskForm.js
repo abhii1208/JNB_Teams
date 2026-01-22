@@ -33,9 +33,11 @@ import {
 
 import AvatarGroup from '@mui/material/AvatarGroup';
 import CloseIcon from '@mui/icons-material/Close';
-import AddIcon from '@mui/icons-material/Add';
 import PersonIcon from '@mui/icons-material/Person';
 import RepeatIcon from '@mui/icons-material/Repeat';
+import AssignmentIndIcon from '@mui/icons-material/AssignmentInd';
+import ClearIcon from '@mui/icons-material/Clear';
+import GroupIcon from '@mui/icons-material/Group';
 
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -83,6 +85,11 @@ const getClientLabel = (client) => {
     return tail ? `${seriesNo} - ${tail}` : seriesNo;
   }
   return legalName || name || '';
+};
+
+const getProjectLabel = (project) => {
+  if (!project) return '';
+  return project.name || project.project_name || project.projectName || '';
 };
 
 const isMidnightUtcString = (value) => {
@@ -185,6 +192,8 @@ function TaskForm({
   primaryClient = null,
   userRole = null,
   currentUserId = null,
+  workspaceProjects = [],
+  enableMultiProjectLinks = false,
   onDelete,
   onCreateRecurring,
 }) {
@@ -204,6 +213,7 @@ function TaskForm({
     isRecurring: false,
     recurrencePattern: 'weekly',
     clientId: null,
+    linkedProjectIds: [],
     // Custom columns (Feature 1)
     category: '',
     section: '',
@@ -278,6 +288,26 @@ function TaskForm({
     return memberOptions.find((m) => String(m.id) === String(currentUserId)) || null;
   }, [memberOptions, currentUserId]);
 
+  const linkableProjects = useMemo(() => {
+    const list = Array.isArray(workspaceProjects) ? workspaceProjects : [];
+    return list.filter((project) => {
+      if (!project?.id) return false;
+      if (projectId && String(project.id) === String(projectId)) return false;
+      if (project.archived) return false;
+      return true;
+    });
+  }, [workspaceProjects, projectId]);
+
+  const linkedProjectIdSet = useMemo(() => {
+    const ids = Array.isArray(formData.linkedProjectIds) ? formData.linkedProjectIds : [];
+    return new Set(ids.map((id) => String(id)));
+  }, [formData.linkedProjectIds]);
+
+  const selectedLinkedProjects = useMemo(
+    () => linkableProjects.filter((project) => linkedProjectIdSet.has(String(project.id))),
+    [linkableProjects, linkedProjectIdSet]
+  );
+
   const collaboratorCandidates = useMemo(() => {
     const aid = formData.assignee?.id;
     const base = memberOptions.filter((m) => !aid || String(m.id) !== String(aid));
@@ -348,6 +378,9 @@ function TaskForm({
         isRecurring: false,
         recurrencePattern: 'weekly',
         clientId: task.client_id || task.clientId || null,
+        linkedProjectIds: Array.isArray(task.linked_project_ids || task.linkedProjectIds)
+          ? (task.linked_project_ids || task.linkedProjectIds)
+          : [],
         // Custom columns (Feature 1)
         category: task.category || '',
         section: task.section || '',
@@ -372,6 +405,7 @@ function TaskForm({
         isRecurring: false,
         recurrencePattern: 'weekly',
         clientId: null,
+        linkedProjectIds: [],
         // Custom columns (Feature 1)
         category: '',
         section: '',
@@ -572,6 +606,10 @@ function TaskForm({
       external_id: formData.externalId || null,
     };
 
+    if (enableMultiProjectLinks) {
+      taskData.linkedProjectIds = formData.linkedProjectIds || [];
+    }
+
     onSave(taskData);
     onClose();
   };
@@ -597,13 +635,10 @@ function TaskForm({
     },
   };
 
-  const tinyBtnSx = {
+  const iconBtnSx = {
     borderRadius: 2,
-    textTransform: 'none',
-    fontWeight: 900,
-    whiteSpace: 'nowrap',
-    px: 1.2,
-    minHeight: 40,
+    border: '1px solid rgba(148,163,184,0.35)',
+    bgcolor: '#fff',
   };
 
   return (
@@ -841,310 +876,355 @@ function TaskForm({
               </Box>
             </Section>
 
-            {/* ===================== ALLOCATION (compact + actions inline + quick team icons) ===================== */}
+            {/* ===================== ALLOCATION ===================== */}
             <Section title="Allocation">
               <Box
                 sx={{
                   display: 'grid',
-                  rowGap: 1.5,
-                  columnGap: 0.75,
-                  alignItems: 'center',
-                  // ✅ Smaller Assignee & Collaborators (half-ish), actions next, team icons last
+                  gap: 1.5,
                   gridTemplateColumns: {
                     xs: '1fr',
-                    md: 'minmax(168px, 224px) minmax(220px, 280px) minmax(156px, 204px) 1fr',
+                    md: enableMultiProjectLinks ? 'repeat(3, minmax(0, 1fr))' : 'repeat(2, minmax(0, 1fr))',
                   },
                 }}
               >
-                {/* Assignee (smaller width) */}
-                <Autocomplete
-                  disabled={!canEdit}
-                  options={memberOptions}
-                  getOptionLabel={(o) => getMemberLabel(o)}
-                  value={formData.assignee}
-                  onChange={handleAssigneeChange}
-                  isOptionEqualToValue={(a, b) => String(a?.id) === String(b?.id)}
-                  disablePortal
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Assignee"
-                      placeholder="Select"
-                      fullWidth
-                      size="small"
-                      sx={fieldSx}
-                      InputProps={{
-                        ...params.InputProps,
-                        startAdornment: (
-                          <>
-                            <Box sx={{ display: 'flex', alignItems: 'center', mr: 1 }}>
-                              <Avatar
-                                sx={{
-                                  width: 26,
-                                  height: 26,
-                                  fontSize: 11,
-                                  bgcolor: formData.assignee ? '#0f766e' : 'rgba(148,163,184,0.35)',
-                                }}
-                              >
-                                {formData.assignee ? getInitials(formData.assignee) : <PersonIcon sx={{ fontSize: 15 }} />}
-                              </Avatar>
-                            </Box>
-                            {params.InputProps.startAdornment}
-                          </>
-                        ),
-                      }}
-                    />
-                  )}
-                  renderOption={(props, option) => (
-                    <Box component="li" {...props} sx={{ display: 'flex', alignItems: 'center', gap: 1.1, py: 0.75 }}>
-                      <Avatar sx={{ width: 26, height: 26, fontSize: 11, bgcolor: '#0f766e' }}>
-                        {option.avatar || getInitials(option)}
-                      </Avatar>
-                      <Box sx={{ minWidth: 0 }}>
-                        <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap>
-                          {getMemberLabel(option)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary" noWrap>
-                          {option.email || ''}
-                        </Typography>
-                      </Box>
-                    </Box>
-                  )}
-                />
-
-                {/* ✅ Actions inline (next to assignee) */}
-                <Box sx={{ display: 'flex', gap: 1, justifyContent: { xs: 'flex-start', md: 'flex-start' } }}>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    disabled={!canEdit || !currentUserMember}
-                    onClick={() => {
-                      if (!currentUserMember) return;
-                      handleAssigneeChange(null, currentUserMember);
-                    }}
-                    sx={tinyBtnSx}
-                  >
-                    Assign to me
-                  </Button>
-                  <Button
-                    variant="text"
-                    size="small"
-                    disabled={!canEdit || !formData.assignee}
-                    onClick={() => handleAssigneeChange(null, null)}
-                    sx={{ ...tinyBtnSx, color: 'error.main' }}
-                  >
-                    Clear
-                  </Button>
-                </Box>
-
-                {/* Collaborators (smaller + clickable field opens picker) */}
-                <Box
-                  onClick={(e) => openCollaboratorsPicker(e.currentTarget)}
-                  sx={{
-                    cursor: canEdit ? 'pointer' : 'default',
-                    border: '1px solid rgba(148,163,184,0.35)',
-                    borderRadius: 2,
-                    bgcolor: 'rgba(15,118,110,0.03)',
-                    minHeight: 44,
-                    px: 1.15,
-                    py: 0.75,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 1,
-                    width: '100%',
-                    '&:hover': canEdit ? { borderColor: 'rgba(15,118,110,0.55)' } : undefined,
-                  }}
-                >
-                  <Box sx={{ minWidth: 0 }}>
-                    <Typography variant="caption" sx={{ fontWeight: 800, color: 'text.secondary', lineHeight: 1.05 }}>
-                      Collaborators
-                    </Typography>
-
-                    <Box sx={{ mt: 0.35, display: 'flex', alignItems: 'center', gap: 1 }}>
-                      {formData.collaborators?.length ? (
-                        <AvatarGroup
-                          max={5}
-                          sx={{
-                            '& .MuiAvatar-root': {
-                              width: 26,
-                              height: 26,
-                              fontSize: 11,
-                              bgcolor: '#0f766e',
-                            },
-                          }}
-                        >
-                          {formData.collaborators.map((m) => (
-                            <Avatar key={m.id} title={getMemberLabel(m)}>
-                              {m.avatar || getInitials(m)}
-                            </Avatar>
-                          ))}
-                        </AvatarGroup>
-                      ) : (
-                        <Typography variant="body2" color="text.secondary">
-                          Add collaborators
-                        </Typography>
-                      )}
-
-                      {formData.collaborators?.length ? (
-                        <Chip
-                          size="small"
-                          label={`${formData.collaborators.length}`}
-                          sx={{ height: 20, borderRadius: 999, fontWeight: 900 }}
-                        />
-                      ) : null}
-                    </Box>
-                  </Box>
-
-                  {/* + button still present but not required */}
-                  <Tooltip title="Add / remove collaborators">
-                    <span>
-                      <IconButton
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <Autocomplete
+                    disabled={!canEdit}
+                    options={memberOptions}
+                    getOptionLabel={(o) => getMemberLabel(o)}
+                    value={formData.assignee}
+                    onChange={handleAssigneeChange}
+                    isOptionEqualToValue={(a, b) => String(a?.id) === String(b?.id)}
+                    disablePortal
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Assignee"
+                        placeholder="Select"
+                        fullWidth
                         size="small"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openCollaboratorsPicker(e.currentTarget);
+                        sx={fieldSx}
+                        InputProps={{
+                          ...params.InputProps,
+                          startAdornment: (
+                            <>
+                              <Box sx={{ display: 'flex', alignItems: 'center', mr: 1 }}>
+                                <Avatar
+                                  sx={{
+                                    width: 26,
+                                    height: 26,
+                                    fontSize: 11,
+                                    bgcolor: formData.assignee ? '#0f766e' : 'rgba(148,163,184,0.35)',
+                                  }}
+                                >
+                                  {formData.assignee ? getInitials(formData.assignee) : <PersonIcon sx={{ fontSize: 15 }} />}
+                                </Avatar>
+                              </Box>
+                              {params.InputProps.startAdornment}
+                            </>
+                          ),
                         }}
-                        disabled={!canEdit}
-                        sx={{
-                          borderRadius: 2,
-                          border: '1px solid rgba(148,163,184,0.35)',
-                          bgcolor: '#fff',
-                        }}
-                      >
-                        <AddIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                </Box>
-
-                {/* ✅ Quick team icons (click to add/remove collaborator) */}
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 0.75,
-                    overflowX: 'auto',
-                    py: 0.25,
-                    px: 0.25,
-                  }}
-                >
-                  {memberOptions
-                    .filter((m) => !formData.assignee || String(m.id) !== String(formData.assignee.id))
-                    .slice(0, 12)
-                    .map((m) => {
-                      const selected = isCollaboratorSelected(m);
-                      return (
-                        <Tooltip key={m.id} title={getMemberLabel(m)} arrow>
-                          <span>
-                            <Avatar
-                              onClick={() => {
-                                if (!canEdit) return;
-                                toggleCollaborator(m);
-                              }}
-                              sx={{
-                                width: 28,
-                                height: 28,
-                                fontSize: 11,
-                                bgcolor: selected ? '#0f766e' : 'rgba(148,163,184,0.35)',
-                                color: selected ? '#fff' : 'rgba(0,0,0,0.75)',
-                                cursor: canEdit ? 'pointer' : 'default',
-                                border: selected ? '2px solid rgba(15,118,110,0.65)' : '2px solid transparent',
-                                transition: 'all 0.15s',
-                              }}
-                            >
-                              {m.avatar || getInitials(m)}
-                            </Avatar>
-                          </span>
-                        </Tooltip>
-                      );
-                    })}
-                  {memberOptions.length > 12 && (
-                    <Chip
-                      size="small"
-                      label={`+${memberOptions.length - 12}`}
-                      onClick={(e) => openCollaboratorsPicker(e.currentTarget)}
-                      sx={{
-                        height: 24,
-                        borderRadius: 999,
-                        fontWeight: 900,
-                        cursor: canEdit ? 'pointer' : 'default',
-                      }}
-                    />
-                  )}
-                </Box>
-
-                {/* Popover */}
-                <Popover
-                  open={collabPopoverOpen}
-                  anchorEl={collabAnchorEl}
-                  onClose={() => setCollabAnchorEl(null)}
-                  anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-                  transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-                  PaperProps={{ sx: { width: 440, borderRadius: 2, p: 1.25 } }}
-                >
-                  <Typography variant="subtitle2" sx={{ fontWeight: 900, mb: 1 }}>
-                    Select collaborators
-                  </Typography>
-
-                  <TextField
-                    size="small"
-                    fullWidth
-                    placeholder="Search members..."
-                    value={collabQuery}
-                    onChange={(e) => setCollabQuery(e.target.value)}
-                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                      />
+                    )}
+                    renderOption={(props, option) => (
+                      <Box component="li" {...props} sx={{ display: 'flex', alignItems: 'center', gap: 1.1, py: 0.75 }}>
+                        <Avatar sx={{ width: 26, height: 26, fontSize: 11, bgcolor: '#0f766e' }}>
+                          {option.avatar || getInitials(option)}
+                        </Avatar>
+                        <Box sx={{ minWidth: 0 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap>
+                            {getMemberLabel(option)}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" noWrap>
+                            {option.email || ''}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    )}
                   />
 
-                  <Box sx={{ mt: 1, maxHeight: 260, overflowY: 'auto' }}>
-                    <List dense disablePadding>
-                      {collaboratorCandidates.map((m) => {
-                        const selected = isCollaboratorSelected(m);
-                        return (
-                          <ListItemButton
-                            key={m.id}
-                            onClick={() => toggleCollaborator(m)}
-                            sx={{ borderRadius: 2, mb: 0.5 }}
-                          >
-                            <ListItemIcon sx={{ minWidth: 34 }}>
-                              <Checkbox edge="start" checked={selected} tabIndex={-1} disableRipple />
-                            </ListItemIcon>
+                  <Box sx={{ display: 'flex', gap: 0.75 }}>
+                    <Tooltip title="Assign to me">
+                      <span>
+                        <IconButton
+                          size="small"
+                          disabled={!canEdit || !currentUserMember}
+                          onClick={() => {
+                            if (!currentUserMember) return;
+                            handleAssigneeChange(null, currentUserMember);
+                          }}
+                          sx={iconBtnSx}
+                        >
+                          <AssignmentIndIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
 
-                            <Avatar sx={{ width: 28, height: 28, fontSize: 12, bgcolor: '#0f766e', mr: 1 }}>
-                              {m.avatar || getInitials(m)}
-                            </Avatar>
-
-                            <Box sx={{ minWidth: 0 }}>
-                              <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap>
-                                {getMemberLabel(m)}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary" noWrap>
-                                {m.email || ''}
-                              </Typography>
-                            </Box>
-                          </ListItemButton>
-                        );
-                      })}
-
-                      {!collaboratorCandidates.length && (
-                        <Typography variant="body2" color="text.secondary" sx={{ p: 1 }}>
-                          No members found
-                        </Typography>
-                      )}
-                    </List>
+                    <Tooltip title="Clear assignee">
+                      <span>
+                        <IconButton
+                          size="small"
+                          disabled={!canEdit || !formData.assignee}
+                          onClick={() => handleAssigneeChange(null, null)}
+                          sx={{ ...iconBtnSx, color: 'error.main' }}
+                        >
+                          <ClearIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
                   </Box>
+                </Box>
 
-                  <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
-                    <Button
-                      onClick={() => setCollabAnchorEl(null)}
-                      variant="contained"
-                      sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 900 }}
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <Box sx={{ position: 'relative', pt: 0.5 }}>
+                    <InputLabel
+                      shrink
+                      sx={{
+                        position: 'absolute',
+                        top: -8,
+                        left: 12,
+                        px: 0.5,
+                        bgcolor: '#fff',
+                        fontWeight: 700,
+                        fontSize: 12,
+                        lineHeight: 1,
+                        color: 'text.secondary',
+                        zIndex: 1,
+                      }}
                     >
-                      Done
-                    </Button>
+                      Collaborators
+                    </InputLabel>
+                    <Box
+                      onClick={(e) => openCollaboratorsPicker(e.currentTarget)}
+                      sx={{
+                        cursor: canEdit ? 'pointer' : 'default',
+                        border: '1px solid rgba(148,163,184,0.35)',
+                        borderRadius: 2,
+                        bgcolor: 'rgba(15,118,110,0.03)',
+                        minHeight: 44,
+                        px: 1.15,
+                        py: 0.75,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 1,
+                        width: '100%',
+                        '&:hover': canEdit ? { borderColor: 'rgba(15,118,110,0.55)' } : undefined,
+                      }}
+                    >
+                      <Box sx={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 1 }}>
+                        {formData.collaborators?.length ? (
+                          <AvatarGroup
+                            max={5}
+                            sx={{
+                              '& .MuiAvatar-root': {
+                                width: 26,
+                                height: 26,
+                                fontSize: 11,
+                                bgcolor: '#0f766e',
+                              },
+                            }}
+                          >
+                            {formData.collaborators.map((m) => (
+                              <Avatar key={m.id} title={getMemberLabel(m)}>
+                                {m.avatar || getInitials(m)}
+                              </Avatar>
+                            ))}
+                          </AvatarGroup>
+                        ) : (
+                          <Typography variant="body2" color="text.secondary">
+                            Add collaborators
+                          </Typography>
+                        )}
+
+                        {formData.collaborators?.length ? (
+                          <Chip
+                            size="small"
+                            label={`${formData.collaborators.length}`}
+                            sx={{ height: 20, borderRadius: 999, fontWeight: 900 }}
+                          />
+                        ) : null}
+                      </Box>
+                    </Box>
                   </Box>
-                </Popover>
+
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <Tooltip title="Add / remove collaborators">
+                      <span>
+                        <IconButton
+                          size="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openCollaboratorsPicker(e.currentTarget);
+                          }}
+                          disabled={!canEdit}
+                          sx={iconBtnSx}
+                        >
+                          <GroupIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.75,
+                        overflowX: 'auto',
+                        py: 0.25,
+                        px: 0.25,
+                        flex: 1,
+                      }}
+                    >
+                      {memberOptions
+                        .filter((m) => !formData.assignee || String(m.id) !== String(formData.assignee.id))
+                        .slice(0, 12)
+                        .map((m) => {
+                          const selected = isCollaboratorSelected(m);
+                          return (
+                            <Tooltip key={m.id} title={getMemberLabel(m)} arrow>
+                              <span>
+                                <Avatar
+                                  onClick={() => {
+                                    if (!canEdit) return;
+                                    toggleCollaborator(m);
+                                  }}
+                                  sx={{
+                                    width: 28,
+                                    height: 28,
+                                    fontSize: 11,
+                                    bgcolor: selected ? '#0f766e' : 'rgba(148,163,184,0.35)',
+                                    color: selected ? '#fff' : 'rgba(0,0,0,0.75)',
+                                    cursor: canEdit ? 'pointer' : 'default',
+                                    border: selected ? '2px solid rgba(15,118,110,0.65)' : '2px solid transparent',
+                                    transition: 'all 0.15s',
+                                  }}
+                                >
+                                  {m.avatar || getInitials(m)}
+                                </Avatar>
+                              </span>
+                            </Tooltip>
+                          );
+                        })}
+                      {memberOptions.length > 12 && (
+                        <Chip
+                          size="small"
+                          label={`+${memberOptions.length - 12}`}
+                          onClick={(e) => openCollaboratorsPicker(e.currentTarget)}
+                          sx={{
+                            height: 24,
+                            borderRadius: 999,
+                            fontWeight: 900,
+                            cursor: canEdit ? 'pointer' : 'default',
+                          }}
+                        />
+                      )}
+                    </Box>
+                  </Box>
+                </Box>
+
+                {enableMultiProjectLinks && (
+                  <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                    <Autocomplete
+                      multiple
+                      disabled={!canEdit}
+                      options={linkableProjects}
+                      value={selectedLinkedProjects}
+                      onChange={(_, value) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          linkedProjectIds: Array.isArray(value) ? value.map((project) => project.id) : [],
+                        }))
+                      }
+                      getOptionLabel={(o) => getProjectLabel(o)}
+                      isOptionEqualToValue={(a, b) => String(a?.id) === String(b?.id)}
+                      disablePortal
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label="Project links"
+                          placeholder="Select projects"
+                          fullWidth
+                          size="small"
+                          sx={fieldSx}
+                          helperText={!linkableProjects.length ? 'No other projects available to link.' : 'Primary project stays unchanged.'}
+                        />
+                      )}
+                    />
+                  </Box>
+                )}
               </Box>
+
+              <Popover
+                open={collabPopoverOpen}
+                anchorEl={collabAnchorEl}
+                onClose={() => setCollabAnchorEl(null)}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+                PaperProps={{ sx: { width: 440, borderRadius: 2, p: 1.25 } }}
+              >
+                <Typography variant="subtitle2" sx={{ fontWeight: 900, mb: 1 }}>
+                  Select collaborators
+                </Typography>
+
+                <TextField
+                  size="small"
+                  fullWidth
+                  placeholder="Search members..."
+                  value={collabQuery}
+                  onChange={(e) => setCollabQuery(e.target.value)}
+                  sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                />
+
+                <Box sx={{ mt: 1, maxHeight: 260, overflowY: 'auto' }}>
+                  <List dense disablePadding>
+                    {collaboratorCandidates.map((m) => {
+                      const selected = isCollaboratorSelected(m);
+                      return (
+                        <ListItemButton
+                          key={m.id}
+                          onClick={() => toggleCollaborator(m)}
+                          sx={{ borderRadius: 2, mb: 0.5 }}
+                        >
+                          <ListItemIcon sx={{ minWidth: 34 }}>
+                            <Checkbox edge="start" checked={selected} tabIndex={-1} disableRipple />
+                          </ListItemIcon>
+
+                          <Avatar sx={{ width: 28, height: 28, fontSize: 12, bgcolor: '#0f766e', mr: 1 }}>
+                            {m.avatar || getInitials(m)}
+                          </Avatar>
+
+                          <Box sx={{ minWidth: 0 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap>
+                              {getMemberLabel(m)}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" noWrap>
+                              {m.email || ''}
+                            </Typography>
+                          </Box>
+                        </ListItemButton>
+                      );
+                    })}
+
+                    {!collaboratorCandidates.length && (
+                      <Typography variant="body2" color="text.secondary" sx={{ p: 1 }}>
+                        No members found
+                      </Typography>
+                    )}
+                  </List>
+                </Box>
+
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
+                  <Button
+                    onClick={() => setCollabAnchorEl(null)}
+                    variant="contained"
+                    sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 900 }}
+                  >
+                    Done
+                  </Button>
+                </Box>
+              </Popover>
             </Section>
 
             {/* ===================== DETAILS ===================== */}

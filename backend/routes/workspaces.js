@@ -76,6 +76,55 @@ router.post('/', async (req, res) => {
   }
 });
 
+// Update workspace branding
+router.patch('/:workspaceId', checkWorkspaceMember, async (req, res) => {
+  if (req.workspaceRole !== 'Owner' && req.workspaceRole !== 'Admin') {
+    return res.status(403).json({ error: 'Only owners and admins can update workspace branding' });
+  }
+
+  const rawLogoUrl = req.body.logo_url ?? req.body.logoUrl;
+  if (rawLogoUrl === undefined) {
+    return res.status(400).json({ error: 'logo_url is required' });
+  }
+
+  let logoUrl = rawLogoUrl;
+  if (logoUrl === '' || logoUrl === null) {
+    logoUrl = null;
+  } else {
+    logoUrl = String(logoUrl).trim();
+    if (logoUrl.length > 500) {
+      return res.status(400).json({ error: 'logo_url is too long' });
+    }
+    if (logoUrl && !/^https?:\/\//i.test(logoUrl)) {
+      return res.status(400).json({ error: 'logo_url must start with http:// or https://' });
+    }
+  }
+
+  const workspaceId = parseInt(req.params.workspaceId, 10);
+  if (Number.isNaN(workspaceId)) {
+    return res.status(400).json({ error: 'Invalid workspace id' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE workspaces
+       SET logo_url = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+       RETURNING id, name, logo_url, updated_at`,
+      [logoUrl, workspaceId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Workspace not found' });
+    }
+
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Update workspace branding error:', err);
+    return res.status(500).json({ error: 'Failed to update workspace branding' });
+  }
+});
+
 // Get workspace members
 router.get('/:workspaceId/members', checkWorkspaceMember, async (req, res) => {
   try {

@@ -24,6 +24,15 @@ import {
   Avatar,
   Alert,
   Menu,
+  ToggleButtonGroup,
+  ToggleButton,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Tooltip,
 } from '@mui/material';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
 import SearchIcon from '@mui/icons-material/Search';
@@ -31,6 +40,9 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import WorkspacesIcon from '@mui/icons-material/Workspaces';
 import FolderIcon from '@mui/icons-material/Folder';
 import EmailIcon from '@mui/icons-material/Email';
+import ViewListIcon from '@mui/icons-material/ViewList';
+import ViewModuleIcon from '@mui/icons-material/ViewModule';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import { getWorkspaceMembers, addWorkspaceMember, updateWorkspaceMember, removeWorkspaceMember } from '../../apiClient';
 
 const roleColors = {
@@ -48,6 +60,34 @@ function TeamPage({ user, workspace }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [selectedMember, setSelectedMember] = useState(null);
   const [members, setMembers] = useState([]);
+  const [viewMode, setViewMode] = useState('list'); // 'list' or 'table'
+
+  // Export members to CSV
+  const handleExport = () => {
+    const headers = ['Name', 'Email', 'Role', 'Workspaces', 'Projects', 'Joined'];
+    const csvData = filteredMembers.map(member => {
+      const name = (member.first_name || '') + (member.last_name ? ' ' + member.last_name : '') || member.username || member.email;
+      return [
+        name,
+        member.email || '',
+        member.role || 'Member',
+        member.workspaces || 0,
+        member.projects || 0,
+        member.joinedDate || ''
+      ];
+    });
+    
+    const csvContent = [
+      headers.join(','),
+      ...csvData.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `team_members_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+  };
 
   useEffect(() => {
     const fetchMembers = async () => {
@@ -169,30 +209,136 @@ function TeamPage({ user, workspace }) {
         )}
       </Box>
 
-      {/* Search */}
-      <TextField
-        fullWidth
-        placeholder="Search team members..."
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start">
-              <SearchIcon sx={{ color: 'text.secondary' }} />
-            </InputAdornment>
-          ),
-        }}
-        sx={{
-          mb: 3,
-          maxWidth: 400,
-          '& .MuiOutlinedInput-root': {
-            borderRadius: 2,
-            backgroundColor: '#fff',
-          },
-        }}
-      />
+      {/* Search & View Controls */}
+      <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center', flexWrap: 'wrap' }}>
+        <TextField
+          placeholder="Search team members..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon sx={{ color: 'text.secondary' }} />
+              </InputAdornment>
+            ),
+          }}
+          sx={{
+            maxWidth: 400,
+            flex: 1,
+            '& .MuiOutlinedInput-root': {
+              borderRadius: 2,
+              backgroundColor: '#fff',
+            },
+          }}
+        />
+        
+        {/* View Mode Toggle */}
+        <ToggleButtonGroup
+          value={viewMode}
+          exclusive
+          onChange={(e, newMode) => newMode && setViewMode(newMode)}
+          size="small"
+          sx={{ ml: 'auto' }}
+        >
+          <ToggleButton value="list" sx={{ px: 1.5 }}>
+            <Tooltip title="List View">
+              <ViewModuleIcon />
+            </Tooltip>
+          </ToggleButton>
+          <ToggleButton value="table" sx={{ px: 1.5 }}>
+            <Tooltip title="Table View">
+              <ViewListIcon />
+            </Tooltip>
+          </ToggleButton>
+        </ToggleButtonGroup>
 
-      {/* Team Members List */}
+        {/* Export Button */}
+        <Button
+          variant="outlined"
+          startIcon={<FileDownloadIcon />}
+          onClick={handleExport}
+          sx={{ borderRadius: 2, textTransform: 'none' }}
+        >
+          Export
+        </Button>
+      </Box>
+
+      {/* Team Members Table View */}
+      {viewMode === 'table' && (
+        <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 3, mb: 3 }}>
+          <Table>
+            <TableHead>
+              <TableRow sx={{ bgcolor: '#f8fafc' }}>
+                <TableCell sx={{ fontWeight: 600 }}>Member</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Email</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Role</TableCell>
+                <TableCell sx={{ fontWeight: 600 }} align="center">Workspaces</TableCell>
+                <TableCell sx={{ fontWeight: 600 }} align="center">Projects</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Joined</TableCell>
+                <TableCell sx={{ width: 50 }}></TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredMembers.map((member) => {
+                const name = (member.first_name || '') + (member.last_name ? ' ' + member.last_name : '') || member.username || member.email;
+                const initials = (member.first_name ? member.first_name.charAt(0) : '') + (member.last_name ? member.last_name.charAt(0) : '');
+                const role = member.role || 'Member';
+                return (
+                  <TableRow key={member.id} hover sx={{ '&:hover': { bgcolor: '#f8fafc' } }}>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                        <Avatar sx={{ bgcolor: '#0f766e', width: 32, height: 32, fontSize: '0.8rem', fontWeight: 600 }}>
+                          {member.avatar || initials}
+                        </Avatar>
+                        <Box>
+                          <Typography variant="body2" fontWeight={600}>{name}</Typography>
+                          {member.id === user?.id && (
+                            <Chip label="You" size="small" sx={{ height: 18, fontSize: '0.65rem', ml: 0.5 }} />
+                          )}
+                        </Box>
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" color="text.secondary">{member.email}</Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Chip
+                        label={role}
+                        size="small"
+                        sx={{
+                          bgcolor: roleColors[role]?.bg || '#f3e8ff',
+                          color: roleColors[role]?.text || '#6b21a8',
+                          fontWeight: 500,
+                          fontSize: '0.7rem',
+                        }}
+                      />
+                    </TableCell>
+                    <TableCell align="center">
+                      <Typography variant="body2">{member.workspaces || 0}</Typography>
+                    </TableCell>
+                    <TableCell align="center">
+                      <Typography variant="body2">{member.projects || 0}</Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" color="text.secondary">{member.joinedDate || '-'}</Typography>
+                    </TableCell>
+                    <TableCell>
+                      {isOwnerOrAdmin && member.role !== 'Owner' && (
+                        <IconButton size="small" onClick={(e) => handleMenuOpen(e, member)}>
+                          <MoreVertIcon fontSize="small" />
+                        </IconButton>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+
+      {/* Team Members List View */}
+      {viewMode === 'list' && (
       <Paper
         elevation={0}
         sx={{
@@ -300,6 +446,7 @@ function TeamPage({ user, workspace }) {
           })}
         </List>
       </Paper>
+      )}
 
       {/* Context Menu */}
       <Menu
