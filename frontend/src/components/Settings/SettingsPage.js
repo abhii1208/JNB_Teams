@@ -86,7 +86,7 @@ function SettingsPage({ user, workspace }) {
   useEffect(() => {
     if (!workspace) return;
     setWorkspaceLogoUrl(workspace.logo_url || workspace.logoUrl || '');
-  }, [workspace?.id, workspace?.logo_url, workspace?.logoUrl]);
+  }, [workspace]);
 
   const [notifications, setNotifications] = useState({
     taskAssigned: true,
