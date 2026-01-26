@@ -63,11 +63,13 @@ import GroupWorkIcon from '@mui/icons-material/GroupWork';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import CloseIcon from '@mui/icons-material/Close';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import TaskForm from '../Tasks/TaskForm';
 import CustomColumnSettings from './CustomColumnSettings';
 import { differenceInCalendarDays, isValid } from 'date-fns';
 import { getTasks, createTask, updateTask, deleteTask, updateProject, getProjectMembers, getWorkspaceMembers, getWorkspaceProjects, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator, getProjectColumnSettings } from '../../apiClient';
 import { formatShortDate } from '../../utils/date';
+import { downloadCsv, sanitizeFilename } from '../../utils/csv';
 
 const roleColors = {
   'Owner': { bg: '#d1fae5', text: '#065f46' },
@@ -690,6 +692,71 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     + (showCategoryColumn ? 1 : 0)
     + (showSectionColumn ? 1 : 0)
     + (showClientColumn ? 1 : 0);
+
+  const handleExportTasks = () => {
+    const filtered = filterTasks(tasks);
+    const sorted = sortTasks(filtered);
+
+    const dateStamp = new Date().toISOString().split('T')[0];
+    const baseName = sanitizeFilename(`tasks_${project?.name || project?.id || 'project'}_${dateStamp}`);
+
+    const headers = [
+      'Task Name',
+      'Assignee',
+      'Collaborators',
+      'Stage',
+      'Status',
+      'Priority',
+      'Due Date',
+      'Target Date',
+      ...(showCategoryColumn ? ['Category'] : []),
+      ...(showSectionColumn ? ['Section'] : []),
+      ...(showClientColumn ? ['Client'] : []),
+      'Estimated Hours',
+      'Actual Hours',
+      'Completion %',
+      'Tags',
+      'External ID',
+      'Created By',
+      'Created Date',
+      'Notes',
+    ];
+
+    const rows = (sorted || []).map((task) => {
+      const collaborators = Array.isArray(task?.collaborators)
+        ? task.collaborators
+            .map((c) => c?.name || c?.email || c?.id)
+            .filter(Boolean)
+            .join('; ')
+        : '';
+
+      const tags = Array.isArray(task?.tags) ? task.tags.join('; ') : (task?.tags || '');
+
+      return [
+        task?.name || '',
+        task?.assignee_name || '',
+        collaborators,
+        task?.stage || '',
+        task?.status || '',
+        task?.priority || '',
+        formatShortDate(task?.due_date) || '',
+        formatShortDate(task?.target_date) || '',
+        ...(showCategoryColumn ? [task?.category || ''] : []),
+        ...(showSectionColumn ? [task?.section || ''] : []),
+        ...(showClientColumn ? [task?.client_name || task?.client_legal_name || ''] : []),
+        task?.estimated_hours ?? '',
+        task?.actual_hours ?? '',
+        task?.completion_percentage ?? '',
+        tags,
+        task?.external_id || '',
+        task?.created_by_name || '',
+        formatShortDate(task?.created_at) || '',
+        task?.notes || '',
+      ];
+    });
+
+    downloadCsv({ filename: baseName, headers, rows });
+  };
 
   const handleOpenTaskForm = (task = null, stage = null, status = null) => {
     // Explicitly set selectedTask to null if task is not provided (new task scenario)
@@ -1423,6 +1490,16 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       sx={{ textTransform: 'none', borderRadius: 2 }}
                     >
                       Save View
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<FileDownloadIcon />}
+                      onClick={handleExportTasks}
+                      disabled={tasks.length === 0}
+                      sx={{ textTransform: 'none', borderRadius: 2 }}
+                    >
+                      Export
                     </Button>
                   </Box>
 

@@ -8,6 +8,14 @@ const router = express.Router();
 
 const isMockMode = () => String(process.env.RAZORPAY_MOCK || '').toLowerCase() === 'true';
 
+const getMonthlyPriceOverridePaise = () => {
+  const raw = String(process.env.BILLING_MONTHLY_PRICE_PER_USER_PAISE_OVERRIDE || '').trim();
+  if (!raw) return null;
+  const val = Number.parseInt(raw, 10);
+  if (!Number.isFinite(val) || val < 0) return null;
+  return val;
+};
+
 const getRazorpayClient = () => {
   if (isMockMode()) return null;
 
@@ -35,7 +43,14 @@ router.get('/plans', async (_req, res) => {
      WHERE is_active = true
      ORDER BY monthly_price_per_user_paise ASC`
   );
-  res.json(result.rows);
+  const override = getMonthlyPriceOverridePaise();
+  if (override === null) return res.json(result.rows);
+  return res.json(
+    (result.rows || []).map((row) => ({
+      ...row,
+      monthly_price_per_user_paise: override,
+    }))
+  );
 });
 
 router.post('/checkout/order', async (req, res) => {
@@ -59,7 +74,8 @@ router.post('/checkout/order', async (req, res) => {
     return res.status(400).json({ error: `Seat limit exceeded (max ${plan.user_limit})` });
   }
 
-  const amount = seats * plan.monthly_price_per_user_paise;
+  const monthlyPricePerUserPaise = getMonthlyPriceOverridePaise() ?? plan.monthly_price_per_user_paise;
+  const amount = seats * monthlyPricePerUserPaise;
   const receipt = `sub_${plan.slug}_${req.userId}_${Date.now()}`;
 
   const razorpay = getRazorpayClient();
@@ -94,7 +110,7 @@ router.post('/checkout/order', async (req, res) => {
       name: plan.name,
       workspace_limit: plan.workspace_limit,
       user_limit: plan.user_limit,
-      monthly_price_per_user_paise: plan.monthly_price_per_user_paise,
+      monthly_price_per_user_paise: monthlyPricePerUserPaise,
     },
     seats,
   });

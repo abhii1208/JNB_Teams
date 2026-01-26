@@ -30,7 +30,9 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import { createClient, deactivateClient, getClientDetails, getClients, updateClient } from '../../apiClient';
+import { downloadCsv, sanitizeFilename } from '../../utils/csv';
 
 const statusColors = {
   Active: { bg: '#d1fae5', text: '#065f46' },
@@ -240,6 +242,26 @@ function ClientsPage({ workspace }) {
     }
   };
 
+  const handleExportClients = () => {
+    const dateStamp = new Date().toISOString().split('T')[0];
+    const baseName = sanitizeFilename(`clients_${workspace?.name || workspace?.id || 'workspace'}_${dateStamp}`);
+
+    downloadCsv({
+      filename: baseName,
+      headers: ['Name', 'Code', 'Group', 'Series No.', 'Status', 'Projects', 'Legal Name', 'GSTIN'],
+      rows: (filteredClients || []).map((client) => [
+        client?.name || '',
+        client?.code || '',
+        client?.client_group || '',
+        client?.series_no || '',
+        client?.status || '',
+        client?.project_count ?? 0,
+        client?.legal_name || '',
+        client?.gstin || '',
+      ]),
+    });
+  };
+
   return (
     <Box sx={{ p: 4 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
@@ -263,27 +285,37 @@ function ClientsPage({ workspace }) {
         )}
       </Box>
 
-      <TextField
-        fullWidth
-        placeholder="Search clients..."
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start">
-              <SearchIcon sx={{ color: 'text.secondary' }} />
-            </InputAdornment>
-          ),
-        }}
-        sx={{
-          mb: 3,
-          maxWidth: 420,
-          '& .MuiOutlinedInput-root': {
-            borderRadius: 2,
-            backgroundColor: '#fff',
-          },
-        }}
-      />
+      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap', mb: 3 }}>
+        <TextField
+          fullWidth
+          placeholder="Search clients..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon sx={{ color: 'text.secondary' }} />
+              </InputAdornment>
+            ),
+          }}
+          sx={{
+            maxWidth: 420,
+            '& .MuiOutlinedInput-root': {
+              borderRadius: 2,
+              backgroundColor: '#fff',
+            },
+          }}
+        />
+        <Button
+          variant="outlined"
+          startIcon={<FileDownloadIcon />}
+          onClick={handleExportClients}
+          disabled={loading || filteredClients.length === 0}
+          sx={{ textTransform: 'none', borderRadius: 2, height: 40 }}
+        >
+          Export
+        </Button>
+      </Box>
 
       <Paper elevation={0} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 3 }}>
         <Box sx={{ p: 3, borderBottom: '1px solid rgba(148, 163, 184, 0.2)' }}>

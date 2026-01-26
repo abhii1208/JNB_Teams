@@ -5,7 +5,6 @@ import {
   Card,
   CardContent,
   Chip,
-  Grid,
   IconButton,
   InputAdornment,
   TextField,
@@ -546,25 +545,37 @@ function ProjectList({ onSelectProject, workspace, user }) {
 
       {/* Projects Card Grid */}
       {viewMode === 'card' && (
-      <Grid container spacing={3}>
+      <Box
+        sx={{
+          display: 'grid',
+          gap: 3,
+          gridTemplateColumns: {
+            xs: '1fr',
+            sm: 'repeat(2, minmax(0, 1fr))',
+            md: 'repeat(3, minmax(0, 1fr))',
+            lg: 'repeat(5, minmax(0, 1fr))',
+          },
+        }}
+      >
         {filteredProjects.map((project) => (
-          <Grid item xs={12} md={6} lg={4} key={project.id}>
-            <Card
-              elevation={0}
-              onClick={() => handleSelectProject(project)}
-              sx={{
-                border: '1px solid rgba(148, 163, 184, 0.2)',
-                borderRadius: 3,
-                cursor: 'pointer',
-                height: '100%',
-                transition: 'all 0.2s ease',
-                '&:hover': {
-                  transform: 'translateY(-4px)',
-                  boxShadow: '0 12px 40px rgba(15, 23, 42, 0.1)',
-                  borderColor: '#0f766e',
-                },
-              }}
-            >
+          <Card
+            key={project.id}
+            elevation={0}
+            onClick={() => handleSelectProject(project)}
+            sx={{
+              border: '1px solid rgba(148, 163, 184, 0.2)',
+              borderRadius: 3,
+              cursor: 'pointer',
+              height: 360,
+              minWidth: 0,
+              transition: 'all 0.2s ease',
+              '&:hover': {
+                transform: 'translateY(-4px)',
+                boxShadow: '0 12px 40px rgba(15, 23, 42, 0.1)',
+                borderColor: '#0f766e',
+              },
+            }}
+          >
               <CardContent sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
                 {/* Header */}
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
@@ -622,7 +633,24 @@ function ProjectList({ onSelectProject, workspace, user }) {
                 </Box>
 
                 {/* Project Info */}
-                <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5, fontSize: '1rem' }}>
+                <Typography
+                  variant="h6"
+                  sx={{
+                    fontWeight: 600,
+                    mb: 0.5,
+                    fontSize: '1rem',
+                    lineHeight: 1.2,
+                    whiteSpace: 'normal',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflowWrap: 'anywhere',
+                    wordBreak: 'break-word',
+                    minHeight: '2.4em',
+                  }}
+                >
                   {project.name}
                 </Typography>
                 <Typography variant="caption" color="text.secondary" sx={{ mb: 1.5 }}>
@@ -663,9 +691,25 @@ function ProjectList({ onSelectProject, workspace, user }) {
 
                   return (
                     <Tooltip title={tooltipLabel} arrow>
-                      <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 2, minHeight: 26 }}>
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          gap: 0.5,
+                          flexWrap: 'nowrap',
+                          alignItems: 'center',
+                          overflow: 'hidden',
+                          minWidth: 0,
+                          mb: 2,
+                          minHeight: 26,
+                        }}
+                      >
                         {combinedClients.length === 0 ? (
-                          <Typography variant="caption" color="text.secondary">
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            noWrap
+                            sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}
+                          >
                             No client linked
                           </Typography>
                         ) : (
@@ -682,6 +726,14 @@ function ProjectList({ onSelectProject, workspace, user }) {
                                   fontWeight: 600,
                                   fontSize: '0.65rem',
                                   height: 22,
+                                  maxWidth: 140,
+                                  minWidth: 0,
+                                  '& .MuiChip-label': {
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    display: 'block',
+                                  },
                                 }}
                               />
                             )}
@@ -696,6 +748,14 @@ function ProjectList({ onSelectProject, workspace, user }) {
                                   fontSize: '0.65rem',
                                   height: 22,
                                   opacity: client.status === 'Inactive' ? 0.6 : 1,
+                                  maxWidth: 140,
+                                  minWidth: 0,
+                                  '& .MuiChip-label': {
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    display: 'block',
+                                  },
                                 }}
                               />
                             ))}
@@ -828,10 +888,9 @@ function ProjectList({ onSelectProject, workspace, user }) {
                   </Box>
                 </Box>
               </CardContent>
-            </Card>
-          </Grid>
+          </Card>
         ))}
-      </Grid>
+      </Box>
       )}
 
       {/* Context Menu */}
