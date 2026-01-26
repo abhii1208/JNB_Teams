@@ -3,10 +3,15 @@ import { CssBaseline, GlobalStyles, ThemeProvider, createTheme } from '@mui/mate
 import { SnackbarProvider } from 'notistack';
 import Auth from './Auth';
 import Landing from './Landing';
+import LandingPage from './pages/LandingPage';
 import PublicSharePage from './components/ShareLinks/PublicSharePage';
+import BillingCheckout from './components/Billing/BillingCheckout';
 
 function App() {
   const [userId, setUserId] = useState(null);
+  const [unauthScreen, setUnauthScreen] = useState('welcome'); // welcome | auth
+  const [authInitialStep, setAuthInitialStep] = useState('password-login');
+  const [pendingPurchase, setPendingPurchase] = useState(null); // { planSlug, seats }
   const shareSlug = useMemo(() => {
     if (typeof window === 'undefined') return null;
     const match = window.location.pathname.match(/^\/share\/([^/]+)/);
@@ -41,6 +46,23 @@ function App() {
     localStorage.removeItem('authToken');
     localStorage.removeItem('rememberedUserId');
     setUserId(null);
+    setUnauthScreen('welcome');
+  };
+
+  const showLogin = () => {
+    setAuthInitialStep('password-login');
+    setUnauthScreen('auth');
+  };
+
+  const showFreeTrial = () => {
+    setAuthInitialStep('signup');
+    setUnauthScreen('auth');
+  };
+
+  const startPaidCheckout = (planSlug, seats) => {
+    setPendingPurchase({ planSlug, seats });
+    setAuthInitialStep('password-login');
+    setUnauthScreen('auth');
   };
 
   const theme = useMemo(
@@ -83,9 +105,26 @@ function App() {
           <PublicSharePage slug={shareSlug} />
         ) : (
           userId ? (
+            <>
             <Landing userId={userId} onLogout={handleLogout} />
+              {pendingPurchase && (
+                <BillingCheckout
+                  planSlug={pendingPurchase.planSlug}
+                  seats={pendingPurchase.seats}
+                  onDone={() => setPendingPurchase(null)}
+                />
+              )}
+            </>
           ) : (
-            <Auth onLogin={handleLogin} />
+            unauthScreen === 'welcome' ? (
+              <LandingPage
+                onLoginClick={showLogin}
+                onFreeTrialClick={showFreeTrial}
+                onPaidPlanCheckout={startPaidCheckout}
+              />
+            ) : (
+              <Auth key={authInitialStep} onLogin={handleLogin} initialStep={authInitialStep} />
+            )
           )
         )}
       </SnackbarProvider>

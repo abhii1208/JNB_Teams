@@ -2,6 +2,39 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 
+async function getActiveSubscription(client, userId) {
+  try {
+    const result = await client.query(
+      `SELECT us.id, us.seats, sp.slug, sp.workspace_limit, sp.user_limit, us.current_period_end
+       FROM billing_user_subscriptions us
+       JOIN billing_plans sp ON sp.id = us.plan_id
+       WHERE us.user_id = $1
+         AND us.status = 'active'
+         AND us.current_period_end > NOW()
+       ORDER BY us.created_at DESC
+       LIMIT 1`,
+      [userId]
+    );
+    return result.rows[0] || null;
+  } catch (err) {
+    if (err && err.code === '42P01') return null; // billing tables not migrated yet
+    throw err;
+  }
+}
+
+async function getLegacyEntitlement(client, userId) {
+  const res = await client.query('SELECT license_type FROM users WHERE id = $1', [userId]);
+  const licenseType = res.rows[0]?.license_type || 'free';
+
+  if (licenseType === 'licensed_admin') {
+    return { workspace_limit: 3, seats: 100, source: 'legacy' };
+  }
+  if (licenseType === 'licensed_user') {
+    return { workspace_limit: 1, seats: 50, source: 'legacy' };
+  }
+  return { workspace_limit: 1, seats: 1, source: 'free' };
+}
+
 // Middleware to check if user is member of workspace
 async function checkWorkspaceMember(req, res, next) {
   try {
@@ -51,6 +84,28 @@ router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    const sub = await getActiveSubscription(client, req.userId);
+    const entitlement = sub || (await getLegacyEntitlement(client, req.userId));
+
+    if (entitlement) {
+      const ownedCountRes = await client.query(
+        `SELECT COUNT(*)::int AS count
+         FROM workspace_members
+         WHERE user_id = $1 AND role = 'Owner'`,
+        [req.userId]
+      );
+      const ownedCount = ownedCountRes.rows[0]?.count || 0;
+      if (ownedCount >= entitlement.workspace_limit) {
+        await client.query('ROLLBACK');
+        if (entitlement.source === 'free') {
+          return res.status(403).json({ error: 'Upgrade required to create additional workspaces.' });
+        }
+        return res.status(403).json({
+          error: `Workspace limit reached (${entitlement.workspace_limit}).`,
+        });
+      }
+    }
     
     const workspaceResult = await client.query(
       'INSERT INTO workspaces (name, created_by) VALUES ($1, $2) RETURNING *',
@@ -159,6 +214,27 @@ router.post('/:workspaceId/members', checkWorkspaceMember, async (req, res) => {
   }
 
   try {
+    // Enforce plan seat limits (best-effort; ignored if billing tables are not installed)
+    const sub = await getActiveSubscription(pool, req.userId);
+    const entitlement = sub || (await getLegacyEntitlement(pool, req.userId));
+    if (entitlement && entitlement.seats) {
+      const membersRes = await pool.query(
+        `SELECT COUNT(*)::int AS count
+         FROM workspace_members
+         WHERE workspace_id = $1`,
+        [req.params.workspaceId]
+      );
+      const memberCount = membersRes.rows[0]?.count || 0;
+      if (memberCount >= entitlement.seats) {
+        if (entitlement.source === 'free') {
+          return res.status(403).json({ error: 'Upgrade required to add team members.' });
+        }
+        return res.status(403).json({
+          error: `User limit reached (${entitlement.seats}).`,
+        });
+      }
+    }
+
     const userResult = await pool.query(
       'SELECT id FROM users WHERE LOWER(email) = LOWER($1)',
       [email]

@@ -24,6 +24,7 @@ import {
   DialogActions,
   Alert,
   Snackbar,
+  Stack,
   ToggleButton,
   ToggleButtonGroup,
   FormControlLabel,
@@ -55,6 +56,9 @@ import PeopleIcon from '@mui/icons-material/People';
 import BusinessIcon from '@mui/icons-material/Business';
 import PersonIcon from '@mui/icons-material/Person';
 import ViewColumnIcon from '@mui/icons-material/ViewColumn';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import StarIcon from '@mui/icons-material/Star';
+import StarBorderIcon from '@mui/icons-material/StarBorder';
 
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import InsertLinkIcon from '@mui/icons-material/InsertLink';
@@ -77,6 +81,7 @@ import {
   updateTask,
   getSavedViews,
   createSavedView,
+  updateSavedView,
   deleteSavedView,
   getFullUserPreferences,
   patchUserPreferences,
@@ -94,6 +99,7 @@ const PRIORITY_OPTIONS = ['Critical', 'High', 'Medium', 'Low'];
 const GROUP_BY_OPTIONS = [
   { id: null, label: 'None' },
   { id: 'project', label: 'Project' },
+  { id: 'stage', label: 'Stage' },
   { id: 'status', label: 'Status' },
   { id: 'priority', label: 'Priority' },
   { id: 'assignee', label: 'Assignee' },
@@ -223,6 +229,10 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
   
   // Grouping
   const [groupBy, setGroupBy] = useState(null);
+  const effectiveGroupBy = useMemo(() => {
+    if (viewType === 'board' && !groupBy) return 'stage';
+    return groupBy;
+  }, [groupBy, viewType]);
   
   // Column Visibility (Feature 2)
   const [visibleColumns, setVisibleColumns] = useState(DEFAULT_VISIBLE_COLUMNS);
@@ -279,8 +289,11 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
   const [savedViews, setSavedViews] = useState([]);
   const [activeView, setActiveView] = useState(null);
   const [showSaveViewDialog, setShowSaveViewDialog] = useState(false);
-  const [newViewName, setNewViewName] = useState('');
-  const [newViewVisibility, setNewViewVisibility] = useState('personal');
+  const [saveViewTarget, setSaveViewTarget] = useState('new'); // 'new' | viewId
+  const [saveViewName, setSaveViewName] = useState('');
+  const [saveViewVisibility, setSaveViewVisibility] = useState('personal'); // personal | team | org
+  const [hasPersistedPreferences, setHasPersistedPreferences] = useState(false);
+  const defaultViewAppliedRef = useRef(false);
   
   // UI state
   const [selectedTasks, setSelectedTasks] = useState([]);
@@ -474,6 +487,20 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
         const res = await getFullUserPreferences(workspace.id);
         if (res.data) {
           const prefs = res.data;
+          const hasAnyPrefs = Boolean(
+            prefs.last_view_type ||
+              prefs.sort_by ||
+              prefs.sort_order ||
+              (prefs.filters && Object.keys(prefs.filters).length) ||
+              (prefs.visible_columns && prefs.visible_columns.length) ||
+              (prefs.column_order && prefs.column_order.length) ||
+              ((prefs.group_by !== undefined && prefs.group_by !== null) ? true : false) ||
+              prefs.page_size ||
+              prefs.calendar_view_mode ||
+              prefs.calendar_date_mode ||
+              prefs.calendar_density
+          );
+          setHasPersistedPreferences(hasAnyPrefs);
           // Apply view type
           if (prefs.last_view_type) setViewType(prefs.last_view_type);
           // Apply visible columns
@@ -807,7 +834,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
   };
 
   // Saved View handlers
-  const handleApplyView = (view) => {
+  const handleApplyView = useCallback((view) => {
     if (!view.config) return;
     
     const config = view.config;
@@ -819,11 +846,51 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
     setActiveView(view);
     setSavedViewsAnchor(null);
     setPage(1);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (viewType !== 'board') return;
+    if (groupBy) return;
+    setGroupBy('stage');
+  }, [viewType, groupBy]);
+
+  useEffect(() => {
+    defaultViewAppliedRef.current = false;
+    setActiveView(null);
+  }, [workspace?.id]);
+
+  useEffect(() => {
+    if (!workspace?.id || !preferencesLoaded) return;
+    if (!savedViews.length) return;
+    if (defaultViewAppliedRef.current) return;
+    if (navigationState?.taskFilter) return;
+    if (activeView) {
+      defaultViewAppliedRef.current = true;
+      return;
+    }
+    if (hasPersistedPreferences) {
+      defaultViewAppliedRef.current = true;
+      return;
+    }
+
+    const defaultView = savedViews.find(
+      (view) => Boolean(view.is_default) && Number(view.user_id) === Number(user?.id)
+    );
+
+    defaultViewAppliedRef.current = true;
+    if (defaultView) handleApplyView(defaultView);
+  }, [
+    activeView,
+    handleApplyView,
+    hasPersistedPreferences,
+    navigationState?.taskFilter,
+    preferencesLoaded,
+    savedViews,
+    user?.id,
+    workspace?.id,
+  ]);
 
   const handleSaveView = async () => {
-    if (!newViewName.trim()) return;
-    
     const config = {
       viewType,
       filters,
@@ -833,20 +900,115 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
     };
     
     try {
-      const res = await createSavedView(workspace.id, {
-        name: newViewName.trim(),
-        view_type: viewType,
-        config,
-        visibility: newViewVisibility,
-      });
-      
-      setSavedViews(prev => [...prev, res.data]);
+      if (saveViewTarget === 'new') {
+        if (!saveViewName.trim()) return;
+        const res = await createSavedView(workspace.id, {
+          name: saveViewName.trim(),
+          view_type: viewType,
+          config,
+          visibility: saveViewVisibility,
+        });
+
+        setSavedViews(prev => [...prev, res.data]);
+        setActiveView(res.data);
+        setSnackbar({ open: true, message: 'View saved', severity: 'success' });
+      } else {
+        const targetId = Number.parseInt(saveViewTarget, 10);
+        const payload = {
+          config,
+          view_type: viewType,
+        };
+
+        if (saveViewName.trim()) payload.name = saveViewName.trim();
+        if (saveViewVisibility) payload.visibility = saveViewVisibility;
+
+        const res = await updateSavedView(targetId, payload);
+        setSavedViews((prev) => prev.map((v) => (v.id === targetId ? res.data : v)));
+        setActiveView(res.data);
+        setSnackbar({ open: true, message: 'View updated', severity: 'success' });
+      }
+
       setShowSaveViewDialog(false);
-      setNewViewName('');
-      setSnackbar({ open: true, message: 'View saved successfully', severity: 'success' });
     } catch (err) {
       console.error('Failed to save view:', err);
       setSnackbar({ open: true, message: 'Failed to save view', severity: 'error' });
+    }
+  };
+
+  const openSaveViewDialog = (target = 'new') => {
+    const editableViews = savedViews.filter((v) => Number(v.user_id) === Number(user?.id));
+    const safeTarget =
+      target !== 'new' && editableViews.some((v) => Number(v.id) === Number(target)) ? String(target) : 'new';
+
+    setSaveViewTarget(safeTarget);
+
+    if (safeTarget === 'new') {
+      setSaveViewName(activeView?.name ? `${activeView.name} (copy)` : '');
+      setSaveViewVisibility('personal');
+      return;
+    }
+
+    const selected = editableViews.find((v) => String(v.id) === String(safeTarget));
+    setSaveViewName(selected?.name || '');
+    const vis = selected?.visibility === 'organization' ? 'org' : selected?.visibility;
+    setSaveViewVisibility(vis || 'personal');
+  };
+
+  const formatViewVisibility = (visibility) => {
+    if (visibility === 'personal') return 'Personal';
+    if (visibility === 'team') return 'Team';
+    if (visibility === 'org' || visibility === 'organization') return 'Org';
+    return visibility || '';
+  };
+
+  const handleDuplicateView = async (view) => {
+    if (!workspace?.id || !view) return;
+
+    const config =
+      view.config || {
+        viewType,
+        filters,
+        sortBy,
+        sortOrder,
+        groupBy,
+      };
+
+    try {
+      const res = await createSavedView(workspace.id, {
+        name: `${view.name || 'View'} (copy)`,
+        view_type: view.view_type || config.viewType || viewType,
+        config,
+        visibility: 'personal',
+      });
+
+      setSavedViews((prev) => [...prev, res.data]);
+      setActiveView(res.data);
+      setSnackbar({ open: true, message: 'View duplicated', severity: 'success' });
+    } catch (err) {
+      console.error('Failed to duplicate view:', err);
+      setSnackbar({ open: true, message: 'Failed to duplicate view', severity: 'error' });
+    }
+  };
+
+  const handleSetDefaultView = async (view) => {
+    if (!view?.id) return;
+    if (Number(view.user_id) !== Number(user?.id)) return;
+
+    try {
+      const res = await updateSavedView(view.id, { is_default: true });
+      setSavedViews((prev) =>
+        prev.map((v) => {
+          if (Number(v.user_id) === Number(user?.id)) {
+            if (Number(v.id) === Number(view.id)) return res.data;
+            if (v.is_default) return { ...v, is_default: false };
+          }
+          return v;
+        })
+      );
+      setSnackbar({ open: true, message: 'Default view updated', severity: 'success' });
+    } catch (err) {
+      console.error('Failed to set default view:', err);
+      setSnackbar({ open: true, message: 'Failed to set default view', severity: 'error' });
     }
   };
 
@@ -930,10 +1092,14 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
     setShowTaskForm(true);
   };
 
-  const handleTaskCreated = () => {
+  const handleTaskSaved = () => {
     setShowTaskForm(false);
     setEditingTask(null);
-    fetchTasks();
+    if (viewType === 'calendar') {
+      fetchCalendarTasks();
+    } else {
+      fetchTasks();
+    }
   };
 
   // Handle task update for calendar drag & drop
@@ -1198,7 +1364,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
       {GROUP_BY_OPTIONS.map(option => (
         <MenuItem
           key={option.id || 'none'}
-          selected={groupBy === option.id}
+          selected={effectiveGroupBy === option.id}
           onClick={() => {
             setGroupBy(option.id);
             setGroupAnchor(null);
@@ -1233,24 +1399,51 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
             <ListItem
               key={view.id}
               secondaryAction={
-                <IconButton size="small" onClick={() => handleDeleteView(view.id)}>
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
+                <Stack direction="row" spacing={0.25} alignItems="center">
+                  <Tooltip title={Number(view.user_id) === Number(user?.id) ? 'Set default' : 'Only your views can be default'}>
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={Number(view.user_id) !== Number(user?.id)}
+                        onClick={() => handleSetDefaultView(view)}
+                      >
+                        {view.is_default ? <StarIcon fontSize="small" /> : <StarBorderIcon fontSize="small" />}
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title="Duplicate">
+                    <IconButton size="small" onClick={() => handleDuplicateView(view)}>
+                      <ContentCopyIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title={Number(view.user_id) === Number(user?.id) ? 'Delete' : 'Only your views can be deleted'}>
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={Number(view.user_id) !== Number(user?.id)}
+                        onClick={() => handleDeleteView(view.id)}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                </Stack>
               }
               disablePadding
             >
               <ListItemButton
                 selected={activeView?.id === view.id}
                 onClick={() => handleApplyView(view)}
+                sx={{ pr: 10 }}
               >
                 <ListItemIcon sx={{ minWidth: 32 }}>
                   {view.visibility === 'personal' && <PersonIcon fontSize="small" />}
                   {view.visibility === 'team' && <PeopleIcon fontSize="small" />}
-                  {view.visibility === 'organization' && <BusinessIcon fontSize="small" />}
+                  {(view.visibility === 'org' || view.visibility === 'organization') && <BusinessIcon fontSize="small" />}
                 </ListItemIcon>
                 <ListItemText
                   primary={view.name}
-                  secondary={view.visibility}
+                  secondary={formatViewVisibility(view.visibility)}
                   primaryTypographyProps={{ variant: 'body2' }}
                   secondaryTypographyProps={{ variant: 'caption' }}
                 />
@@ -1261,17 +1454,34 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
       </List>
       <Divider />
       <Box sx={{ p: 1 }}>
-        <Button
-          fullWidth
-          size="small"
-          startIcon={<SaveIcon />}
-          onClick={() => {
-            setSavedViewsAnchor(null);
-            setShowSaveViewDialog(true);
-          }}
-        >
-          Save Current View
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button
+            fullWidth
+            size="small"
+            startIcon={<SaveIcon />}
+            onClick={() => {
+              setSavedViewsAnchor(null);
+              openSaveViewDialog('new');
+              setShowSaveViewDialog(true);
+            }}
+          >
+            Save new
+          </Button>
+          <Button
+            fullWidth
+            size="small"
+            variant="outlined"
+            disabled={!activeView || Number(activeView.user_id) !== Number(user?.id)}
+            onClick={() => {
+              if (!activeView) return;
+              setSavedViewsAnchor(null);
+              openSaveViewDialog(String(activeView.id));
+              setShowSaveViewDialog(true);
+            }}
+          >
+            Update
+          </Button>
+        </Stack>
       </Box>
     </Popover>
   );
@@ -1389,22 +1599,48 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
 
   // Render save view dialog
   const renderSaveViewDialog = () => (
-    <Dialog open={showSaveViewDialog} onClose={() => setShowSaveViewDialog(false)} maxWidth="sm" fullWidth>
-      <DialogTitle>Save View</DialogTitle>
+    <Dialog open={showSaveViewDialog} onClose={() => setShowSaveViewDialog(false)} maxWidth="xs" fullWidth>
+      <DialogTitle sx={{ pb: 1 }}>Save view</DialogTitle>
       <DialogContent>
+        <FormControl fullWidth size="small" sx={{ mt: 1 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5 }}>
+            Save to
+          </Typography>
+          <Select
+            value={saveViewTarget}
+            onChange={(e) => {
+              const next = e.target.value;
+              openSaveViewDialog(next);
+            }}
+            size="small"
+          >
+            <MenuItem value="new">New view</MenuItem>
+            {savedViews
+              .filter((v) => Number(v.user_id) === Number(user?.id))
+              .map((v) => (
+                <MenuItem key={v.id} value={String(v.id)}>
+                  {v.name}
+                </MenuItem>
+              ))}
+          </Select>
+        </FormControl>
+
         <TextField
           autoFocus
-          label="View Name"
+          size="small"
+          label={saveViewTarget === 'new' ? 'New view name' : 'View name'}
           fullWidth
-          value={newViewName}
-          onChange={(e) => setNewViewName(e.target.value)}
-          sx={{ mt: 1, mb: 2 }}
+          value={saveViewName}
+          onChange={(e) => setSaveViewName(e.target.value)}
+          sx={{ mt: 2, mb: 2 }}
         />
-        <FormControl fullWidth>
-          <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5 }}>Visibility</Typography>
+        <FormControl fullWidth size="small">
+          <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5 }}>
+            Visibility
+          </Typography>
           <Select
-            value={newViewVisibility}
-            onChange={(e) => setNewViewVisibility(e.target.value)}
+            value={saveViewVisibility}
+            onChange={(e) => setSaveViewVisibility(e.target.value)}
             size="small"
           >
             <MenuItem value="personal">
@@ -1419,7 +1655,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
                 Team - Workspace members
               </Box>
             </MenuItem>
-            <MenuItem value="organization">
+            <MenuItem value="org">
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <BusinessIcon fontSize="small" />
                 Organization - Everyone
@@ -1429,9 +1665,16 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
         </FormControl>
       </DialogContent>
       <DialogActions>
-        <Button onClick={() => setShowSaveViewDialog(false)}>Cancel</Button>
-        <Button onClick={handleSaveView} variant="contained" disabled={!newViewName.trim()}>
-          Save View
+        <Button onClick={() => setShowSaveViewDialog(false)} size="small">
+          Cancel
+        </Button>
+        <Button
+          onClick={handleSaveView}
+          variant="contained"
+          size="small"
+          disabled={saveViewTarget === 'new' ? !saveViewName.trim() : false}
+        >
+          {saveViewTarget === 'new' ? 'Save' : 'Update'}
         </Button>
       </DialogActions>
     </Dialog>
@@ -1536,7 +1779,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
             startIcon={<GroupWorkIcon />}
             onClick={(e) => setGroupAnchor(e.currentTarget)}
           >
-            Group: {GROUP_BY_OPTIONS.find(o => o.id === groupBy)?.label || 'None'}
+            Group: {GROUP_BY_OPTIONS.find(o => o.id === effectiveGroupBy)?.label || 'None'}
           </Button>
 
           {/* Edit Columns Button (Feature 2) */}
@@ -1704,7 +1947,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
             {viewType === 'board' && (
               <TasksBoardView
                 tasks={tasks}
-                groupBy={groupBy || 'status'}
+                groupBy={effectiveGroupBy || 'stage'}
                 groupMetadata={groupMetadata}
                 onTaskClick={handleTaskClick}
                 onTaskEdit={handleTaskEdit}
@@ -1763,7 +2006,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
           projects={projects}
           workspace={workspace}
           user={user}
-          onSave={handleTaskCreated}
+          onSave={handleTaskSaved}
           selectedProject={selectedProject}
           onProjectSelect={setSelectedProject}
         />

@@ -345,6 +345,7 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
             borderLeft: `3px solid ${priorityColor}`,
             cursor: 'pointer',
             overflow: 'hidden',
+            minWidth: 0,
             opacity: task.status === 'Completed' ? 0.7 : 1,
             '&:hover': {
               bgcolor: '#e2e8f0',
@@ -355,6 +356,7 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
             variant="caption"
             sx={{
               flex: 1,
+              minWidth: 0,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -367,7 +369,7 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
             {task.name}
           </Typography>
           {/* Icons aligned to right */}
-          <Box sx={{ display: 'flex', gap: 0.25, alignItems: 'center' }}>
+          <Box sx={{ display: 'flex', gap: 0.25, alignItems: 'center', flexShrink: 0 }}>
             {isRecurring && (
               <RepeatIcon sx={{ fontSize: isCompact ? '0.75rem' : '0.85rem', color: '#7c3aed' }} />
             )}
@@ -399,6 +401,7 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
         onDrop={(e) => handleDrop(e, day)}
         sx={{
           flex: 1,
+          minWidth: 0,
           minHeight: minHeight,
           border: '1px solid #e2e8f0',
           borderRadius: 0,

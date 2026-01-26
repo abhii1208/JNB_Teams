@@ -36,6 +36,14 @@ const PRIORITY_COLUMNS = [
   { id: 'Low', label: 'Low', color: '#16a34a', bg: '#f0fdf4' },
 ];
 
+const STAGE_COLUMNS = [
+  { id: 'Planned', label: 'Planned', color: '#2563eb', bg: '#eff6ff' },
+  { id: 'In-process', label: 'In-process', color: '#0f766e', bg: '#f0fdfa' },
+  { id: 'Completed', label: 'Completed', color: '#16a34a', bg: '#dcfce7' },
+  { id: 'On-hold', label: 'On-hold', color: '#9333ea', bg: '#f3e8ff' },
+  { id: 'Dropped', label: 'Dropped', color: '#64748b', bg: '#f1f5f9' },
+];
+
 const norm = (v) => (v == null || v === '' ? 'ungrouped' : String(v));
 
 const getPriorityColor = (priority) => {
@@ -70,6 +78,7 @@ const isToday = (dateStr) => {
 
 const getGroupField = (groupBy) => {
   if (groupBy === 'status') return 'status';
+  if (groupBy === 'stage') return 'stage';
   if (groupBy === 'priority') return 'priority';
   if (groupBy === 'project') return 'project_id';
   if (groupBy === 'assignee') return 'assignee_id';
@@ -358,6 +367,13 @@ function TasksBoardView({
     // Status/Priority fixed columns
     if (groupBy === 'status') {
       return STATUS_COLUMNS.map((c) => ({
+        ...c,
+        id: norm(c.id),
+        rawId: c.id,
+      }));
+    }
+    if (groupBy === 'stage') {
+      return STAGE_COLUMNS.map((c) => ({
         ...c,
         id: norm(c.id),
         rawId: c.id,

@@ -279,3 +279,40 @@ You now have a **complete, production-ready UI** for a project management applic
 - ✅ Scalable component architecture
 
 **Ready for backend integration!** 🚀
+# Razorpay Billing (Pro / Business)
+
+## Plans
+- `pro`: ₹250 per user / month, 1 workspace, up to 50 users
+- `business`: ₹300 per user / month, 3 workspaces, up to 100 users
+
+## Required environment variables
+
+### Backend (`backend/.env`)
+- `RAZORPAY_KEY_ID` (public key)
+- `RAZORPAY_KEY_SECRET` (secret key)
+- `RAZORPAY_MOCK=true` (optional dev mode: bypasses real Razorpay checkout and auto-activates a subscription after “payment”)
+
+## Getting your Razorpay keys (Test Mode)
+1. Create a Razorpay account and open the Razorpay Dashboard.
+2. Enable **Test Mode** (toggle in the dashboard).
+3. Go to **Settings → API Keys**.
+4. Click **Generate Test Key**.
+5. Copy:
+   - **Key Id** (looks like `rzp_test_...`) → `RAZORPAY_KEY_ID`
+   - **Key Secret** (shown once) → `RAZORPAY_KEY_SECRET`
+6. Put them into `backend/.env` and restart the backend server.
+
+## Live keys (Production)
+Razorpay typically requires account verification/KYC before generating **Live** keys. When ready, switch to Live mode and generate **Live** keys (look like `rzp_live_...`). Never commit the secret to Git.
+
+### Frontend
+No key is required on the frontend; it is provided by the backend in `POST /api/billing/checkout/order`.
+
+## Backend endpoints
+- `GET /api/billing/plans` (auth)
+- `POST /api/billing/checkout/order` (auth) body: `{ plan_slug, seats }`
+- `POST /api/billing/checkout/verify` (auth) body: `{ razorpay_order_id, razorpay_payment_id, razorpay_signature }`
+
+## Database
+Run migrations to create billing tables and default plans:
+- `backend/migrations/031_subscription_billing.sql`

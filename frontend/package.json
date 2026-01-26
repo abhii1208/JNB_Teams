@@ -35,5 +35,12 @@
   },
   "devDependencies": {
     "eslint-plugin-react-hooks": "^7.0.1"
+  },
+  "overrides": {
+    "lodash": "4.17.23",
+    "@svgr/webpack": "6.5.1",
+    "@svgr/plugin-svgo": "6.5.1",
+    "svgo": "2.8.0",
+    "resolve-url-loader": "5.0.0"
   }
 }

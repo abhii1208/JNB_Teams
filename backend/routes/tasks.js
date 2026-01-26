@@ -15,6 +15,38 @@ const normalizeClientIdInput = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const inferStatusForStageChange = ({ newStage, currentStatus }) => {
+  if (!newStage) return null;
+  const status = typeof currentStatus === 'string' ? currentStatus : null;
+
+  if (newStage !== 'Completed' && (status === 'Pending Approval' || status === 'Rejected')) {
+    return 'Open';
+  }
+
+  if ((newStage === 'Planned' || newStage === 'In-process') && status === 'Closed') {
+    return 'Open';
+  }
+
+  if (newStage === 'Planned') return 'Open';
+
+  if (newStage === 'In-process') {
+    if (status === 'Pending Approval' || status === 'Closed') return 'Open';
+    return 'In Progress';
+  }
+
+  if (newStage === 'On-hold') {
+    if (status === 'Pending Approval') return 'Open';
+    return 'Blocked';
+  }
+
+  if (newStage === 'Completed') {
+    if (status === 'Closed' || status === 'auto_closed') return status;
+    return 'Pending Approval';
+  }
+
+  return null;
+};
+
 const normalizeLinkedProjectIds = (value) => {
   if (value === undefined) return { ids: null };
   if (value === null) return { ids: [] };
@@ -835,6 +867,7 @@ router.put('/bulk', async (req, res) => {
     const updateFields = [];
     const params = [task_ids];
     let paramIndex = 2;
+    let stageParamIndex = null;
 
     if (normalizedUpdates.status !== undefined) {
       updateFields.push(`status = $${paramIndex}`);
@@ -842,9 +875,26 @@ router.put('/bulk', async (req, res) => {
       paramIndex++;
     }
     if (normalizedUpdates.stage !== undefined) {
+      stageParamIndex = paramIndex;
       updateFields.push(`stage = $${paramIndex}`);
       params.push(normalizedUpdates.stage);
       paramIndex++;
+    }
+
+    const shouldAutoSyncStatus = normalizedUpdates.status === undefined
+      && normalizedUpdates.stage !== undefined
+      && stageParamIndex !== null;
+
+    if (shouldAutoSyncStatus) {
+      updateFields.push(`status = CASE
+        WHEN status = 'Closed' AND $${stageParamIndex} IN ('Planned', 'In-process') THEN 'Open'
+        WHEN status IN ('Pending Approval', 'Rejected') AND $${stageParamIndex} <> 'Completed' THEN 'Open'
+        WHEN $${stageParamIndex} = 'Planned' THEN 'Open'
+        WHEN $${stageParamIndex} = 'In-process' THEN CASE WHEN status IN ('Closed', 'auto_closed') THEN status ELSE 'In Progress' END
+        WHEN $${stageParamIndex} = 'On-hold' THEN CASE WHEN status IN ('Closed', 'auto_closed') THEN status ELSE 'Blocked' END
+        WHEN $${stageParamIndex} = 'Completed' THEN CASE WHEN status IN ('Closed', 'auto_closed') THEN status ELSE 'Pending Approval' END
+        ELSE status
+      END`);
     }
     if (normalizedUpdates.priority !== undefined) {
       updateFields.push(`priority = $${paramIndex}`);
@@ -1187,6 +1237,8 @@ router.put('/:taskId', async (req, res) => {
 
     const accessRes = await client.query(
       `SELECT t.id, t.project_id, t.assignee_id,
+        t.status,
+        t.stage,
         p.created_by AS project_owner,
         p.admins_can_approve,
         p.only_owner_approves,
@@ -1256,7 +1308,11 @@ router.put('/:taskId', async (req, res) => {
       });
     }
 
-    const requestedStatus = typeof status === 'string' ? status.toLowerCase() : null;
+    const inferredStatus = status === undefined
+      ? inferStatusForStageChange({ newStage: stage, currentStatus: access.status })
+      : null;
+    const effectiveStatus = status !== undefined ? status : inferredStatus;
+    const requestedStatus = typeof effectiveStatus === 'string' ? effectiveStatus.toLowerCase() : null;
     const isApprovalStatus = requestedStatus === 'closed' || requestedStatus === 'rejected';
     if (isApprovalStatus && !canApprove) {
       await client.query('ROLLBACK');
@@ -1275,7 +1331,7 @@ router.put('/:taskId', async (req, res) => {
     const taskApprovalRequired = projectSettings.task_approval_required ?? true;
 
     // Determine if task should be auto-approved
-    let finalStatus = status;
+    let finalStatus = effectiveStatus ?? null;
     let shouldAutoApprove = false;
     
     // If status is being set to Completed/Pending Approval and auto-approve conditions are met
@@ -1333,8 +1389,8 @@ router.put('/:taskId', async (req, res) => {
         name,
         description,
         assignee_id,
-        stage,
-        finalStatus || status,  // Use finalStatus which may be auto-approved
+        stage ?? null,
+        finalStatus ?? null,  // Use finalStatus which may be auto-approved
         priority,
         due_date,
         target_date,

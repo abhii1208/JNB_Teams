@@ -21,10 +21,10 @@ import { useSnackbar } from 'notistack';
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,}$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function Auth({ onLogin }) {
+function Auth({ onLogin, initialStep = 'password-login' }) {
   const { enqueueSnackbar } = useSnackbar();
 
-  const [step, setStep] = useState('password-login');
+  const [step, setStep] = useState(initialStep);
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState('');
   const [emailChecking, setEmailChecking] = useState(false);

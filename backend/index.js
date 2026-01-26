@@ -27,6 +27,7 @@ const adminRouter = require('./routes/admin');
 const clientsRouter = require('./routes/clients');
 const shareLinksRouter = require('./routes/shareLinks');
 const publicShareRouter = require('./routes/publicShare');
+const billingRouter = require('./routes/billing');
 
 // Import background jobs
 const { initializeJobs, startJobs, stopJobs } = require('./jobs');
@@ -416,6 +417,7 @@ app.use('/api/user-preferences', authenticateToken, userPreferencesRouter);
 app.use('/api/admin', authenticateToken, adminRouter);
 app.use('/api/clients', authenticateToken, clientsRouter);
 app.use('/api/share-links', authenticateToken, shareLinksRouter);
+app.use('/api/billing', authenticateToken, billingRouter);
 app.use('/public/share', publicShareRouter);
 
 const server = app.listen(PORT, () => {
