@@ -349,23 +349,22 @@ async function createTaskInstance(client, series, dueDate) {
     
     const priority = normalizePriority(template.priority) || 'Medium';
     const status = template.status || 'Open';
-    const stage = template.stage || 'Planned';
     
     const result = await client.query(`
         INSERT INTO tasks (
-            project_id, name, description,
-            priority, status, stage, due_date, occurrence_date,
+            workspace_id, project_id, title, description,
+            priority, status, due_date, occurrence_date,
             assignee_id, series_id, is_exception, generated_at, timezone,
             created_by
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), $12, $13)
         RETURNING id
     `, [
+        series.workspace_id,
         projectId,
         series.title,
         series.description || template.description || null,
         priority,
         status,
-        stage,
         dueDate,
         dueDate,
         assigneeId,

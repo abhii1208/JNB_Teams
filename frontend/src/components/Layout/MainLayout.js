@@ -12,7 +12,7 @@ import ActivityLogPage from '../Activity/ActivityLogPage';
 import NotificationsPage from '../Notifications/NotificationsPage';
 import NotificationToast from '../Notifications/NotificationToast';
 import useNotifications from '../Notifications/useNotifications';
-import RecurringPage from '../Recurring/RecurringPage';
+import RecurringPage from '../Recurring/RecurringPageV2';
 import TasksPage from '../Tasks/TasksPage';
 import AdminPage from '../Admin/AdminPage';
 import ClientsPage from '../Clients/ClientsPage';

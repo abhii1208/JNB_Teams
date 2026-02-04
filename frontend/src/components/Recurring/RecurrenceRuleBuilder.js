@@ -17,8 +17,7 @@ import {
     Alert,
     InputLabel,
     RadioGroup,
-    Radio,
-    Divider
+    Radio
 } from '@mui/material';
 import {
     getRuleSummary,
@@ -461,58 +460,6 @@ function RecurrenceRuleBuilder({ value, onChange, startDate, showPreview = true 
                                 </Box>
                             )}
 
-                            <Divider />
-
-                            {/* End Conditions */}
-                            <Typography variant="subtitle2">End condition (optional):</Typography>
-                            
-                            <Stack direction="row" spacing={2} alignItems="center">
-                                <FormControlLabel
-                                    control={
-                                        <Checkbox
-                                            checked={formState.useEndDate}
-                                            onChange={(e) => {
-                                                handleFormChange('useEndDate', e.target.checked);
-                                                if (e.target.checked) handleFormChange('useCount', false);
-                                            }}
-                                        />
-                                    }
-                                    label="End by date"
-                                />
-                                {formState.useEndDate && (
-                                    <TextField
-                                        type="date"
-                                        value={formState.endDate}
-                                        onChange={(e) => handleFormChange('endDate', e.target.value)}
-                                        size="small"
-                                    />
-                                )}
-                            </Stack>
-
-                            <Stack direction="row" spacing={2} alignItems="center">
-                                <FormControlLabel
-                                    control={
-                                        <Checkbox
-                                            checked={formState.useCount}
-                                            onChange={(e) => {
-                                                handleFormChange('useCount', e.target.checked);
-                                                if (e.target.checked) handleFormChange('useEndDate', false);
-                                            }}
-                                        />
-                                    }
-                                    label="End after occurrences"
-                                />
-                                {formState.useCount && (
-                                    <TextField
-                                        type="number"
-                                        value={formState.count}
-                                        onChange={(e) => handleFormChange('count', e.target.value)}
-                                        inputProps={{ min: 1, max: 999 }}
-                                        size="small"
-                                        sx={{ width: 100 }}
-                                    />
-                                )}
-                            </Stack>
                         </>
                     )}
                 </Box>

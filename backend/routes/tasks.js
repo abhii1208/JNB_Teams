@@ -218,14 +218,14 @@ router.get('/workspace/:workspaceId', async (req, res) => {
         u.first_name || ' ' || u.last_name as assignee_name,
         u.email as assignee_email,
         COALESCE(creator.first_name || ' ' || creator.last_name, 'Unknown User') as created_by_name,
-        rs.id as series_id,
-        rs.title as series_title,
+        rt.id as recurring_task_id,
+        rt.name as recurring_task_name,
         (SELECT json_agg(json_build_object('id', u2.id, 'name', u2.first_name || ' ' || u2.last_name, 'email', u2.email))
          FROM task_collaborators tc
          JOIN users u2 ON tc.user_id = u2.id
          WHERE tc.task_id = t.id) as collaborators,
         CASE WHEN t.due_date < CURRENT_DATE AND t.status NOT IN ('Closed', 'Completed') THEN true ELSE false END as is_overdue,
-        CASE WHEN rs.id IS NOT NULL THEN true ELSE false END as is_recurring,
+        CASE WHEN rt.id IS NOT NULL THEN true ELSE false END as is_recurring,
         (SELECT status FROM approvals WHERE task_id = t.id ORDER BY created_at DESC LIMIT 1) as latest_approval_status,
         COALESCE(
           (SELECT array_agg(DISTINCT tpl.project_id)
@@ -246,7 +246,7 @@ router.get('/workspace/:workspaceId', async (req, res) => {
       ) pc_client ON true
       LEFT JOIN users u ON t.assignee_id = u.id
       LEFT JOIN users creator ON t.created_by = creator.id
-      LEFT JOIN recurring_series rs ON t.series_id = rs.id
+      LEFT JOIN recurring_tasks rt ON t.recurring_task_id = rt.id
       WHERE p.workspace_id = $1 
         AND t.deleted_at IS NULL
         AND (
@@ -493,9 +493,9 @@ router.get('/workspace/:workspaceId', async (req, res) => {
     }
 
     if (recurring === 'true') {
-      query += ` AND t.series_id IS NOT NULL`;
+      query += ` AND t.recurring_task_id IS NOT NULL`;
     } else if (recurring === 'false') {
-      query += ` AND t.series_id IS NULL`;
+      query += ` AND t.recurring_task_id IS NULL`;
     }
 
     // Feature 4: Hide completed tasks
@@ -757,11 +757,11 @@ router.get('/workspace/:workspaceId/calendar', async (req, res) => {
         t.id, t.name, t.due_date, t.target_date, t.status, t.stage, t.priority, t.assignee_id,
         p.id as project_id, p.name as project_name,
         u.first_name || ' ' || u.last_name as assignee_name,
-        CASE WHEN rs.id IS NOT NULL THEN true ELSE false END as is_recurring
+        CASE WHEN rt.id IS NOT NULL THEN true ELSE false END as is_recurring
       FROM tasks t
       JOIN projects p ON t.project_id = p.id
       LEFT JOIN users u ON t.assignee_id = u.id
-      LEFT JOIN recurring_series rs ON t.series_id = rs.id
+      LEFT JOIN recurring_tasks rt ON t.recurring_task_id = rt.id
       WHERE (
         t.project_id = ANY($1::int[])
         OR EXISTS (

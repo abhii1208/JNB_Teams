@@ -1,6 +1,8 @@
 /**
  * Recurring Series Routes
  * CRUD operations for recurring task series
+ * 
+ * UPDATED: 2026-02-04 - Added health monitoring endpoint
  */
 
 const express = require('express');
@@ -33,6 +35,114 @@ const normalizeJsonInput = (value) => {
     }
     return value;
 };
+
+// ============================================
+// GET /recurring/health - Health monitoring endpoint
+// MEDIUM PRIORITY: Provides visibility into recurring module health
+// ============================================
+router.get('/health', async (req, res) => {
+    try {
+        const workspaceId = req.query.workspace_id;
+        const workspaceFilter = workspaceId ? 'AND workspace_id = $1' : '';
+        const params = workspaceId ? [workspaceId] : [];
+
+        // Get overall statistics
+        const statsQuery = await pool.query(`
+            SELECT 
+                COUNT(*) FILTER (WHERE deleted_at IS NULL AND paused_at IS NULL) as active_series,
+                COUNT(*) FILTER (WHERE deleted_at IS NULL AND paused_at IS NOT NULL) as paused_series,
+                COUNT(*) FILTER (WHERE generation_retry_count > 0 AND deleted_at IS NULL) as series_with_errors,
+                COUNT(*) FILTER (WHERE next_retry_at IS NOT NULL AND next_retry_at <= NOW() AND deleted_at IS NULL) as pending_retries,
+                MAX(last_generated_at) as latest_generation,
+                MIN(last_generated_at) FILTER (WHERE deleted_at IS NULL AND paused_at IS NULL) as oldest_generation
+            FROM recurring_series
+            WHERE 1=1 ${workspaceFilter}
+        `, params);
+
+        const stats = statsQuery.rows[0];
+
+        // Get series with generation lag (hasn't generated in >24 hours)
+        const lagQuery = await pool.query(`
+            SELECT id, title, last_generated_at, last_generation_error, generation_retry_count
+            FROM recurring_series
+            WHERE deleted_at IS NULL 
+            AND paused_at IS NULL
+            AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+            AND (
+                last_generated_at IS NULL 
+                OR last_generated_at < CURRENT_DATE - INTERVAL '1 day'
+            )
+            ${workspaceFilter}
+            ORDER BY last_generated_at NULLS FIRST
+            LIMIT 10
+        `, params);
+
+        // Get series with errors
+        const errorQuery = await pool.query(`
+            SELECT id, title, last_generation_error, generation_retry_count, next_retry_at
+            FROM recurring_series
+            WHERE deleted_at IS NULL 
+            AND generation_retry_count > 0
+            ${workspaceFilter}
+            ORDER BY generation_retry_count DESC
+            LIMIT 10
+        `, params);
+
+        // Get recent generation activity
+        const recentQuery = await pool.query(`
+            SELECT 
+                DATE(created_at) as date,
+                status,
+                COUNT(*) as count
+            FROM generation_log
+            WHERE created_at > NOW() - INTERVAL '7 days'
+            GROUP BY DATE(created_at), status
+            ORDER BY date DESC, status
+        `);
+
+        // Determine overall health status
+        let healthStatus = 'healthy';
+        let healthMessage = 'All recurring series are generating normally';
+
+        if (parseInt(stats.series_with_errors) > 0) {
+            healthStatus = 'warning';
+            healthMessage = `${stats.series_with_errors} series have generation errors`;
+        }
+        if (lagQuery.rows.length > 5) {
+            healthStatus = 'warning';
+            healthMessage = `${lagQuery.rows.length} series have generation lag`;
+        }
+        if (parseInt(stats.pending_retries) > 10) {
+            healthStatus = 'critical';
+            healthMessage = `${stats.pending_retries} series pending retry - possible system issue`;
+        }
+
+        res.json({
+            status: healthStatus,
+            message: healthMessage,
+            timestamp: new Date().toISOString(),
+            statistics: {
+                active_series: parseInt(stats.active_series) || 0,
+                paused_series: parseInt(stats.paused_series) || 0,
+                series_with_errors: parseInt(stats.series_with_errors) || 0,
+                pending_retries: parseInt(stats.pending_retries) || 0,
+                latest_generation: stats.latest_generation,
+                oldest_generation: stats.oldest_generation
+            },
+            series_with_lag: lagQuery.rows,
+            series_with_errors: errorQuery.rows,
+            generation_activity_7d: recentQuery.rows
+        });
+
+    } catch (err) {
+        console.error('Health check error:', err);
+        res.status(500).json({ 
+            status: 'error',
+            message: 'Failed to get health status',
+            error: err.message 
+        });
+    }
+});
 
 // ============================================
 // GET /recurring/presets - Get recurrence presets
@@ -275,7 +385,8 @@ router.post('/', async (req, res) => {
         reminder_offsets = [],
         generation_mode = 'auto',
         generate_past = true,
-        prevent_future = true,
+        prevent_future = false, // CHANGED: Default to false for reliable daily generation
+        look_ahead_days = 1, // NEW: Default to 1 day look-ahead
         category = null,
         color = '#0f766e'
     } = req.body;
@@ -308,8 +419,8 @@ router.post('/', async (req, res) => {
                 recurrence_rule, timezone, start_date, end_date,
                 auto_close_after_days, assignment_strategy, static_assignee_id,
                 requires_approval, approver_id, reminder_offsets, created_by,
-                generation_mode, generate_past, prevent_future, category, color
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+                generation_mode, generate_past, prevent_future, look_ahead_days, category, color
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
             RETURNING *
         `, [
             workspace_id,
@@ -331,6 +442,7 @@ router.post('/', async (req, res) => {
             generation_mode,
             generate_past,
             prevent_future,
+            look_ahead_days,
             category,
             color
         ]);
@@ -365,13 +477,12 @@ router.post('/', async (req, res) => {
         await client.query('COMMIT');
 
         // Generate initial instances only if auto mode
+        // SIMPLIFIED: Only generate TODAY's task on creation
         if (generation_mode === 'auto') {
             setImmediate(async () => {
                 try {
-                    await generateInstancesForSeries(series.id, {
-                        forceBackfill: generate_past,
-                        preventFuture: prevent_future
-                    });
+                    // Only create today's task (if today matches the pattern)
+                    await generateInstancesForSeries(series.id, { todayOnly: true });
                 } catch (err) {
                     console.error('Initial generation error:', err);
                 }
@@ -426,7 +537,7 @@ router.put('/:id', async (req, res) => {
             'title', 'description', 'template', 'recurrence_rule', 'timezone',
             'start_date', 'end_date', 'auto_close_after_days', 'assignment_strategy',
             'project_id', 'static_assignee_id', 'requires_approval', 'approver_id', 'reminder_offsets',
-            'generation_mode', 'generate_past', 'prevent_future', 'category', 'color'
+            'generation_mode', 'generate_past', 'prevent_future', 'look_ahead_days', 'category', 'color'
         ];
 
         for (const field of allowedFields) {
@@ -441,10 +552,13 @@ router.put('/:id', async (req, res) => {
                     value = normalizeOptionalDate(value);
                 }
 
-                if (['auto_close_after_days', 'static_assignee_id', 'approver_id', 'project_id'].includes(field)) {
+                if (['auto_close_after_days', 'static_assignee_id', 'approver_id', 'project_id', 'look_ahead_days'].includes(field)) {
                     value = normalizeOptionalInt(value);
                     if (field === 'auto_close_after_days' && value !== null && value <= 0) {
                         value = null;
+                    }
+                    if (field === 'look_ahead_days' && value !== null) {
+                        value = Math.max(0, Math.min(365, value)); // Clamp to valid range
                     }
                 }
 

@@ -8,8 +8,6 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  FormControlLabel,
-  Switch,
   Stack,
   Paper,
   Divider,
@@ -18,29 +16,22 @@ import {
   Autocomplete,
   Chip,
   Grid,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   IconButton,
   Tooltip,
   Avatar,
-  FormGroup,
 } from '@mui/material';
 import {
   Save as SaveIcon,
   ArrowBack as BackIcon,
-  ExpandMore as ExpandMoreIcon,
   HelpOutline as HelpOutlineIcon,
   Description as DescriptionIcon,
   Clear as ClearIcon,
-  Add as AddIcon,
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import apiClient from '../../apiClient';
 import RecurrenceRuleBuilder from './RecurrenceRuleBuilder';
-import { REMINDER_PRESETS } from '../../utils/recurrenceHelpers';
 
 /**
  * SeriesForm Component
@@ -112,11 +103,8 @@ function SeriesForm({ workspace, series, onCancel, onSuccess }) {
 
   // Compact UI helpers
   const [showDescription, setShowDescription] = useState(Boolean(series?.description));
-  const [showCustomReminder, setShowCustomReminder] = useState(false);
-  const [customReminderValue, setCustomReminderValue] = useState(15);
-  const [customReminderUnit, setCustomReminderUnit] = useState('minutes');
 
-  // Form state
+  // Form state - SIMPLIFIED: Only today's task created, 1 AM cron creates next day
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -130,13 +118,14 @@ function SeriesForm({ workspace, series, onCancel, onSuccess }) {
     assignment_strategy: 'static',
     static_assignee_id: '',
     rotation_members: [],
-    requires_approval: false,
+    requires_approval: false, // Hidden - always false
     approver_id: '',
     auto_close_after_days: '',
-    reminder_offsets: [],
-    generation_mode: 'auto', // 'auto' or 'manual'
-    generate_past: true,
-    prevent_future: true,
+    reminder_offsets: [{ value: 1, unit: 'days' }], // Default: 1 day before
+    generation_mode: 'auto', // Always auto
+    generate_past: false, // No backfill by default
+    prevent_future: true, // Only today's task created
+    look_ahead_days: 0, // Only today
     category: '',
     color: '#0f766e',
     template: {
@@ -215,13 +204,14 @@ function SeriesForm({ workspace, series, onCancel, onSuccess }) {
             assignment_strategy: s.assignment_strategy || 'static',
             static_assignee_id: s.static_assignee_id || '',
             rotation_members: s.rotation_members?.map((m) => m.user_id || m.id) || [],
-            requires_approval: s.requires_approval || false,
-            approver_id: s.approver_id || '',
+            requires_approval: false, // Always false - approval removed
+            approver_id: '',
             auto_close_after_days: s.auto_close_after_days || '',
-            reminder_offsets: reminderOffsets || [],
-            generation_mode: s.generation_mode || 'auto',
-            generate_past: s.generate_past !== false,
-            prevent_future: s.prevent_future !== false,
+            reminder_offsets: reminderOffsets?.length > 0 ? reminderOffsets : [{ value: 1, unit: 'days' }],
+            generation_mode: 'auto', // Always auto
+            generate_past: false, // No backfill
+            prevent_future: true, // Only today's task
+            look_ahead_days: 0,
             category: s.category || '',
             color: s.color || '#0f766e',
             template,
@@ -279,56 +269,10 @@ function SeriesForm({ workspace, series, onCancel, onSuccess }) {
     return memberOptions.find((m) => m.id === formData.static_assignee_id) || null;
   }, [formData.static_assignee_id, memberOptions]);
 
-  const selectedApprover = useMemo(() => {
-    if (!formData.approver_id) return null;
-    return memberOptions.find((m) => m.id === formData.approver_id) || null;
-  }, [formData.approver_id, memberOptions]);
-
   const selectedRotationMembers = useMemo(() => {
     const ids = new Set(formData.rotation_members || []);
     return memberOptions.filter((m) => ids.has(m.id));
   }, [formData.rotation_members, memberOptions]);
-
-  const presetSelected = useCallback(
-    (preset) =>
-      formData.reminder_offsets.some(
-        (r) => r.value === preset.value && r.unit === preset.unit
-      ),
-    [formData.reminder_offsets]
-  );
-
-  const toggleReminderPreset = useCallback(
-    (preset) => {
-      const isSelected = presetSelected(preset);
-      if (isSelected) {
-        handleChange(
-          'reminder_offsets',
-          formData.reminder_offsets.filter(
-            (r) => !(r.value === preset.value && r.unit === preset.unit)
-          )
-        );
-      } else {
-        handleChange('reminder_offsets', [
-          ...formData.reminder_offsets,
-          { value: preset.value, unit: preset.unit },
-        ]);
-      }
-    },
-    [formData.reminder_offsets, handleChange, presetSelected]
-  );
-
-  const addCustomReminder = useCallback(() => {
-    const valueNum = Number.parseInt(customReminderValue, 10);
-    if (!valueNum || valueNum < 1) return;
-
-    const newReminder = { value: valueNum, unit: customReminderUnit };
-    const exists = formData.reminder_offsets.some(
-      (r) => r.value === newReminder.value && r.unit === newReminder.unit
-    );
-    if (exists) return;
-
-    handleChange('reminder_offsets', [...formData.reminder_offsets, newReminder]);
-  }, [customReminderUnit, customReminderValue, formData.reminder_offsets, handleChange]);
 
   // Handle submit
   const handleSubmit = async (e) => {
@@ -379,13 +323,15 @@ function SeriesForm({ workspace, series, onCancel, onSuccess }) {
         end_date: formData.end_type === 'date' ? formData.end_date : null,
         project_id: formData.project_id || null,
         static_assignee_id: formData.static_assignee_id || null,
-        approver_id: formData.approver_id || null,
+        approver_id: null, // Approval removed
+        requires_approval: false, // Approval removed
         auto_close_after_days: formData.auto_close_after_days
           ? Number.parseInt(formData.auto_close_after_days, 10)
           : null,
-        generation_mode: formData.generation_mode,
-        generate_past: formData.generate_past,
-        prevent_future: formData.prevent_future,
+        generation_mode: 'auto', // Always auto
+        generate_past: false, // No backfill
+        prevent_future: true, // Only today's task
+        look_ahead_days: 0,
         category: formData.category || null,
         color: formData.color || '#0f766e',
       };
@@ -490,9 +436,10 @@ function SeriesForm({ workspace, series, onCancel, onSuccess }) {
               </Grid>
 
               <Grid item xs={12} md={4}>
-                <FormControl {...smallField}>
-                  <InputLabel>Project</InputLabel>
+                <FormControl fullWidth size="small">
+                  <InputLabel id="project-label">Project</InputLabel>
                   <Select
+                    labelId="project-label"
                     value={formData.project_id}
                     onChange={(e) => handleChange('project_id', e.target.value)}
                     label="Project"
@@ -559,9 +506,10 @@ function SeriesForm({ workspace, series, onCancel, onSuccess }) {
               </Grid>
 
               <Grid item xs={12} md={4}>
-                <FormControl {...smallField}>
-                  <InputLabel>Timezone</InputLabel>
+                <FormControl fullWidth size="small">
+                  <InputLabel id="timezone-label">Timezone</InputLabel>
                   <Select
+                    labelId="timezone-label"
                     value={formData.timezone}
                     onChange={(e) => handleChange('timezone', e.target.value)}
                     label="Timezone"
@@ -580,9 +528,10 @@ function SeriesForm({ workspace, series, onCancel, onSuccess }) {
               </Grid>
 
               <Grid item xs={12} md={4}>
-                <FormControl {...smallField}>
-                  <InputLabel>Category</InputLabel>
+                <FormControl fullWidth size="small">
+                  <InputLabel id="category-label">Category</InputLabel>
                   <Select
+                    labelId="category-label"
                     value={formData.category}
                     onChange={(e) => handleChange('category', e.target.value)}
                     label="Category"
@@ -663,7 +612,7 @@ function SeriesForm({ workspace, series, onCancel, onSuccess }) {
 
             {/* End condition row */}
             <Grid container spacing={1.5} alignItems="center">
-              <Grid item xs={12} md={4}>
+              <Grid item xs={12} sm={6} md={3}>
                 <FormControl {...smallField}>
                   <InputLabel>End</InputLabel>
                   <Select
@@ -678,7 +627,7 @@ function SeriesForm({ workspace, series, onCancel, onSuccess }) {
                 </FormControl>
               </Grid>
 
-              <Grid item xs={12} md={4}>
+              <Grid item xs={12} sm={6} md={3}>
                 {formData.end_type === 'date' ? (
                   <DatePicker
                     label="End Date"
@@ -712,19 +661,38 @@ function SeriesForm({ workspace, series, onCancel, onSuccess }) {
                     label="End Details"
                     value="—"
                     disabled
-                    helperText="No end condition"
                   />
                 )}
               </Grid>
 
-              <Grid item xs={12} md={4}>
-                <TextField
-                  {...smallField}
-                  label="Status / Stage"
-                  value={`${formData.template.status} • ${formData.template.stage}`}
-                  disabled
-                  helperText="Defaults shown below (Template section)"
-                />
+              <Grid item xs={12} sm={6} md={3}>
+                <FormControl {...smallField}>
+                  <InputLabel>Priority</InputLabel>
+                  <Select
+                    value={formData.template.priority}
+                    onChange={(e) => handleTemplateChange('priority', e.target.value)}
+                    label="Priority"
+                  >
+                    <MenuItem value="Critical">Critical</MenuItem>
+                    <MenuItem value="High">High</MenuItem>
+                    <MenuItem value="Medium">Medium</MenuItem>
+                    <MenuItem value="Low">Low</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              <Grid item xs={12} sm={6} md={3}>
+                <FormControl {...smallField}>
+                  <InputLabel>Stage</InputLabel>
+                  <Select
+                    value={formData.template.stage}
+                    onChange={(e) => handleTemplateChange('stage', e.target.value)}
+                    label="Stage"
+                  >
+                    <MenuItem value="Planned">Planned</MenuItem>
+                    <MenuItem value="In-process">In-process</MenuItem>
+                  </Select>
+                </FormControl>
               </Grid>
             </Grid>
 
@@ -814,290 +782,6 @@ function SeriesForm({ workspace, series, onCancel, onSuccess }) {
               </Grid>
             </Grid>
           </Paper>
-
-          {/* Collapsible: Approval */}
-          <Accordion defaultExpanded={false} sx={{ borderRadius: 2, overflow: 'hidden' }}>
-            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
-                <Typography sx={{ fontWeight: 800 }}>Approval</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
-                  Optional
-                </Typography>
-              </Box>
-            </AccordionSummary>
-            <AccordionDetails>
-              <Grid container spacing={1.5} alignItems="center">
-                <Grid item xs={12} md={4}>
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={formData.requires_approval}
-                        onChange={(e) => handleChange('requires_approval', e.target.checked)}
-                        size="small"
-                      />
-                    }
-                    label="Require approval"
-                  />
-                </Grid>
-
-                <Grid item xs={12} md={8}>
-                  {formData.requires_approval ? (
-                    <Autocomplete
-                      size="small"
-                      options={memberOptions}
-                      value={selectedApprover}
-                      onChange={(_, newValue) => handleChange('approver_id', newValue?.id || '')}
-                      isOptionEqualToValue={(opt, val) => opt.id === val.id}
-                      getOptionLabel={(opt) => opt.label || ''}
-                      renderOption={(props, option) => (
-                        <Box component="li" {...props} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Avatar sx={{ width: 24, height: 24 }}>
-                            {(option.first_name?.[0] || option.email?.[0] || 'M').toUpperCase()}
-                          </Avatar>
-                          <Typography variant="body2">{option.label}</Typography>
-                        </Box>
-                      )}
-                      renderInput={(params) => (
-                        <TextField {...params} label="Approver" placeholder="Select approver" />
-                      )}
-                    />
-                  ) : (
-                    <TextField size="small" fullWidth label="Approver" value="—" disabled />
-                  )}
-                </Grid>
-              </Grid>
-            </AccordionDetails>
-          </Accordion>
-
-          {/* Collapsible: Generation + Template */}
-          <Accordion defaultExpanded={false} sx={{ borderRadius: 2, overflow: 'hidden' }}>
-            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
-                <Typography sx={{ fontWeight: 800 }}>Generation & Template</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
-                  Recommended settings
-                </Typography>
-              </Box>
-            </AccordionSummary>
-            <AccordionDetails>
-              <Grid container spacing={1.5}>
-                <Grid item xs={12} md={6}>
-                  <FormControl {...smallField}>
-                    <InputLabel>Generation Mode</InputLabel>
-                    <Select
-                      value={formData.generation_mode}
-                      onChange={(e) => handleChange('generation_mode', e.target.value)}
-                      label="Generation Mode"
-                      size="small"
-                    >
-                      <MenuItem value="auto">🔄 Auto (on save)</MenuItem>
-                      <MenuItem value="manual">✋ Manual (generate later)</MenuItem>
-                    </Select>
-                  </FormControl>
-
-                  <Box sx={{ mt: 1 }}>
-                    <FormGroup row>
-                      <Tooltip title="Only create instances up to today (recommended)">
-                        <FormControlLabel
-                          control={
-                            <Switch
-                              checked={formData.prevent_future}
-                              onChange={(e) => handleChange('prevent_future', e.target.checked)}
-                              size="small"
-                            />
-                          }
-                          label={
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              Prevent future
-                              <HelpOutlineIcon sx={{ fontSize: 16, opacity: 0.7 }} />
-                            </Box>
-                          }
-                        />
-                      </Tooltip>
-
-                      <Tooltip title="If start date is before today, create instances for past dates">
-                        <FormControlLabel
-                          control={
-                            <Switch
-                              checked={formData.generate_past}
-                              onChange={(e) => handleChange('generate_past', e.target.checked)}
-                              size="small"
-                            />
-                          }
-                          label={
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              Backfill past
-                              <HelpOutlineIcon sx={{ fontSize: 16, opacity: 0.7 }} />
-                            </Box>
-                          }
-                        />
-                      </Tooltip>
-                    </FormGroup>
-                  </Box>
-                </Grid>
-
-                <Grid item xs={12} md={6}>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>
-                    Task Template
-                  </Typography>
-
-                  <Grid container spacing={1.5}>
-                    <Grid item xs={12} sm={6}>
-                      <FormControl {...smallField}>
-                        <InputLabel>Priority</InputLabel>
-                        <Select
-                          value={formData.template.priority}
-                          onChange={(e) => handleTemplateChange('priority', e.target.value)}
-                          label="Priority"
-                          size="small"
-                        >
-                          <MenuItem value="Critical">Critical</MenuItem>
-                          <MenuItem value="High">High</MenuItem>
-                          <MenuItem value="Medium">Medium</MenuItem>
-                          <MenuItem value="Low">Low</MenuItem>
-                        </Select>
-                      </FormControl>
-                    </Grid>
-
-                    <Grid item xs={12} sm={6}>
-                      <FormControl {...smallField}>
-                        <InputLabel>Stage</InputLabel>
-                        <Select
-                          value={formData.template.stage}
-                          onChange={(e) => handleTemplateChange('stage', e.target.value)}
-                          label="Stage"
-                          size="small"
-                        >
-                          <MenuItem value="Planned">Planned</MenuItem>
-                          <MenuItem value="In-process">In-process</MenuItem>
-                        </Select>
-                      </FormControl>
-                    </Grid>
-                  </Grid>
-                </Grid>
-              </Grid>
-            </AccordionDetails>
-          </Accordion>
-
-          {/* Collapsible: Advanced */}
-          <Accordion defaultExpanded={false} sx={{ borderRadius: 2, overflow: 'hidden' }}>
-            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
-                <Typography sx={{ fontWeight: 800 }}>Advanced</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
-                  Reminders, auto-close
-                </Typography>
-              </Box>
-            </AccordionSummary>
-            <AccordionDetails>
-              <Grid container spacing={1.5}>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    size="small"
-                    fullWidth
-                    type="number"
-                    label="Auto-close after (days)"
-                    value={formData.auto_close_after_days}
-                    onChange={(e) => handleChange('auto_close_after_days', e.target.value)}
-                    helperText="Automatically close overdue tasks after this many days"
-                    inputProps={{ min: 1 }}
-                  />
-                </Grid>
-
-                <Grid item xs={12} md={6}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
-                      Reminders
-                    </Typography>
-                    <Tooltip title="Click chips to add/remove reminders. Use Custom for a specific value.">
-                      <IconButton size="small">
-                        <HelpOutlineIcon fontSize="inherit" />
-                      </IconButton>
-                    </Tooltip>
-
-                    <Box sx={{ ml: 'auto' }}>
-                      <Button
-                        size="small"
-                        startIcon={<ClearIcon />}
-                        onClick={() => handleChange('reminder_offsets', [])}
-                      >
-                        Clear
-                      </Button>
-                    </Box>
-                  </Box>
-
-                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                    {REMINDER_PRESETS.map((preset, i) => {
-                      const isSelected = presetSelected(preset);
-                      return (
-                        <Chip
-                          key={i}
-                          size="small"
-                          label={preset.label}
-                          variant={isSelected ? 'filled' : 'outlined'}
-                          color={isSelected ? 'primary' : 'default'}
-                          onClick={() => toggleReminderPreset(preset)}
-                        />
-                      );
-                    })}
-
-                    <Chip
-                      size="small"
-                      icon={showCustomReminder ? <ClearIcon /> : <AddIcon />}
-                      label={showCustomReminder ? 'Hide custom' : 'Custom'}
-                      variant="outlined"
-                      onClick={() => setShowCustomReminder((v) => !v)}
-                    />
-                  </Stack>
-
-                  {showCustomReminder && (
-                    <Grid container spacing={1.25} sx={{ mt: 1 }}>
-                      <Grid item xs={6}>
-                        <TextField
-                          size="small"
-                          fullWidth
-                          type="number"
-                          label="Value"
-                          value={customReminderValue}
-                          onChange={(e) => setCustomReminderValue(e.target.value)}
-                          inputProps={{ min: 1, max: 999 }}
-                        />
-                      </Grid>
-                      <Grid item xs={6}>
-                        <FormControl fullWidth size="small">
-                          <InputLabel>Unit</InputLabel>
-                          <Select
-                            value={customReminderUnit}
-                            onChange={(e) => setCustomReminderUnit(e.target.value)}
-                            label="Unit"
-                          >
-                            <MenuItem value="minutes">minutes</MenuItem>
-                            <MenuItem value="hours">hours</MenuItem>
-                            <MenuItem value="days">days</MenuItem>
-                            <MenuItem value="weeks">weeks</MenuItem>
-                          </Select>
-                        </FormControl>
-                      </Grid>
-
-                      <Grid item xs={12}>
-                        <Button size="small" variant="outlined" onClick={addCustomReminder}>
-                          Add custom reminder
-                        </Button>
-                      </Grid>
-
-                      {formData.reminder_offsets?.length > 0 && (
-                        <Grid item xs={12}>
-                          <Typography variant="caption" color="text.secondary">
-                            Active: {formData.reminder_offsets.map((r) => `${r.value} ${r.unit}`).join(', ')}
-                          </Typography>
-                        </Grid>
-                      )}
-                    </Grid>
-                  )}
-                </Grid>
-              </Grid>
-            </AccordionDetails>
-          </Accordion>
         </Stack>
 
         {/* Bottom spacer */}

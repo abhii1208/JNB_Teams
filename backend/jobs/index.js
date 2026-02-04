@@ -1,10 +1,10 @@
 /**
  * Background Jobs Manager
- * Schedules and runs recurring task generation, reminders, and cleanup
+ * SIMPLIFIED: Daily task generation at 1 AM
  */
 
 const cron = require('node-cron');
-const { generateAllPendingInstances } = require('../services/instanceGenerator');
+const { generateAllDailyTasks } = require('../routes/recurringV2');
 const { sendPendingReminders } = require('./sendReminders');
 const { autoCloseOverdueTasks } = require('./autoCloseTasks');
 const approvalEscalation = require('./approvalEscalation');
@@ -34,19 +34,17 @@ function initializeJobs() {
     console.log('🕐 Initializing background jobs...');
 
     // ============================================
-    // 1. Instance Generation (Every 15 minutes)
+    // 1. DAILY TASK GENERATION (1:00 AM)
+    // SIMPLE: Create TODAY's recurring tasks
     // ============================================
-    jobs.generateInstances = cron.schedule('*/15 * * * *', async () => {
-        await runNoOverlap('generateInstances', async () => {
-            console.log('[Job] Running instance generation...');
+    jobs.dailyGeneration = cron.schedule('0 1 * * *', async () => {
+        await runNoOverlap('dailyGeneration', async () => {
+            console.log('[Job] Running 1 AM daily generation...');
             try {
-                const result = await generateAllPendingInstances({ batchSize: 50 });
-                console.log(`[Job] Generation complete: ${result.totalGenerated} created, ${result.processed} series processed`);
-                if (result.errors.length > 0) {
-                    console.warn('[Job] Generation errors:', result.errors);
-                }
+                const result = await generateAllDailyTasks();
+                console.log(`[Job] Daily generation complete: ${result.generated} created, ${result.skipped} skipped`);
             } catch (err) {
-                console.error('[Job] Instance generation failed:', err);
+                console.error('[Job] Daily generation failed:', err);
             }
         });
     }, { scheduled: false });
@@ -69,7 +67,7 @@ function initializeJobs() {
     }, { scheduled: false });
 
     // ============================================
-    // 3. Auto-close Overdue (Daily at 2 AM)
+    // 5. Auto-close Overdue (Daily at 2 AM)
     // ============================================
     jobs.autoClose = cron.schedule('0 2 * * *', async () => {
         await runNoOverlap('autoClose', async () => {
@@ -84,22 +82,7 @@ function initializeJobs() {
     }, { scheduled: false });
 
     // ============================================
-    // 4. Nightly Full Generation (Daily at 3 AM)
-    // ============================================
-    jobs.nightlyGeneration = cron.schedule('0 3 * * *', async () => {
-        await runNoOverlap('nightlyGeneration', async () => {
-            console.log('[Job] Running nightly full generation...');
-            try {
-                const result = await generateAllPendingInstances({ batchSize: 200 });
-                console.log(`[Job] Nightly generation: ${result.totalGenerated} created across ${result.processed} series`);
-            } catch (err) {
-                console.error('[Job] Nightly generation failed:', err);
-            }
-        });
-    }, { scheduled: false });
-
-    // ============================================
-    // 5. Approval Escalation (Every 15 minutes)
+    // 6. Approval Escalation (Every 15 minutes)
     // ============================================
     jobs.approvalEscalation = cron.schedule('*/15 * * * *', async () => {
         await runNoOverlap('approvalEscalation', async () => {
@@ -111,6 +94,26 @@ function initializeJobs() {
                 }
             } catch (err) {
                 console.error('[Job] Approval escalation failed:', err);
+            }
+        });
+    }, { scheduled: false });
+
+    // ============================================
+    // 7. Generation Log Cleanup (Weekly on Sunday at 4 AM)
+    // LOW PRIORITY FIX: Clean up old generation logs
+    // ============================================
+    jobs.logCleanup = cron.schedule('0 4 * * 0', async () => {
+        await runNoOverlap('logCleanup', async () => {
+            console.log('[Job] Running generation log cleanup...');
+            try {
+                const { pool } = require('../db');
+                const result = await pool.query('SELECT cleanup_old_generation_logs(30)');
+                const deleted = result.rows[0]?.cleanup_old_generation_logs || 0;
+                if (deleted > 0) {
+                    console.log(`[Job] Cleaned up ${deleted} old generation log entries`);
+                }
+            } catch (err) {
+                console.error('[Job] Log cleanup failed:', err);
             }
         });
     }, { scheduled: false });
@@ -143,9 +146,10 @@ async function runJobNow(jobName) {
     console.log(`🔧 Manually triggering job: ${jobName}`);
     
     switch (jobName) {
+        case 'dailyGeneration':
         case 'generateInstances':
-            return await runNoOverlap('generateInstances', async () => (
-                await generateAllPendingInstances({ batchSize: 50 })
+            return await runNoOverlap('dailyGeneration', async () => (
+                await generateAllPendingInstances({ batchSize: 200 })
             ));
         case 'sendReminders':
             return await runNoOverlap('sendReminders', async () => (
@@ -155,12 +159,8 @@ async function runJobNow(jobName) {
             return await runNoOverlap('autoClose', async () => (
                 await autoCloseOverdueTasks()
             ));
-        case 'nightlyGeneration':
-            return await runNoOverlap('nightlyGeneration', async () => (
-                await generateAllPendingInstances({ batchSize: 200 })
-            ));
         default:
-            throw new Error(`Unknown job: ${jobName}`);
+            throw new Error(`Unknown job: ${jobName}. Available: dailyGeneration, sendReminders, autoClose`);
     }
 }
 
