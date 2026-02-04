@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
+const notificationService = require('../services/notificationService');
 
 const normalizeNumericInput = (value) => {
   if (value === '' || value === null || value === undefined) return null;
@@ -216,7 +217,7 @@ router.get('/workspace/:workspaceId', async (req, res) => {
         COALESCE(t.client_id, pc_client.client_id) as client_id,
         u.first_name || ' ' || u.last_name as assignee_name,
         u.email as assignee_email,
-        creator.first_name || ' ' || creator.last_name as created_by_name,
+        COALESCE(creator.first_name || ' ' || creator.last_name, 'Unknown User') as created_by_name,
         rs.id as series_id,
         rs.title as series_title,
         (SELECT json_agg(json_build_object('id', u2.id, 'name', u2.first_name || ' ' || u2.last_name, 'email', u2.email))
@@ -725,7 +726,7 @@ async function getGroupMetadata(workspaceId, projectIds, groupBy, pool) {
 // Get tasks for calendar view (date-based)
 router.get('/workspace/:workspaceId/calendar', async (req, res) => {
   const { workspaceId } = req.params;
-  const { start_date, end_date, projects } = req.query;
+  const { start_date, end_date, projects, assignee } = req.query;
 
   try {
     // Get user's accessible projects
@@ -748,9 +749,12 @@ router.get('/workspace/:workspaceId/calendar', async (req, res) => {
       return res.json([]);
     }
 
-    const result = await pool.query(`
+    const params = [projectIds, start_date, end_date];
+    let paramIndex = 4;
+
+    let query = `
       SELECT 
-        t.id, t.name, t.due_date, t.target_date, t.status, t.stage, t.priority,
+        t.id, t.name, t.due_date, t.target_date, t.status, t.stage, t.priority, t.assignee_id,
         p.id as project_id, p.name as project_name,
         u.first_name || ' ' || u.last_name as assignee_name,
         CASE WHEN rs.id IS NOT NULL THEN true ELSE false END as is_recurring
@@ -772,8 +776,31 @@ router.get('/workspace/:workspaceId/calendar', async (req, res) => {
           (t.due_date >= $2 AND t.due_date <= $3)
           OR (t.target_date >= $2 AND t.target_date <= $3)
         )
-      ORDER BY t.due_date ASC NULLS LAST
-    `, [projectIds, start_date, end_date]);
+    `;
+
+    if (assignee && assignee !== 'all') {
+      if (assignee === 'me') {
+        query += ` AND t.assignee_id = $${paramIndex}`;
+        params.push(req.userId);
+        paramIndex++;
+      } else if (assignee === 'unassigned') {
+        query += ' AND t.assignee_id IS NULL';
+      } else {
+        const assigneeIds = String(assignee)
+          .split(',')
+          .map(Number)
+          .filter((id) => Number.isInteger(id) && id > 0);
+        if (assigneeIds.length > 0) {
+          query += ` AND t.assignee_id = ANY($${paramIndex}::int[])`;
+          params.push(assigneeIds);
+          paramIndex++;
+        }
+      }
+    }
+
+    query += ' ORDER BY t.due_date ASC NULLS LAST';
+
+    const result = await pool.query(query, params);
 
     res.json(result.rows);
   } catch (err) {
@@ -870,13 +897,13 @@ router.put('/bulk', async (req, res) => {
     let stageParamIndex = null;
 
     if (normalizedUpdates.status !== undefined) {
-      updateFields.push(`status = $${paramIndex}`);
+      updateFields.push(`status = $${paramIndex}::text`);
       params.push(normalizedUpdates.status);
       paramIndex++;
     }
     if (normalizedUpdates.stage !== undefined) {
       stageParamIndex = paramIndex;
-      updateFields.push(`stage = $${paramIndex}`);
+      updateFields.push(`stage = $${paramIndex}::text`);
       params.push(normalizedUpdates.stage);
       paramIndex++;
     }
@@ -887,32 +914,32 @@ router.put('/bulk', async (req, res) => {
 
     if (shouldAutoSyncStatus) {
       updateFields.push(`status = CASE
-        WHEN status = 'Closed' AND $${stageParamIndex} IN ('Planned', 'In-process') THEN 'Open'
-        WHEN status IN ('Pending Approval', 'Rejected') AND $${stageParamIndex} <> 'Completed' THEN 'Open'
-        WHEN $${stageParamIndex} = 'Planned' THEN 'Open'
-        WHEN $${stageParamIndex} = 'In-process' THEN CASE WHEN status IN ('Closed', 'auto_closed') THEN status ELSE 'In Progress' END
-        WHEN $${stageParamIndex} = 'On-hold' THEN CASE WHEN status IN ('Closed', 'auto_closed') THEN status ELSE 'Blocked' END
-        WHEN $${stageParamIndex} = 'Completed' THEN CASE WHEN status IN ('Closed', 'auto_closed') THEN status ELSE 'Pending Approval' END
+        WHEN status = 'Closed' AND $${stageParamIndex}::text IN ('Planned', 'In-process') THEN 'Open'
+        WHEN status IN ('Pending Approval', 'Rejected') AND $${stageParamIndex}::text <> 'Completed' THEN 'Open'
+        WHEN $${stageParamIndex}::text = 'Planned' THEN 'Open'
+        WHEN $${stageParamIndex}::text = 'In-process' THEN CASE WHEN status IN ('Closed', 'auto_closed') THEN status ELSE 'In Progress' END
+        WHEN $${stageParamIndex}::text = 'On-hold' THEN CASE WHEN status IN ('Closed', 'auto_closed') THEN status ELSE 'Blocked' END
+        WHEN $${stageParamIndex}::text = 'Completed' THEN CASE WHEN status IN ('Closed', 'auto_closed') THEN status ELSE 'Pending Approval' END
         ELSE status
       END`);
     }
     if (normalizedUpdates.priority !== undefined) {
-      updateFields.push(`priority = $${paramIndex}`);
+      updateFields.push(`priority = $${paramIndex}::text`);
       params.push(normalizedUpdates.priority);
       paramIndex++;
     }
     if (normalizedUpdates.assignee_id !== undefined) {
-      updateFields.push(`assignee_id = $${paramIndex}`);
+      updateFields.push(`assignee_id = $${paramIndex}::int`);
       params.push(normalizedUpdates.assignee_id);
       paramIndex++;
     }
     if (normalizedUpdates.due_date !== undefined) {
-      updateFields.push(`due_date = $${paramIndex}`);
+      updateFields.push(`due_date = $${paramIndex}::date`);
       params.push(normalizedUpdates.due_date);
       paramIndex++;
     }
     if (normalizedUpdates.target_date !== undefined) {
-      updateFields.push(`target_date = $${paramIndex}`);
+      updateFields.push(`target_date = $${paramIndex}::date`);
       params.push(normalizedUpdates.target_date);
       paramIndex++;
     }
@@ -958,7 +985,7 @@ router.get('/project/:projectId', async (req, res) => {
         COALESCE(t.client_id, pc_client.client_id) as client_id,
         u.first_name || ' ' || u.last_name as assignee_name,
         u.username as assignee_username,
-        creator.first_name || ' ' || creator.last_name as created_by_name,
+        COALESCE(creator.first_name || ' ' || creator.last_name, 'Unknown User') as created_by_name,
         COALESCE(
           (SELECT array_agg(DISTINCT tpl.project_id)
            FROM task_project_links tpl
@@ -980,7 +1007,7 @@ router.get('/project/:projectId', async (req, res) => {
         LIMIT 1
       ) pc_client ON true
       LEFT JOIN users u ON t.assignee_id = u.id
-      JOIN users creator ON t.created_by = creator.id
+      LEFT JOIN users creator ON t.created_by = creator.id
       WHERE (
         t.project_id = $1
         OR EXISTS (
@@ -1002,6 +1029,11 @@ router.get('/project/:projectId', async (req, res) => {
 
 // Create task
 router.post('/', async (req, res) => {
+  console.log('[Task Create] Request received:', {
+    userId: req.userId,
+    body: req.body,
+  });
+  
   const {
     name,
     description,
@@ -1047,10 +1079,17 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: linkedProjectIdsError });
   }
 
-  const client = await pool.connect();
+  let client;
   try {
+    console.log('[Task Create] Getting database connection...');
+    client = await pool.connect();
+    console.log('[Task Create] Got database connection');
+    
+    console.log('[Task Create] Beginning transaction...');
     await client.query('BEGIN');
+    console.log('[Task Create] Transaction started');
 
+    console.log('[Task Create] Fetching project metadata for project_id:', project_id);
     const projectMetaRes = await client.query(
       `SELECT p.workspace_id,
               p.enable_multi_project_links,
@@ -1063,6 +1102,7 @@ router.post('/', async (req, res) => {
        WHERE p.id = $1`,
       [project_id, req.userId]
     );
+    console.log('[Task Create] Project metadata fetched:', projectMetaRes.rows.length, 'rows');
     if (projectMetaRes.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Project not found' });
@@ -1095,20 +1135,34 @@ router.post('/', async (req, res) => {
       return res.status(403).json({ error: 'Multi-project linking is disabled for this project' });
     }
 
+    console.log('[Task Create] Checking linked projects access...');
     await ensureLinkedProjectsAccessible(client, {
       workspaceId,
       userId: req.userId,
       projectIds: filteredLinkedProjectIds,
     });
+    console.log('[Task Create] Linked projects access OK');
 
+    console.log('[Task Create] Resolving client ID...');
     const resolvedClientId = requestedClientId
       ? await validateProjectClientLink(client, project_id, requestedClientId)
       : await getPrimaryProjectClientId(client, project_id);
+    console.log('[Task Create] Client ID resolved:', resolvedClientId);
     
+    // Generate unique task code for this workspace
+    console.log('[Task Create] Generating task code...');
+    const taskCodeResult = await client.query(
+      'SELECT generate_task_code($1) as task_code',
+      [project_id]
+    );
+    const taskCode = taskCodeResult.rows[0].task_code;
+    console.log('[Task Create] Task code generated:', taskCode);
+    
+    console.log('[Task Create] Inserting task into database...');
     const taskResult = await client.query(
       `INSERT INTO tasks 
-       (name, description, project_id, assignee_id, stage, status, priority, due_date, target_date, notes, category, section, estimated_hours, actual_hours, completion_percentage, tags, external_id, client_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
+       (name, description, project_id, assignee_id, stage, status, priority, due_date, target_date, notes, category, section, estimated_hours, actual_hours, completion_percentage, tags, external_id, client_id, task_code, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING *`,
       [
         name,
         description,
@@ -1128,6 +1182,7 @@ router.post('/', async (req, res) => {
         normalizedTags,
         normalizedExternalId,
         resolvedClientId,
+        taskCode,
         req.userId,
       ]
     );
@@ -1142,13 +1197,6 @@ router.post('/', async (req, res) => {
       [req.userId, workspaceId, project_id, task.id, 'Task', 'Created', name, `Created task "${name}"`]
     );
     
-    if (assignee_id && assignee_id !== req.userId) {
-      await client.query(
-        'INSERT INTO notifications (user_id, type, title, message, task_id, project_id) VALUES ($1, $2, $3, $4, $5, $6)',
-        [assignee_id, 'Task', 'Task Assigned', `You have been assigned to task "${name}"`, task.id, project_id]
-      );
-    }
-
     // If task status is Pending Approval, create an approval request (if one doesn't exist)
     try {
       const shouldCreateApproval = String(status).toLowerCase().includes('pending');
@@ -1172,16 +1220,51 @@ router.post('/', async (req, res) => {
     
     await client.query('COMMIT');
     
+    // Send notification AFTER commit so task exists in database
+    if (assignee_id && assignee_id !== req.userId) {
+      try {
+        await notificationService.notifyTaskAssigned({
+          taskId: task.id,
+          taskName: name,
+          assigneeId: assignee_id,
+          assignerId: req.userId,
+          projectId: project_id,
+          workspaceId: workspaceId,
+        });
+      } catch (notifErr) {
+        console.error('Failed to send task assignment notification:', notifErr);
+        // Don't fail the request for notification errors
+      }
+    }
+    
     res.status(201).json(task);
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackErr) {
+        console.error('Rollback error:', rollbackErr);
+      }
+    }
     if (err.status) {
       return res.status(err.status).json({ error: err.message });
     }
     console.error('Create task error:', err);
-    res.status(500).json({ error: 'Failed to create task' });
+    console.error('Create task error details:', {
+      message: err.message,
+      code: err.code,
+      detail: err.detail,
+      hint: err.hint,
+      where: err.where,
+      table: err.table,
+      column: err.column,
+      constraint: err.constraint
+    });
+    res.status(500).json({ error: 'Failed to create task', details: err.message });
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 });
 
@@ -1236,10 +1319,11 @@ router.put('/:taskId', async (req, res) => {
     }
 
     const accessRes = await client.query(
-      `SELECT t.id, t.project_id, t.assignee_id,
+      `SELECT t.id, t.project_id, t.assignee_id, t.due_date, t.name as current_name,
         t.status,
         t.stage,
         p.created_by AS project_owner,
+        p.workspace_id,
         p.admins_can_approve,
         p.only_owner_approves,
         p.enable_multi_project_links,
@@ -1322,13 +1406,21 @@ router.put('/:taskId', async (req, res) => {
     // Feature 5: Check if auto-approve is enabled for owner/admin
     // Get project settings for auto-approve
     const projectSettingsRes = await client.query(
-      `SELECT auto_approve_owner_tasks, auto_approve_admin_tasks, task_approval_required FROM projects WHERE id = $1`,
+      `SELECT p.auto_approve_owner_tasks, p.auto_approve_admin_tasks, p.task_approval_required,
+              w.is_personal, w.name as workspace_name, w.created_by as workspace_owner
+       FROM projects p
+       JOIN workspaces w ON p.workspace_id = w.id
+       WHERE p.id = $1`,
       [access.project_id]
     );
     const projectSettings = projectSettingsRes.rows[0] || {};
     const autoApproveOwnerTasks = projectSettings.auto_approve_owner_tasks ?? false;
     const autoApproveAdminTasks = projectSettings.auto_approve_admin_tasks ?? false;
     const taskApprovalRequired = projectSettings.task_approval_required ?? true;
+    
+    // Check if this is a personal workspace (skip approval for personal workspaces)
+    const isPersonalWorkspace = projectSettings.is_personal === true || 
+      (projectSettings.workspace_name === 'Personal' && Number(projectSettings.workspace_owner) === Number(req.userId));
 
     // Determine if task should be auto-approved
     let finalStatus = effectiveStatus ?? null;
@@ -1336,7 +1428,11 @@ router.put('/:taskId', async (req, res) => {
     
     // If status is being set to Completed/Pending Approval and auto-approve conditions are met
     if (requestedStatus === 'completed' || requestedStatus === 'pending approval' || requestedStatus === 'pending') {
-      if (!taskApprovalRequired) {
+      if (isPersonalWorkspace) {
+        // Personal workspace: skip approval entirely, go directly to Closed
+        finalStatus = 'Closed';
+        shouldAutoApprove = true;
+      } else if (!taskApprovalRequired) {
         // If approval not required, auto-close the task
         finalStatus = 'Closed';
         shouldAutoApprove = true;
@@ -1440,14 +1536,108 @@ router.put('/:taskId', async (req, res) => {
           [task.id, 'Pending']
         );
         if (existingApproval.rows.length === 0) {
-          await client.query(
-            'INSERT INTO approvals (type, task_id, project_id, requester_id, reason, details) VALUES ($1, $2, $3, $4, $5, $6)',
+          const approvalResult = await client.query(
+            'INSERT INTO approvals (type, task_id, project_id, requester_id, reason, details) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
             ['task', task.id, task.project_id, req.userId, 'Task completion approval', `Approval requested for task ${task.name}`]
           );
+          
+          // Notify approvers about the new approval request
+          const approverIds = await notificationService.getProjectApprovers(task.project_id);
+          await notificationService.notifyApprovalRequested({
+            approvalId: approvalResult.rows[0].id,
+            taskId: task.id,
+            taskName: task.name,
+            requesterId: req.userId,
+            projectId: task.project_id,
+            workspaceId: access.workspace_id,
+            approverIds: approverIds.filter(id => id !== req.userId),
+          });
         }
       }
     } catch (err) {
       console.error('Failed to create approval for task update:', err);
+    }
+    
+    // Send notifications for task changes
+    try {
+      const oldAssigneeId = access.assignee_id;
+      const newAssigneeId = task.assignee_id;
+      const oldDueDate = access.due_date;
+      const newDueDate = task.due_date;
+      
+      // Notify when assignee changes
+      if (assignee_id !== undefined && oldAssigneeId !== newAssigneeId) {
+        // Notify old assignee they were unassigned
+        if (oldAssigneeId && oldAssigneeId !== req.userId) {
+          await notificationService.notifyTaskUnassigned({
+            taskId: task.id,
+            taskName: task.name,
+            previousAssigneeId: oldAssigneeId,
+            unassignerId: req.userId,
+            projectId: task.project_id,
+            workspaceId: access.workspace_id,
+          });
+        }
+        
+        // Notify new assignee they were assigned
+        if (newAssigneeId && newAssigneeId !== req.userId) {
+          await notificationService.notifyTaskAssigned({
+            taskId: task.id,
+            taskName: task.name,
+            assigneeId: newAssigneeId,
+            assignerId: req.userId,
+            projectId: task.project_id,
+            workspaceId: access.workspace_id,
+          });
+        }
+      }
+      
+      // Notify assignee when due date changes
+      if (due_date !== undefined && String(oldDueDate) !== String(newDueDate) && newAssigneeId && newAssigneeId !== req.userId) {
+        await notificationService.notifyTaskDueDateChanged({
+          taskId: task.id,
+          taskName: task.name,
+          assigneeId: newAssigneeId,
+          changerId: req.userId,
+          oldDueDate: oldDueDate,
+          newDueDate: newDueDate,
+          projectId: task.project_id,
+          workspaceId: access.workspace_id,
+        });
+      }
+      
+      // Notify followers when task is marked complete
+      if (finalStatus && (finalStatus.toLowerCase() === 'closed' || finalStatus.toLowerCase() === 'completed')) {
+        const followers = await notificationService.getTaskFollowers(task.id, req.userId);
+        await notificationService.notifyTaskCompleted({
+          taskId: task.id,
+          taskName: task.name,
+          completerId: req.userId,
+          projectId: task.project_id,
+          workspaceId: access.workspace_id,
+          followers,
+        });
+      }
+      
+      // Check for @mentions in description
+      if (description) {
+        const mentionedUserIds = notificationService.parseMentionsFromText(description);
+        for (const mentionedUserId of mentionedUserIds) {
+          if (mentionedUserId !== req.userId) {
+            await notificationService.notifyTaskMentioned({
+              taskId: task.id,
+              taskName: task.name,
+              mentionedUserId,
+              mentionerId: req.userId,
+              projectId: task.project_id,
+              workspaceId: access.workspace_id,
+              context: 'description',
+            });
+          }
+        }
+      }
+    } catch (notifErr) {
+      console.error('Failed to send task update notifications:', notifErr);
     }
     
     await client.query('COMMIT');

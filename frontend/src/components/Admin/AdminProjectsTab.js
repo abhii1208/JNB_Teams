@@ -41,6 +41,7 @@ import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
 
 import { getAdminProjects } from '../../apiClient';
 import ProjectTeamMetricsDialog from './ProjectTeamMetricsDialog';
+import { formatTimeIST } from '../../utils/dateUtils';
 
 // --- Helpers ---
 const formatYYYYMMDDLocal = (d) => {
@@ -358,7 +359,7 @@ function AdminProjectsTab({ workspace, dateRange }) {
 
         {lastRefreshed && (
           <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
-            Last refreshed: {lastRefreshed.toLocaleTimeString()}
+            Last refreshed: {formatTimeIST(lastRefreshed)}
           </Typography>
         )}
 

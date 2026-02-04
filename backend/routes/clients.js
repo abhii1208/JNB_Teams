@@ -4,7 +4,7 @@ const { pool } = require('../db');
 const { checkWorkspaceMember } = require('./workspaces');
 
 const MANAGE_ROLES = new Set(['owner', 'admin']);
-const VIEW_ROLES = new Set(['owner', 'admin', 'projectadmin']);
+const VIEW_ROLES = new Set(['owner', 'admin', 'projectadmin', 'member']);
 const STATUS_VALUES = new Set(['Active', 'Inactive']);
 const GSTIN_REGEX = /^[0-9A-Z]{15}$/;
 const PAYMENT_TERMS_ALLOWED = new Set([7, 15, 30]);
@@ -165,9 +165,7 @@ router.get('/workspace/:workspaceId', checkWorkspaceMember, async (req, res) => 
   try {
     const { workspaceId } = req.params;
     const { status } = req.query;
-    if (!canViewRole(req.workspaceRole)) {
-      return res.status(403).json({ error: 'Insufficient permissions to view clients' });
-    }
+    // Any workspace member can view clients
     const params = [workspaceId];
     let statusFilter = '';
     if (status) {
@@ -224,9 +222,7 @@ router.get('/:clientId', async (req, res) => {
     if (!access) {
       return res.status(403).json({ error: 'Access denied' });
     }
-    if (!canViewRole(access.role)) {
-      return res.status(403).json({ error: 'Insufficient permissions to view client' });
-    }
+    // Any workspace member can view client details
 
     const clientResult = await pool.query(
       `SELECT

@@ -33,6 +33,7 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import { createClient, deactivateClient, getClientDetails, getClients, updateClient } from '../../apiClient';
 import { downloadCsv, sanitizeFilename } from '../../utils/csv';
+import FileAttachments from '../shared/FileAttachments';
 
 const statusColors = {
   Active: { bg: '#d1fae5', text: '#065f46' },
@@ -545,6 +546,23 @@ function ClientsPage({ workspace }) {
                 </Grid>
               </Grid>
             </Box>
+
+            {/* Attachments Section - only show when editing existing client */}
+            {editingClient && (
+              <>
+                <Divider />
+                <Box>
+                  <FileAttachments
+                    entityType="client"
+                    entityId={editingClient.id}
+                    workspaceId={workspace?.id}
+                    canEdit={true}
+                    showTitle={true}
+                    maxFiles={20}
+                  />
+                </Box>
+              </>
+            )}
           </Box>
         </DialogContent>
         <DialogActions sx={{ p: 3 }}>
@@ -686,6 +704,20 @@ function ClientsPage({ workspace }) {
                     No linked projects
                   </Typography>
                 )}
+              </Box>
+
+              <Divider />
+
+              {/* Attachments Section */}
+              <Box>
+                <FileAttachments
+                  entityType="client"
+                  entityId={detailClient.id}
+                  workspaceId={workspace?.id}
+                  canEdit={true}
+                  showTitle={true}
+                  maxFiles={20}
+                />
               </Box>
             </Box>
           ) : (

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Box, CircularProgress, Typography } from '@mui/material';
 import Sidebar from './Sidebar';
 import TopAppBar from './TopAppBar';
@@ -10,10 +10,14 @@ import SettingsPage from '../Settings/SettingsPage';
 import ApprovalsPage from '../Approvals/ApprovalsPage';
 import ActivityLogPage from '../Activity/ActivityLogPage';
 import NotificationsPage from '../Notifications/NotificationsPage';
+import NotificationToast from '../Notifications/NotificationToast';
+import useNotifications from '../Notifications/useNotifications';
 import RecurringPage from '../Recurring/RecurringPage';
 import TasksPage from '../Tasks/TasksPage';
 import AdminPage from '../Admin/AdminPage';
 import ClientsPage from '../Clients/ClientsPage';
+import ChatPage from '../Chat/ChatPage';
+import { ChecklistPage } from '../Checklist';
 import { getWorkspaces, getUserSettings } from '../../apiClient';
 
 function MainLayout({ userId, onLogout }) {
@@ -48,6 +52,41 @@ function MainLayout({ userId, onLogout }) {
   }, []);
 
   const [user, setUser] = useState(null);
+
+  // Real-time notifications hook
+  const {
+    notifications,
+    unreadCount,
+    newNotification,
+    fetchNotifications,
+    clearNewNotification,
+  } = useNotifications(currentWorkspace?.id);
+
+  // Handle notification toast click - navigate to relevant page
+  const handleNotificationToastClick = useCallback((notification) => {
+    const type = notification.type?.toLowerCase() || '';
+    
+    if (notification.action_url) {
+      const url = notification.action_url;
+      if (url.startsWith('/tasks/')) {
+        handleNavigate('tasks', { projectId: notification.project_id, taskId: parseInt(url.split('/tasks/')[1]) });
+      } else if (url.startsWith('/approvals')) {
+        handleNavigate('approvals', { projectId: notification.project_id });
+      } else if (url.startsWith('/chat/')) {
+        handleNavigate('chat', { threadId: parseInt(url.split('/chat/')[1]) });
+      } else if (url.startsWith('/projects/')) {
+        handleNavigate('projects', { projectId: parseInt(url.split('/projects/')[1]) });
+      } else if (url.startsWith('/clients/')) {
+        handleNavigate('clients', { clientId: parseInt(url.split('/clients/')[1]) });
+      }
+    } else if (type.includes('approval')) {
+      handleNavigate('approvals', { projectId: notification.project_id });
+    } else if (type.includes('task') || notification.task_id) {
+      handleNavigate('tasks', { projectId: notification.project_id, taskId: notification.task_id });
+    } else if (type.includes('chat') || notification.chat_thread_id) {
+      handleNavigate('chat', { threadId: notification.chat_thread_id });
+    }
+  }, []);
 
   // Fetch current user settings
   useEffect(() => {
@@ -97,12 +136,7 @@ function MainLayout({ userId, onLogout }) {
   const isPersonalWorkspace = Boolean(currentWorkspace?.is_personal)
     || (currentWorkspace?.name === 'Personal' && Number(currentWorkspace?.created_by) === Number(user?.id));
   const canViewTeam = !isPersonalWorkspace && (currentWorkspace?.role === 'Owner' || currentWorkspace?.role === 'Admin');
-  const canViewClients = !isPersonalWorkspace && (
-    currentWorkspace?.role === 'Owner'
-    || currentWorkspace?.role === 'Admin'
-    || currentWorkspace?.role === 'ProjectAdmin'
-    || currentWorkspace?.role === 'Project Admin'
-  );
+  const canViewClients = !isPersonalWorkspace;
   const canViewApprovals = !isPersonalWorkspace;
   const canViewAdmin = !isPersonalWorkspace && (currentWorkspace?.role === 'Owner' || currentWorkspace?.role === 'Admin');
 
@@ -189,7 +223,13 @@ function MainLayout({ userId, onLogout }) {
         return <ActivityLogPage workspace={currentWorkspace} />;
       
       case 'notifications':
-        return <NotificationsPage />;
+        return (
+          <NotificationsPage 
+            onNavigate={handleNavigate}
+            notifications={notifications}
+            onRefresh={fetchNotifications}
+          />
+        );
       
       case 'admin':
         if (!currentWorkspace || !canViewAdmin) {
@@ -220,6 +260,22 @@ function MainLayout({ userId, onLogout }) {
           );
         }
         return <ClientsPage workspace={currentWorkspace} />;
+      
+      case 'chat':
+        return <ChatPage workspace={currentWorkspace} user={user} />;
+      
+      case 'checklist':
+        if (!currentWorkspace || isPersonalWorkspace) {
+          return (
+            <Box sx={{ p: 6 }}>
+              <Typography variant="h6">Access restricted</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Checklist is not available for personal workspaces.
+              </Typography>
+            </Box>
+          );
+        }
+        return <ChecklistPage workspace={currentWorkspace} user={user} />;
       
       case 'settings':
         return <SettingsPage user={user} workspace={currentWorkspace} />;
@@ -264,6 +320,7 @@ function MainLayout({ userId, onLogout }) {
         currentPage={currentPage}
         selectedProject={selectedProject}
         onNavigate={handleNavigate}
+        unreadNotificationCount={unreadCount}
       />
       <Sidebar
         currentPage={currentPage}
@@ -287,6 +344,14 @@ function MainLayout({ userId, onLogout }) {
           {renderContent()}
         </Box>
       </Box>
+
+      {/* Real-time notification toast */}
+      <NotificationToast
+        notification={newNotification}
+        onClose={clearNewNotification}
+        onClick={handleNotificationToastClick}
+        autoHideDuration={4000}
+      />
     </Box>
   );
 }

@@ -104,6 +104,27 @@ function TeamPage({ user, workspace }) {
   }, [workspace]);
 
   const isOwnerOrAdmin = ['Owner','Admin'].includes(workspace?.role);
+  const isOwner = workspace?.role === 'Owner';
+
+  // Helper function to check if current user can manage a member
+  const canManageMember = (member) => {
+    if (!member || !isOwnerOrAdmin) return false;
+    // Can't manage yourself
+    if (member.id === user?.id) return false;
+    // Owner can manage everyone
+    if (isOwner) return true;
+    // Admin can't manage Owner or other Admins
+    if (member.role === 'Owner' || member.role === 'Admin') return false;
+    return true;
+  };
+
+  // Helper function to check if role change is allowed
+  const canChangeToRole = (member, targetRole) => {
+    if (!member || !canManageMember(member)) return false;
+    // Only owner can assign Owner role
+    if (targetRole === 'Owner' && !isOwner) return false;
+    return true;
+  };
 
   const handleMenuOpen = (event, member) => {
     event.stopPropagation();
@@ -457,32 +478,97 @@ function TeamPage({ user, workspace }) {
           sx: { borderRadius: 2, minWidth: 200 },
         }}
       >
-        <MenuItem onClick={() => { openChangeRoleDialog(selectedMember); }}>
-          Change Role
-        </MenuItem>
+        {/* Change Role - only show if user can manage this member */}
+        {selectedMember && canManageMember(selectedMember) ? (
+          <MenuItem onClick={() => { openChangeRoleDialog(selectedMember); }}>
+            Change Role
+          </MenuItem>
+        ) : selectedMember?.id === user?.id ? (
+          <MenuItem disabled sx={{ opacity: 0.5 }}>
+            <Typography variant="body2" color="text.secondary">
+              Cannot change own role
+            </Typography>
+          </MenuItem>
+        ) : selectedMember?.role === 'Owner' ? (
+          <MenuItem disabled sx={{ opacity: 0.5 }}>
+            <Typography variant="body2" color="text.secondary">
+              Owner role - use transfer
+            </Typography>
+          </MenuItem>
+        ) : selectedMember?.role === 'Admin' && !isOwner ? (
+          <MenuItem disabled sx={{ opacity: 0.5 }}>
+            <Typography variant="body2" color="text.secondary">
+              Only Owner can manage Admins
+            </Typography>
+          </MenuItem>
+        ) : null}
         <MenuItem onClick={handleMenuClose}>View Projects</MenuItem>
         <MenuItem onClick={handleMenuClose}>Send Message</MenuItem>
-        <MenuItem onClick={() => { handleRemoveMember(selectedMember); }} sx={{ color: 'error.main' }}>
-          Remove from Workspace
-        </MenuItem>
+        {/* Remove - only show if user can manage this member */}
+        {selectedMember && canManageMember(selectedMember) ? (
+          <MenuItem onClick={() => { handleRemoveMember(selectedMember); }} sx={{ color: 'error.main' }}>
+            Remove from Workspace
+          </MenuItem>
+        ) : selectedMember?.id === user?.id ? (
+          <MenuItem disabled sx={{ color: 'text.secondary', opacity: 0.5 }}>
+            Cannot remove yourself
+          </MenuItem>
+        ) : selectedMember?.role === 'Owner' ? (
+          <MenuItem disabled sx={{ color: 'text.secondary', opacity: 0.5 }}>
+            Cannot remove Owner
+          </MenuItem>
+        ) : selectedMember?.role === 'Admin' && !isOwner ? (
+          <MenuItem disabled sx={{ color: 'text.secondary', opacity: 0.5 }}>
+            Only Owner can remove Admins
+          </MenuItem>
+        ) : null}
       </Menu>
 
       {/* Change Role Dialog */}
       <Dialog open={changeRoleOpen} onClose={() => setChangeRoleOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Change Member Role</DialogTitle>
         <DialogContent>
+          {selectedMember && (
+            <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+              <Typography variant="subtitle2" color="text.secondary">
+                Changing role for:
+              </Typography>
+              <Typography variant="body1" fontWeight={500}>
+                {selectedMember.first_name} {selectedMember.last_name || selectedMember.email}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Current role: {selectedMember.role}
+              </Typography>
+            </Box>
+          )}
           <FormControl fullWidth sx={{ mt: 1 }}>
             <InputLabel>Role</InputLabel>
             <Select value={newRole} label="Role" onChange={(e) => setNewRole(e.target.value)}>
+              {isOwner && <MenuItem value="Owner">Owner (Transfer ownership)</MenuItem>}
               <MenuItem value="Admin">Admin</MenuItem>
               <MenuItem value="ProjectAdmin">Project Admin</MenuItem>
               <MenuItem value="Member">Member</MenuItem>
             </Select>
           </FormControl>
+          <Box sx={{ mt: 2, p: 2, bgcolor: 'info.50', borderRadius: 1, border: '1px solid', borderColor: 'info.200' }}>
+            <Typography variant="caption" color="text.secondary">
+              <strong>Role Permissions:</strong><br/>
+              • <strong>Owner:</strong> Full control (only one per workspace)<br/>
+              • <strong>Admin:</strong> Same as Owner except cannot manage other Admins<br/>
+              • <strong>Project Admin:</strong> Can create/manage projects<br/>
+              • <strong>Member:</strong> Access to assigned projects only
+            </Typography>
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setChangeRoleOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleChangeRoleConfirm}>Save</Button>
+          <Button 
+            variant="contained" 
+            onClick={handleChangeRoleConfirm}
+            disabled={newRole === selectedMember?.role}
+          >
+            {newRole === 'Owner' ? 'Transfer Ownership' : 'Save'}
+          </Button>
         </DialogActions>
       </Dialog>
 

@@ -24,6 +24,7 @@ import FolderIcon from '@mui/icons-material/Folder';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
 import { getActivity } from '../../apiClient';
+import { formatShortDateIST } from '../../utils/dateUtils';
 
 const typeColors = {
   'Task': { bg: '#e0e7ff', text: '#3730a3', icon: <CheckCircleIcon fontSize="small" /> },
@@ -99,7 +100,7 @@ function ActivityLogPage({ workspace }) {
     if (diffMins < 60) return `${diffMins} minutes ago`;
     if (diffHours < 24) return `${diffHours} hours ago`;
     if (diffDays < 7) return `${diffDays} days ago`;
-    return date.toLocaleDateString();
+    return formatShortDateIST(timestamp);
   };
 
   return (

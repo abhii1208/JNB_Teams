@@ -19,7 +19,15 @@ import AssignmentIcon from '@mui/icons-material/Assignment';
 import AssignmentLateIcon from '@mui/icons-material/AssignmentLate';
 import { getProjects, getApprovalCount } from '../../apiClient';
 import api from '../../apiClient';
+import { 
+  isTodayIST, 
+  isTomorrowIST, 
+  formatDateIST, 
+  getNowIST,
+  isPastIST 
+} from '../../utils/dateUtils';
 
+// Date utility functions
 const stageColors = {
   Planned: { bg: '#e0e7ff', text: '#3730a3' },
   'In-process': { bg: '#fef3c7', text: '#92400e' },
@@ -43,19 +51,12 @@ const safeDate = (v) => {
 // small helper for Due / Target labels
 const formatDateLabel = (dateStr, labelPrefix) => {
   if (!dateStr) return `No ${labelPrefix.toLowerCase()} date`;
-
   const d = safeDate(dateStr);
   if (!d) return `No ${labelPrefix.toLowerCase()} date`;
 
-  const today = startOfDay(new Date());
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  const dateOnly = startOfDay(d);
-
-  if (dateOnly.getTime() === today.getTime()) return `${labelPrefix} Today`;
-  if (dateOnly.getTime() === tomorrow.getTime()) return `${labelPrefix} Tomorrow`;
-  return `${labelPrefix} ${d.toLocaleDateString()}`;
+  if (isTodayIST(d)) return `${labelPrefix} Today`;
+  if (isTomorrowIST(d)) return `${labelPrefix} Tomorrow`;
+  return `${labelPrefix} ${formatDateIST(d, 'MMM d, yyyy')}`;
 };
 
 const getDue = (t) => t?.due_date || t?.dueDate || null;
@@ -65,7 +66,6 @@ const getModeDate = (t, mode) => (mode === 'due' ? getDue(t) : getTarget(t));
 function Dashboard({ user, workspace, onNavigate }) {
   // Toggle applies to: Today / Tomorrow / Soon / Overdue / No Date + Upcoming list
   const [dateMode, setDateMode] = React.useState('due'); // 'due' | 'target'
-
   const [activeProjectsCount, setActiveProjectsCount] = React.useState(0);
   const [pendingApprovals, setPendingApprovals] = React.useState(0);
   const [allTasks, setAllTasks] = React.useState([]);
@@ -161,12 +161,9 @@ function Dashboard({ user, workspace, onNavigate }) {
 
   // Stats for scorecards (toggle applies here)
   const stats = React.useMemo(() => {
-    const today = startOfDay(new Date());
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-
-    const day3 = new Date(today);
-    day3.setDate(day3.getDate() + 3);
+    const todayIST = getNowIST();
+    const tomorrowTime = new Date(todayIST.getTime() + 24 * 60 * 60 * 1000);
+    const day3Time = new Date(todayIST.getTime() + 3 * 24 * 60 * 60 * 1000);
 
     const modeLabel = dateMode === 'due' ? 'Due' : 'Target';
 
@@ -177,27 +174,27 @@ function Dashboard({ user, workspace, onNavigate }) {
     const countToday = tasks.filter((t) => {
       const d = getD(t);
       if (!d) return false;
-      return startOfDay(d).getTime() === today.getTime();
+      return isTodayIST(d);
     }).length;
 
     const countTomorrow = tasks.filter((t) => {
       const d = getD(t);
       if (!d) return false;
-      return startOfDay(d).getTime() === tomorrow.getTime();
+      return isTomorrowIST(d);
     }).length;
 
     // Soon = after tomorrow up to next 3 days
     const countSoon = tasks.filter((t) => {
       const d = getD(t);
       if (!d) return false;
-      const time = startOfDay(d).getTime();
-      return time > tomorrow.getTime() && time <= day3.getTime();
+      const taskTime = new Date(d).getTime();
+      return taskTime > tomorrowTime.getTime() && taskTime <= day3Time.getTime();
     }).length;
 
     const countOverdue = tasks.filter((t) => {
       const d = getD(t);
       if (!d) return false;
-      return startOfDay(d).getTime() < today.getTime();
+      return isPastIST(d) && !isTodayIST(d);
     }).length;
 
     const countNoDate = tasks.filter((t) => !getD(t)).length;
@@ -206,7 +203,6 @@ function Dashboard({ user, workspace, onNavigate }) {
   }, [allTasks, dateMode]);
 
   const dateField = dateMode === 'due' ? 'due_date' : 'target_date';
-
   // Upcoming list:
   // ✅ show ALL tasks that have due/target date filled (based on toggle)
   // ✅ sort old -> new (earliest -> latest), includes overdue at top
@@ -214,7 +210,12 @@ function Dashboard({ user, workspace, onNavigate }) {
   const upcomingTasks = React.useMemo(() => {
     const tasks = (allTasks || []).filter(isActiveTask);
 
-    return tasks
+    // Deduplicate tasks by ID
+    const uniqueTasks = Array.from(
+      new Map(tasks.map(task => [task.id, task])).values()
+    );
+
+    return uniqueTasks
       .filter((t) => {
         const d = safeDate(getModeDate(t, dateMode));
         return Boolean(d);

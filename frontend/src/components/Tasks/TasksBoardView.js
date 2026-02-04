@@ -11,6 +11,7 @@ import {
   CardContent,
   Badge,
   Divider,
+  LinearProgress,
 } from '@mui/material';
 
 import EditIcon from '@mui/icons-material/Edit';
@@ -20,6 +21,7 @@ import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 
 import { format, isValid } from 'date-fns';
 import { parseDateInput } from '../../utils/date';
+import { formatDateIST, isTodayIST } from '../../utils/dateUtils';
 
 const STATUS_COLUMNS = [
   { id: 'Open', label: 'Open', color: '#2563eb', bg: '#eff6ff' },
@@ -64,16 +66,13 @@ const parseDateValue = (value) => {
 const formatDate = (dateStr) => {
   const date = parseDateValue(dateStr);
   if (!date) return null;
-  return format(date, 'MMM d, yyyy');
+  return formatDateIST(date, 'MMM d, yyyy');
 };
 
 const isToday = (dateStr) => {
   const d = parseDateValue(dateStr);
   if (!d) return false;
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear()
-    && d.getMonth() === now.getMonth()
-    && d.getDate() === now.getDate();
+  return isTodayIST(d);
 };
 
 const getGroupField = (groupBy) => {
@@ -177,6 +176,25 @@ const TaskCard = React.memo(function TaskCard({
           </IconButton>
         </Box>
 
+        {/* Task Code */}
+        {task.task_code && (
+          <Chip
+            label={task.task_code}
+            size="small"
+            sx={{
+              mb: 1,
+              height: 20,
+              fontSize: '0.65rem',
+              fontWeight: 600,
+              fontFamily: 'monospace',
+              bgcolor: '#f1f5f9',
+              color: '#475569',
+              border: '1px solid #e2e8f0',
+              '& .MuiChip-label': { px: 0.75 },
+            }}
+          />
+        )}
+
         {/* Task Name */}
         <Typography
           variant="body2"
@@ -193,6 +211,44 @@ const TaskCard = React.memo(function TaskCard({
         >
           {task.name}
         </Typography>
+
+        {/* Completion Progress Bar */}
+        {task.completion_percentage != null && (
+          <Box sx={{ mb: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+              <LinearProgress
+                variant="determinate"
+                value={task.completion_percentage}
+                sx={{
+                  flex: 1,
+                  height: 5,
+                  borderRadius: 2.5,
+                  backgroundColor: '#e2e8f0',
+                  '& .MuiLinearProgress-bar': {
+                    borderRadius: 2.5,
+                    backgroundColor: 
+                      task.completion_percentage < 25 ? '#ef4444' :
+                      task.completion_percentage < 50 ? '#f97316' :
+                      task.completion_percentage < 75 ? '#eab308' : '#22c55e',
+                  },
+                }}
+              />
+              <Typography 
+                variant="caption" 
+                sx={{ 
+                  fontSize: '0.6rem', 
+                  fontWeight: 600,
+                  color: 
+                    task.completion_percentage < 25 ? '#ef4444' :
+                    task.completion_percentage < 50 ? '#f97316' :
+                    task.completion_percentage < 75 ? '#eab308' : '#22c55e',
+                }}
+              >
+                {task.completion_percentage}%
+              </Typography>
+            </Box>
+          </Box>
+        )}
 
         {/* Indicators (icon-only, tooltip carries label) */}
         {indicators.length > 0 && (

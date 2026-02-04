@@ -13,6 +13,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   Typography,
   Avatar,
   IconButton,
@@ -21,11 +22,15 @@ import {
   DialogContent,
   DialogActions,
   TextField,
+  Menu,
+  MenuItem,
 } from '@mui/material';
 import CheckIcon from '@mui/icons-material/Check';
 import CloseIcon from '@mui/icons-material/Close';
 import InfoIcon from '@mui/icons-material/InfoOutlined';
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import { getApprovals, approveApproval, rejectApproval } from '../../apiClient';
+import { formatShortDateIST } from '../../utils/dateUtils';
 
 const statusColors = {
   'Pending': { bg: '#fef3c7', text: '#92400e' },
@@ -48,6 +53,16 @@ function ApprovalsPage({ user, workspace }) {
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [approvals, setApprovals] = useState([]);
+  const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
+  const [columnFilters, setColumnFilters] = useState({
+    type: 'All',
+    task: 'All',
+    project: 'All',
+    requester: 'All',
+    date: 'All',
+    status: 'All',
+  });
+  const [filterAnchors, setFilterAnchors] = useState({});
 
   useEffect(() => {
     const fetchApprovals = async () => {
@@ -101,14 +116,81 @@ function ApprovalsPage({ user, workspace }) {
     }
   };
 
-  const filteredApprovals = approvals.filter(approval => {
+  const handleSort = (key) => {
+    setSortConfig((prev) => {
+      if (prev.key === key) {
+        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      }
+      return { key, direction: 'asc' };
+    });
+  };
+
+  const handleFilterOpen = (key, event) => {
+    setFilterAnchors((prev) => ({ ...prev, [key]: event.currentTarget }));
+  };
+
+  const handleFilterClose = (key) => {
+    setFilterAnchors((prev) => ({ ...prev, [key]: null }));
+  };
+
+  const handleFilterChange = (key, value) => {
+    setColumnFilters((prev) => ({ ...prev, [key]: value }));
+    handleFilterClose(key);
+  };
+
+  const tabFilteredApprovals = approvals.filter(approval => {
     if (activeTab === 0) return approval.status === 'Pending';
     if (activeTab === 1) return approval.status === 'Approved';
     if (activeTab === 2) return approval.status === 'Rejected';
     return true;
   });
 
+  const filteredApprovals = tabFilteredApprovals.filter((approval) => {
+    const taskText = `${approval.task_name || ''} ${approval.reason || ''}`.toLowerCase();
+    const dateText = formatShortDateIST(approval.created_at).toLowerCase();
+    return (
+      (columnFilters.type === 'All' || approval.type === columnFilters.type) &&
+      (columnFilters.task === 'All' || taskText === columnFilters.task.toLowerCase()) &&
+      (columnFilters.project === 'All' || approval.project_name === columnFilters.project) &&
+      (columnFilters.requester === 'All' || approval.requester_name === columnFilters.requester) &&
+      (columnFilters.date === 'All' || dateText === columnFilters.date.toLowerCase()) &&
+      (columnFilters.status === 'All' || approval.status === columnFilters.status)
+    );
+  });
+
+  const sortedApprovals = [...filteredApprovals].sort((a, b) => {
+    const direction = sortConfig.direction === 'asc' ? 1 : -1;
+    if (sortConfig.key === 'date') {
+      const aTime = new Date(a.created_at).getTime();
+      const bTime = new Date(b.created_at).getTime();
+      return (aTime - bTime) * direction;
+    }
+    const getText = (approval, key) => {
+      if (key === 'type') return approval.type || '';
+      if (key === 'task') return `${approval.task_name || ''} ${approval.reason || ''}`.trim();
+      if (key === 'project') return approval.project_name || '';
+      if (key === 'requester') return approval.requester_name || '';
+      if (key === 'status') return approval.status || '';
+      return '';
+    };
+    const aText = getText(a, sortConfig.key).toLowerCase();
+    const bText = getText(b, sortConfig.key).toLowerCase();
+    if (aText < bText) return -1 * direction;
+    if (aText > bText) return 1 * direction;
+    return 0;
+  });
+
   const pendingCount = approvals.filter(a => a.status === 'Pending').length;
+  const taskOptions = Array.from(new Set(
+    tabFilteredApprovals.map((approval) => `${approval.task_name || ''} ${approval.reason || ''}`.trim())
+  )).filter(Boolean);
+  const dateOptions = Array.from(new Set(
+    tabFilteredApprovals.map((approval) => formatShortDateIST(approval.created_at))
+  )).filter(Boolean);
+  const typeOptions = Array.from(new Set(tabFilteredApprovals.map((approval) => approval.type))).filter(Boolean);
+  const projectOptions = Array.from(new Set(tabFilteredApprovals.map((approval) => approval.project_name))).filter(Boolean);
+  const requesterOptions = Array.from(new Set(tabFilteredApprovals.map((approval) => approval.requester_name))).filter(Boolean);
+  const statusOptions = Array.from(new Set(tabFilteredApprovals.map((approval) => approval.status))).filter(Boolean);
 
   return (
     <Box sx={{ p: 4 }}>
@@ -117,43 +199,6 @@ function ApprovalsPage({ user, workspace }) {
         <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
           Approvals
         </Typography>
-        <Typography variant="body1" color="text.secondary">
-          Review and manage pending approval requests
-        </Typography>
-      </Box>
-
-      {/* Stats Cards */}
-      <Box sx={{ display: 'flex', gap: 2, mb: 4 }}>
-        <Card elevation={0} sx={{ flex: 1, border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2 }}>
-          <CardContent>
-            <Typography variant="h3" sx={{ fontWeight: 700, color: '#92400e', mb: 0.5 }}>
-              {pendingCount}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Pending Approvals
-            </Typography>
-          </CardContent>
-        </Card>
-        <Card elevation={0} sx={{ flex: 1, border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2 }}>
-          <CardContent>
-            <Typography variant="h3" sx={{ fontWeight: 700, color: '#065f46', mb: 0.5 }}>
-              {approvals.filter(a => a.status === 'Approved').length}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Approved
-            </Typography>
-          </CardContent>
-        </Card>
-        <Card elevation={0} sx={{ flex: 1, border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2 }}>
-          <CardContent>
-            <Typography variant="h3" sx={{ fontWeight: 700, color: '#991b1b', mb: 0.5 }}>
-              {approvals.filter(a => a.status === 'Rejected').length}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Rejected
-            </Typography>
-          </CardContent>
-        </Card>
       </Box>
 
       {/* Tabs */}
@@ -181,17 +226,167 @@ function ApprovalsPage({ user, workspace }) {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ fontWeight: 600 }}>Type</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Task/Request</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Project</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Requester</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <TableSortLabel
+                      active={sortConfig.key === 'type'}
+                      direction={sortConfig.key === 'type' ? sortConfig.direction : 'asc'}
+                      onClick={() => handleSort('type')}
+                    >
+                      Type
+                    </TableSortLabel>
+                    <IconButton size="small" onClick={(e) => handleFilterOpen('type', e)}>
+                      <ArrowDropDownIcon fontSize="small" />
+                    </IconButton>
+                    <Menu
+                      anchorEl={filterAnchors.type}
+                      open={Boolean(filterAnchors.type)}
+                      onClose={() => handleFilterClose('type')}
+                    >
+                      <MenuItem onClick={() => handleFilterChange('type', 'All')}>All</MenuItem>
+                      {typeOptions.map((option) => (
+                        <MenuItem key={option} onClick={() => handleFilterChange('type', option)}>
+                          {option}
+                        </MenuItem>
+                      ))}
+                    </Menu>
+                  </Box>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <TableSortLabel
+                      active={sortConfig.key === 'task'}
+                      direction={sortConfig.key === 'task' ? sortConfig.direction : 'asc'}
+                      onClick={() => handleSort('task')}
+                    >
+                      Task/Request
+                    </TableSortLabel>
+                    <IconButton size="small" onClick={(e) => handleFilterOpen('task', e)}>
+                      <ArrowDropDownIcon fontSize="small" />
+                    </IconButton>
+                    <Menu
+                      anchorEl={filterAnchors.task}
+                      open={Boolean(filterAnchors.task)}
+                      onClose={() => handleFilterClose('task')}
+                    >
+                      <MenuItem onClick={() => handleFilterChange('task', 'All')}>All</MenuItem>
+                      {taskOptions.map((option) => (
+                        <MenuItem key={option} onClick={() => handleFilterChange('task', option)}>
+                          {option}
+                        </MenuItem>
+                      ))}
+                    </Menu>
+                  </Box>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <TableSortLabel
+                      active={sortConfig.key === 'project'}
+                      direction={sortConfig.key === 'project' ? sortConfig.direction : 'asc'}
+                      onClick={() => handleSort('project')}
+                    >
+                      Project
+                    </TableSortLabel>
+                    <IconButton size="small" onClick={(e) => handleFilterOpen('project', e)}>
+                      <ArrowDropDownIcon fontSize="small" />
+                    </IconButton>
+                    <Menu
+                      anchorEl={filterAnchors.project}
+                      open={Boolean(filterAnchors.project)}
+                      onClose={() => handleFilterClose('project')}
+                    >
+                      <MenuItem onClick={() => handleFilterChange('project', 'All')}>All</MenuItem>
+                      {projectOptions.map((option) => (
+                        <MenuItem key={option} onClick={() => handleFilterChange('project', option)}>
+                          {option}
+                        </MenuItem>
+                      ))}
+                    </Menu>
+                  </Box>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <TableSortLabel
+                      active={sortConfig.key === 'requester'}
+                      direction={sortConfig.key === 'requester' ? sortConfig.direction : 'asc'}
+                      onClick={() => handleSort('requester')}
+                    >
+                      Requester
+                    </TableSortLabel>
+                    <IconButton size="small" onClick={(e) => handleFilterOpen('requester', e)}>
+                      <ArrowDropDownIcon fontSize="small" />
+                    </IconButton>
+                    <Menu
+                      anchorEl={filterAnchors.requester}
+                      open={Boolean(filterAnchors.requester)}
+                      onClose={() => handleFilterClose('requester')}
+                    >
+                      <MenuItem onClick={() => handleFilterChange('requester', 'All')}>All</MenuItem>
+                      {requesterOptions.map((option) => (
+                        <MenuItem key={option} onClick={() => handleFilterChange('requester', option)}>
+                          {option}
+                        </MenuItem>
+                      ))}
+                    </Menu>
+                  </Box>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <TableSortLabel
+                      active={sortConfig.key === 'date'}
+                      direction={sortConfig.key === 'date' ? sortConfig.direction : 'asc'}
+                      onClick={() => handleSort('date')}
+                    >
+                      Date
+                    </TableSortLabel>
+                    <IconButton size="small" onClick={(e) => handleFilterOpen('date', e)}>
+                      <ArrowDropDownIcon fontSize="small" />
+                    </IconButton>
+                    <Menu
+                      anchorEl={filterAnchors.date}
+                      open={Boolean(filterAnchors.date)}
+                      onClose={() => handleFilterClose('date')}
+                    >
+                      <MenuItem onClick={() => handleFilterChange('date', 'All')}>All</MenuItem>
+                      {dateOptions.map((option) => (
+                        <MenuItem key={option} onClick={() => handleFilterChange('date', option)}>
+                          {option}
+                        </MenuItem>
+                      ))}
+                    </Menu>
+                  </Box>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <TableSortLabel
+                      active={sortConfig.key === 'status'}
+                      direction={sortConfig.key === 'status' ? sortConfig.direction : 'asc'}
+                      onClick={() => handleSort('status')}
+                    >
+                      Status
+                    </TableSortLabel>
+                    <IconButton size="small" onClick={(e) => handleFilterOpen('status', e)}>
+                      <ArrowDropDownIcon fontSize="small" />
+                    </IconButton>
+                    <Menu
+                      anchorEl={filterAnchors.status}
+                      open={Boolean(filterAnchors.status)}
+                      onClose={() => handleFilterClose('status')}
+                    >
+                      <MenuItem onClick={() => handleFilterChange('status', 'All')}>All</MenuItem>
+                      {statusOptions.map((option) => (
+                        <MenuItem key={option} onClick={() => handleFilterChange('status', option)}>
+                          {option}
+                        </MenuItem>
+                      ))}
+                    </Menu>
+                  </Box>
+                </TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {filteredApprovals.length === 0 ? (
+              {sortedApprovals.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
                     <Typography variant="body2" color="text.secondary">
@@ -200,7 +395,7 @@ function ApprovalsPage({ user, workspace }) {
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredApprovals.map((approval) => (
+                sortedApprovals.map((approval) => (
                   <TableRow key={approval.id} hover>
                     <TableCell>
                       <Chip
@@ -239,7 +434,7 @@ function ApprovalsPage({ user, workspace }) {
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2">
-                        {new Date(approval.created_at).toLocaleDateString()}
+                        {formatShortDateIST(approval.created_at)}
                       </Typography>
                     </TableCell>
                     <TableCell>
@@ -362,7 +557,7 @@ function ApprovalsPage({ user, workspace }) {
                   Date
                 </Typography>
                 <Typography variant="body1">
-                  {new Date(selectedApproval.created_at).toLocaleDateString()}
+                  {formatShortDateIST(selectedApproval.created_at)}
                 </Typography>
               </Box>
             </Box>

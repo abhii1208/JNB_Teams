@@ -9,9 +9,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  Divider,
   FormControl,
-  FormControlLabel,
   Grid,
   IconButton,
   InputLabel,
@@ -22,7 +20,6 @@ import {
   MenuItem,
   Paper,
   Select,
-  Switch,
   Tab,
   Tabs,
   TextField,
@@ -42,6 +39,7 @@ import {
   Fade,
   InputAdornment,
   Tooltip,
+  LinearProgress,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import AddIcon from '@mui/icons-material/Add';
@@ -66,9 +64,11 @@ import CloseIcon from '@mui/icons-material/Close';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import TaskForm from '../Tasks/TaskForm';
 import CustomColumnSettings from './CustomColumnSettings';
+import ProjectSettings from './ProjectSettings';
 import { differenceInCalendarDays, isValid } from 'date-fns';
-import { getTasks, createTask, updateTask, deleteTask, updateProject, getProjectMembers, getWorkspaceMembers, getWorkspaceProjects, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator, getProjectColumnSettings } from '../../apiClient';
+import { getTasks, createTask, updateTask, deleteTask, updateProject, getProjectMembers, getWorkspaceMembers, getWorkspaceProjects, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator, getProjectColumnSettings, transferProjectOwnership, getProjectApprovers, addProjectApprover, removeProjectApprover, getEscalationSettings, updateEscalationSettings } from '../../apiClient';
 import { formatShortDate } from '../../utils/date';
+import { formatDateIST } from '../../utils/dateUtils';
 import { downloadCsv, sanitizeFilename } from '../../utils/csv';
 
 const roleColors = {
@@ -254,9 +254,27 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     autoApproveAdminTasks: false,
     taskApprovalRequired: true,
     enableMultiProjectLinks: false,
+    approvalTaggedMemberId: null,
   });
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [projectColumnSettings, setProjectColumnSettings] = useState(DEFAULT_CUSTOM_COLUMN_SETTINGS);
+  const [ownershipTransferOpen, setOwnershipTransferOpen] = useState(false);
+  const [transferTargetMember, setTransferTargetMember] = useState('');
+  const [transferring, setTransferring] = useState(false);
+  
+  // Multiple Approvers state
+  const [projectApprovers, setProjectApprovers] = useState([]);
+  const [newApproverMember, setNewApproverMember] = useState('');
+  const [loadingApprovers, setLoadingApprovers] = useState(false);
+  
+  // Escalation Settings state
+  const [escalationSettings, setEscalationSettings] = useState({
+    escalation_enabled: true,
+    escalation_hours: 24,
+    escalation_levels: 2,
+    notify_requester_on_escalation: true,
+  });
+  const [savingEscalation, setSavingEscalation] = useState(false);
 
   const normalizeProjectSettings = (source) => {
     if (!source) return null;
@@ -289,6 +307,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
       autoApproveAdminTasks: source.auto_approve_admin_tasks ?? false,
       taskApprovalRequired: source.task_approval_required ?? true,
       enableMultiProjectLinks: source.enable_multi_project_links ?? false,
+      approvalTaggedMemberId: source.approval_tagged_member_id || null,
     };
   };
 
@@ -328,6 +347,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
       if (!project?.id) return;
       try {
         const res = await getProjectMembers(project.id);
+        console.log('Fetched project members:', res.data);
         setMembers(res.data || []);
       } catch (err) {
         console.error('Failed to fetch project members:', err);
@@ -342,7 +362,20 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   const currentUserMember = members.find(m => m.id === user?.id || m.user_id === user?.id);
   const userRole = currentUserMember?.role || 'member';
   const isProjectOwner = project?.role === 'Owner';
-  const canManageMembers = isProjectOwner || project?.role === 'Admin';
+  const isProjectAdmin = project?.role === 'Admin';
+  const canManageMembers = isProjectOwner || isProjectAdmin;
+
+  // Helper function to check if current user can manage a specific member
+  const canManageThisMember = (member) => {
+    if (!member || !canManageMembers) return false;
+    // Can't manage yourself
+    if (member.id === user?.id) return false;
+    // Owner can manage everyone
+    if (isProjectOwner) return true;
+    // Admin can't manage Owner or other Admins
+    if (member.role === 'Owner' || member.role === 'Admin') return false;
+    return true;
+  };
 
   // Fetch workspace members for Add Member dialog
   useEffect(() => {
@@ -382,6 +415,45 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     };
   }, [workspace?.id]);
 
+  // Fetch multiple approvers for the project
+  useEffect(() => {
+    const fetchApprovers = async () => {
+      if (!project?.id) return;
+      setLoadingApprovers(true);
+      try {
+        const res = await getProjectApprovers(project.id);
+        setProjectApprovers(res.data || []);
+      } catch (err) {
+        console.error('Failed to fetch project approvers:', err);
+        setProjectApprovers([]);
+      } finally {
+        setLoadingApprovers(false);
+      }
+    };
+
+    fetchApprovers();
+  }, [project?.id]);
+
+  // Fetch escalation settings for the project
+  useEffect(() => {
+    const fetchEscalation = async () => {
+      if (!project?.id) return;
+      try {
+        const res = await getEscalationSettings(project.id);
+        setEscalationSettings(res.data || {
+          escalation_enabled: true,
+          escalation_hours: 24,
+          escalation_levels: 2,
+          notify_requester_on_escalation: true,
+        });
+      } catch (err) {
+        console.error('Failed to fetch escalation settings:', err);
+      }
+    };
+
+    fetchEscalation();
+  }, [project?.id]);
+
   const availableWorkspaceMembers = workspaceMembers.filter((wm) => !members.some((m) => m.id === wm.id));
 
   const showToast = (severity, message) => {
@@ -409,6 +481,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
         auto_approve_admin_tasks: projectSettings.autoApproveAdminTasks,
         task_approval_required: projectSettings.taskApprovalRequired,
         enable_multi_project_links: projectSettings.enableMultiProjectLinks,
+        approval_tagged_member_id: projectSettings.approvalTaggedMemberId,
       };
       const response = await updateProject(project.id, payload);
       if (response?.data) {
@@ -421,6 +494,86 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
       showToast('error', 'Failed to save settings. Please try again.');
     } finally {
       setSettingsSaving(false);
+    }
+  };
+
+  const handleOwnershipTransfer = async () => {
+    if (!transferTargetMember || transferring) return;
+    
+    setTransferring(true);
+    try {
+      // Convert string back to number for API call
+      const targetUserId = parseInt(transferTargetMember, 10);
+      await transferProjectOwnership(project.id, targetUserId);
+      
+      // Refresh project data to get updated roles
+      const membersRes = await getProjectMembers(project.id);
+      setMembers(membersRes.data || []);
+      
+      setOwnershipTransferOpen(false);
+      setTransferTargetMember('');
+      showToast('success', 'Project ownership transferred successfully');
+      
+      // Optionally refresh the entire project data if needed
+      // window.location.reload(); // Uncomment if needed for full refresh
+    } catch (err) {
+      console.error('Failed to transfer ownership:', err);
+      showToast('error', 'Failed to transfer ownership. Please try again.');
+    } finally {
+      setTransferring(false);
+    }
+  };
+
+  // Handle adding a new approver
+  const handleAddApprover = async () => {
+    if (!newApproverMember || !project?.id) return;
+    
+    try {
+      const userId = parseInt(newApproverMember, 10);
+      await addProjectApprover(project.id, userId, projectApprovers.length + 1);
+      
+      // Refresh approvers list
+      const res = await getProjectApprovers(project.id);
+      setProjectApprovers(res.data || []);
+      setNewApproverMember('');
+      showToast('success', 'Approver added successfully');
+    } catch (err) {
+      console.error('Failed to add approver:', err);
+      showToast('error', 'Failed to add approver. Please try again.');
+    }
+  };
+
+  // Handle removing an approver
+  const handleRemoveApprover = async (userId) => {
+    if (!project?.id) return;
+    
+    try {
+      await removeProjectApprover(project.id, userId);
+      
+      // Refresh approvers list
+      const res = await getProjectApprovers(project.id);
+      setProjectApprovers(res.data || []);
+      showToast('success', 'Approver removed successfully');
+    } catch (err) {
+      console.error('Failed to remove approver:', err);
+      showToast('error', 'Failed to remove approver. Please try again.');
+    }
+  };
+
+  // Handle saving escalation settings
+  const handleSaveEscalationSettings = async () => {
+    if (!project?.id || savingEscalation) return;
+    
+    setSavingEscalation(true);
+    try {
+      const res = await updateEscalationSettings(project.id, escalationSettings);
+      setEscalationSettings(res.data || escalationSettings);
+      showToast('success', 'Escalation settings saved successfully');
+    } catch (err) {
+      console.error('Failed to save escalation settings:', err);
+      showToast('error', 'Failed to save escalation settings. Please try again.');
+    } finally {
+      setSavingEscalation(false);
     }
   };
 
@@ -688,7 +841,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   const showSectionColumn = projectColumnSettings.enable_section;
   const hasProjectClients = (project?.clients && project.clients.length > 0) || project?.primary_client;
   const showClientColumn = Boolean(hasProjectClients);
-  const tableColumnCount = 11
+  const tableColumnCount = 12  // Added Progress column
     + (showCategoryColumn ? 1 : 0)
     + (showSectionColumn ? 1 : 0)
     + (showClientColumn ? 1 : 0);
@@ -981,6 +1134,23 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
             <Box sx={{ width: 32, height: 32 }} /> 
           )}
           <Box sx={{ flex: 1, minWidth: 0 }}>
+            {task.task_code && (
+              <Chip
+                label={task.task_code}
+                size="small"
+                sx={{
+                  mb: 0.5,
+                  height: 18,
+                  fontSize: '0.6rem',
+                  fontWeight: 600,
+                  fontFamily: 'monospace',
+                  bgcolor: '#f1f5f9',
+                  color: '#475569',
+                  border: '1px solid #e2e8f0',
+                  '& .MuiChip-label': { px: 0.5 },
+                }}
+              />
+            )}
             <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
               {task.name}
             </Typography>
@@ -1922,6 +2092,17 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                               </Box>
                             </TableCell>
                             <TableCell sx={{ fontWeight: 600, width: 200, minWidth: 200, maxWidth: 200 }}>Notes</TableCell>
+                            <TableCell 
+                              sx={{ fontWeight: 600, cursor: 'pointer', userSelect: 'none', minWidth: 120 }}
+                              onClick={() => handleSort('completion_percentage')}
+                            >
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                Progress
+                                {sortColumn === 'completion_percentage' && (
+                                  sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
+                                )}
+                              </Box>
+                            </TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
@@ -1968,9 +2149,28 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                               }}
                             >
                               <TableCell sx={getFrozenColumnStyle('Task Name', 0)}>
-                                <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                                  {task.name}
-                                </Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  {task.task_code && (
+                                    <Chip
+                                      label={task.task_code}
+                                      size="small"
+                                      sx={{
+                                        height: 20,
+                                        fontSize: '0.65rem',
+                                        fontWeight: 600,
+                                        fontFamily: 'monospace',
+                                        bgcolor: '#f1f5f9',
+                                        color: '#475569',
+                                        border: '1px solid #e2e8f0',
+                                        flexShrink: 0,
+                                        '& .MuiChip-label': { px: 0.75 },
+                                      }}
+                                    />
+                                  )}
+                                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                                    {task.name}
+                                  </Typography>
+                                </Box>
                               </TableCell>
                               <TableCell sx={{ ...getFrozenColumnStyle('Assignee', 1), whiteSpace: 'nowrap' }}>
                                 {task.assignee_name || task.assignee_username ? (
@@ -2134,6 +2334,38 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                     {notesLabel}
                                   </Typography>
                                 </Tooltip>
+                              </TableCell>
+                              <TableCell sx={{ minWidth: 120 }}>
+                                {(() => {
+                                  const completionValue = task.completion_percentage ?? 0;
+                                  const getCompletionColor = (val) => {
+                                    if (val < 25) return '#ef4444';
+                                    if (val < 50) return '#f97316';
+                                    if (val < 75) return '#eab308';
+                                    return '#22c55e';
+                                  };
+                                  return (
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                      <LinearProgress
+                                        variant="determinate"
+                                        value={completionValue}
+                                        sx={{
+                                          flex: 1,
+                                          height: 6,
+                                          borderRadius: 3,
+                                          backgroundColor: '#e2e8f0',
+                                          '& .MuiLinearProgress-bar': {
+                                            borderRadius: 3,
+                                            backgroundColor: getCompletionColor(completionValue),
+                                          },
+                                        }}
+                                      />
+                                      <Typography variant="caption" sx={{ minWidth: 32, textAlign: 'right', fontWeight: 500 }}>
+                                        {completionValue}%
+                                      </Typography>
+                                    </Box>
+                                  );
+                                })()}
                               </TableCell>
                             </TableRow>
                             );
@@ -2644,7 +2876,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                   {/* Calendar Header */}
                   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
                     <Typography variant="h4" sx={{ fontWeight: 700, color: '#0f172a' }}>
-                      {currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                      {formatDateIST(currentMonth, 'MMMM yyyy')}
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
                       <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -2952,6 +3184,23 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                                         >
                                           {assigneeInitials}
                                         </Avatar>
+                                        {task.task_code && (
+                                          <Typography
+                                            variant="caption"
+                                            sx={{
+                                              fontSize: '0.55rem',
+                                              fontWeight: 600,
+                                              fontFamily: 'monospace',
+                                              color: '#64748b',
+                                              bgcolor: 'rgba(255,255,255,0.7)',
+                                              px: 0.5,
+                                              borderRadius: 0.5,
+                                              flexShrink: 0,
+                                            }}
+                                          >
+                                            {task.task_code}
+                                          </Typography>
+                                        )}
                                         <Typography
                                           variant="caption"
                                           sx={{
@@ -3047,7 +3296,8 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                   const name = (member.first_name || '') + (member.last_name ? ' ' + member.last_name : '');
                   const initials = (member.first_name ? member.first_name.charAt(0) : '') + (member.last_name ? member.last_name.charAt(0) : '');
                   const role = member.role || 'Member';
-                  const canManageMember = canManageMembers && (isProjectOwner || role !== 'Owner');
+                  const canManageMember = canManageThisMember(member);
+                  const isSelf = member.id === user?.id;
                   return (
                   <ListItem
                     key={member.id}
@@ -3096,31 +3346,75 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                 open={Boolean(memberActionAnchor)}
                 onClose={() => { setMemberActionAnchor(null); setMemberActionTarget(null); }}
               >
-                <MenuItem onClick={() => {
-                  setChangeRoleValue(memberActionTarget?.role || 'Member');
-                  setChangeRoleOpen(true);
-                  setMemberActionAnchor(null);
-                }}>Change Role</MenuItem>
-                <MenuItem onClick={async () => {
-                  if (!memberActionTarget) return;
-                  try {
-                    await removeProjectMember(project.id, memberActionTarget.id);
-                    const res = await getProjectMembers(project.id);
-                    setMembers(res.data || []);
-                    showToast('success', 'Member removed');
-                  } catch (err) {
-                    console.error('Failed to remove project member:', err);
-                    showToast('error', 'Failed to remove member');
-                  } finally {
+                {/* Change Role option */}
+                {memberActionTarget && canManageThisMember(memberActionTarget) ? (
+                  <MenuItem onClick={() => {
+                    setChangeRoleValue(memberActionTarget?.role || 'Member');
+                    setChangeRoleOpen(true);
                     setMemberActionAnchor(null);
-                    setMemberActionTarget(null);
-                  }
-                }}>Remove Member</MenuItem>
+                  }}>Change Role</MenuItem>
+                ) : memberActionTarget?.id === user?.id ? (
+                  <MenuItem disabled sx={{ opacity: 0.5 }}>
+                    <Typography variant="body2" color="text.secondary">Cannot change own role</Typography>
+                  </MenuItem>
+                ) : memberActionTarget?.role === 'Owner' ? (
+                  <MenuItem disabled sx={{ opacity: 0.5 }}>
+                    <Typography variant="body2" color="text.secondary">Owner - use transfer</Typography>
+                  </MenuItem>
+                ) : memberActionTarget?.role === 'Admin' && !isProjectOwner ? (
+                  <MenuItem disabled sx={{ opacity: 0.5 }}>
+                    <Typography variant="body2" color="text.secondary">Only Owner can manage Admins</Typography>
+                  </MenuItem>
+                ) : null}
+                
+                {/* Remove Member option */}
+                {memberActionTarget && canManageThisMember(memberActionTarget) ? (
+                  <MenuItem onClick={async () => {
+                    if (!memberActionTarget) return;
+                    try {
+                      await removeProjectMember(project.id, memberActionTarget.id);
+                      const res = await getProjectMembers(project.id);
+                      setMembers(res.data || []);
+                      showToast('success', 'Member removed');
+                    } catch (err) {
+                      console.error('Failed to remove project member:', err);
+                      showToast('error', err.response?.data?.error || 'Failed to remove member');
+                    } finally {
+                      setMemberActionAnchor(null);
+                      setMemberActionTarget(null);
+                    }
+                  }} sx={{ color: 'error.main' }}>Remove Member</MenuItem>
+                ) : memberActionTarget?.id === user?.id ? (
+                  <MenuItem disabled sx={{ color: 'text.secondary', opacity: 0.5 }}>
+                    Cannot remove yourself
+                  </MenuItem>
+                ) : memberActionTarget?.role === 'Owner' ? (
+                  <MenuItem disabled sx={{ color: 'text.secondary', opacity: 0.5 }}>
+                    Cannot remove Owner
+                  </MenuItem>
+                ) : memberActionTarget?.role === 'Admin' && !isProjectOwner ? (
+                  <MenuItem disabled sx={{ color: 'text.secondary', opacity: 0.5 }}>
+                    Only Owner can remove Admins
+                  </MenuItem>
+                ) : null}
               </Menu>
 
-              <Dialog open={changeRoleOpen} onClose={() => setChangeRoleOpen(false)}>
+              <Dialog open={changeRoleOpen} onClose={() => setChangeRoleOpen(false)} maxWidth="xs" fullWidth>
                 <DialogTitle>Change Project Role</DialogTitle>
                 <DialogContent>
+                  {memberActionTarget && (
+                    <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                      <Typography variant="subtitle2" color="text.secondary">
+                        Changing role for:
+                      </Typography>
+                      <Typography variant="body1" fontWeight={500}>
+                        {memberActionTarget.first_name} {memberActionTarget.last_name || ''}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Current role: {memberActionTarget.role}
+                      </Typography>
+                    </Box>
+                  )}
                   <FormControl fullWidth>
                     <InputLabel>Role</InputLabel>
                     <Select value={changeRoleValue} label="Role" onChange={(e) => setChangeRoleValue(e.target.value)}>
@@ -3128,24 +3422,36 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                       <MenuItem value="Member">Member</MenuItem>
                     </Select>
                   </FormControl>
+                  <Box sx={{ mt: 2, p: 2, bgcolor: 'info.50', borderRadius: 1, border: '1px solid', borderColor: 'info.200' }}>
+                    <Typography variant="caption" color="text.secondary">
+                      <strong>Project Role Permissions:</strong><br/>
+                      • <strong>Owner:</strong> Full control (use transfer to change)<br/>
+                      • <strong>Admin:</strong> Manage tasks, members (except other Admins)<br/>
+                      • <strong>Member:</strong> Work on assigned tasks
+                    </Typography>
+                  </Box>
                 </DialogContent>
                 <DialogActions>
                   <Button onClick={() => setChangeRoleOpen(false)}>Cancel</Button>
-                  <Button variant="contained" onClick={async () => {
-                    if (!memberActionTarget) return;
-                    try {
-                      await updateProjectMember(project.id, memberActionTarget.id, changeRoleValue);
-                      const res = await getProjectMembers(project.id);
-                      setMembers(res.data || []);
-                      showToast('success', 'Member role updated');
-                    } catch (err) {
-                      console.error('Failed to update project member:', err);
-                      showToast('error', 'Failed to update member');
-                    } finally {
-                      setChangeRoleOpen(false);
-                      setMemberActionTarget(null);
-                    }
-                  }}>Save</Button>
+                  <Button 
+                    variant="contained" 
+                    disabled={changeRoleValue === memberActionTarget?.role}
+                    onClick={async () => {
+                      if (!memberActionTarget) return;
+                      try {
+                        await updateProjectMember(project.id, memberActionTarget.id, changeRoleValue);
+                        const res = await getProjectMembers(project.id);
+                        setMembers(res.data || []);
+                        showToast('success', 'Member role updated');
+                      } catch (err) {
+                        console.error('Failed to update project member:', err);
+                        showToast('error', err.response?.data?.error || 'Failed to update member');
+                      } finally {
+                        setChangeRoleOpen(false);
+                        setMemberActionTarget(null);
+                      }
+                    }}
+                  >Save</Button>
                 </DialogActions>
               </Dialog>
             </Box>
@@ -3155,332 +3461,32 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           {/* Settings Tab */}
           {activeKey === 'settings' && (
             <Fade in timeout={300}>
-              <Box sx={{ maxWidth: 700, flex: 1, minHeight: 0, overflow: 'auto' }}>
-              <Alert severity="info" sx={{ mb: 4, borderRadius: 2 }}>
-                These settings control task permissions and approval workflows for this project.
-              </Alert>
-
-              <Typography variant="h6" sx={{ mb: 3 }}>Task Creation & Management</Typography>
-              
-              <Box sx={{ mb: 4 }}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={projectSettings.membersCanCreateTasks}
-                      onChange={(e) => setProjectSettings({ ...projectSettings, membersCanCreateTasks: e.target.checked })}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        Members can create tasks
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Allow project members to create new tasks
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ mb: 2, alignItems: 'flex-start' }}
+              <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', py: 2 }}>
+                <ProjectSettings
+                  project={project}
+                  projectSettings={projectSettings}
+                  setProjectSettings={setProjectSettings}
+                  members={members}
+                  user={user}
+                  userRole={userRole}
+                  onSaveSettings={handleSaveSettings}
+                  settingsSaving={settingsSaving}
+                  showToast={showToast}
+                  onOpenOwnershipTransfer={() => setOwnershipTransferOpen(true)}
                 />
-
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={projectSettings.enableMultiProjectLinks}
-                      onChange={(e) => setProjectSettings({ ...projectSettings, enableMultiProjectLinks: e.target.checked })}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        Enable multi-project linking
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Allow tasks to appear in other projects as linked references
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ mb: 2, alignItems: 'flex-start' }}
-                />
-              </Box>
-
-              <Divider sx={{ my: 3 }} />
-
-              <Typography variant="h6" sx={{ mb: 3 }}>Task Closure & Approval</Typography>
-              
-              <Box sx={{ mb: 3 }}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={projectSettings.membersCanCloseTasks}
-                      onChange={(e) => setProjectSettings({ ...projectSettings, membersCanCloseTasks: e.target.checked })}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        Members can request task closure
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Tasks will require approval before being marked as closed
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ mb: 2, alignItems: 'flex-start' }}
-                />
-
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={projectSettings.adminsCanApprove}
-                      onChange={(e) => setProjectSettings({ ...projectSettings, adminsCanApprove: e.target.checked })}
-                      disabled={projectSettings.onlyOwnerApproves}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        Admins can approve task closures
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Both Owner and Admins can approve task closures
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ mb: 2, alignItems: 'flex-start' }}
-                />
-
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={projectSettings.onlyOwnerApproves}
-                      onChange={(e) => setProjectSettings({ ...projectSettings, onlyOwnerApproves: e.target.checked, adminsCanApprove: !e.target.checked })}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        Only Owner can approve (Strict Mode)
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Only the project owner has final approval authority
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ mb: 2, alignItems: 'flex-start' }}
-                />
-
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={projectSettings.requireRejectionReason}
-                      onChange={(e) => setProjectSettings({ ...projectSettings, requireRejectionReason: e.target.checked })}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        Require rejection reason
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Approvers must provide a reason when rejecting task closures
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ mb: 2, alignItems: 'flex-start' }}
-                />
-
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={projectSettings.memberTaskApproval}
-                      onChange={(e) => setProjectSettings({ ...projectSettings, memberTaskApproval: e.target.checked })}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        Task approval for members
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Member-created tasks require approval before being active
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ mb: 2, alignItems: 'flex-start' }}
-                />
-
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={projectSettings.adminTaskApproval}
-                      onChange={(e) => setProjectSettings({ ...projectSettings, adminTaskApproval: e.target.checked })}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        Task approval for admin
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Admin-created tasks require approval before being active
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ mb: 2, alignItems: 'flex-start' }}
-                />
-
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={projectSettings.taskApprovalRequired}
-                      onChange={(e) => setProjectSettings({ ...projectSettings, taskApprovalRequired: e.target.checked })}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        Task approval required
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        When disabled, completed tasks will be auto-closed without requiring approval
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ mb: 2, alignItems: 'flex-start' }}
-                />
-
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={projectSettings.autoApproveOwnerTasks}
-                      onChange={(e) => setProjectSettings({ ...projectSettings, autoApproveOwnerTasks: e.target.checked })}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        Auto-approve owner's completed tasks
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Tasks marked complete by project owner are automatically closed (bypass approval)
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ mb: 2, alignItems: 'flex-start' }}
-                />
-
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={projectSettings.autoApproveAdminTasks}
-                      onChange={(e) => setProjectSettings({ ...projectSettings, autoApproveAdminTasks: e.target.checked })}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        Auto-approve admin's completed tasks
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Tasks marked complete by project admins are automatically closed (bypass approval)
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ mb: 2, alignItems: 'flex-start' }}
-                />
-              </Box>
-
-              <Divider sx={{ my: 3 }} />
-
-              <Typography variant="h6" sx={{ mb: 3 }}>Permissions & Visibility</Typography>
-
-              <Box sx={{ mb: 3 }}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={projectSettings.showSettingsToAdmin}
-                      onChange={(e) => setProjectSettings({ ...projectSettings, showSettingsToAdmin: e.target.checked })}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        Show project settings to admin
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Allow project admins to view and modify settings (Owner always has access)
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ mb: 2, alignItems: 'flex-start' }}
-                />
-              </Box>
-
-              <Divider sx={{ my: 3 }} />
-
-              <Typography variant="h6" sx={{ mb: 3 }}>Column Management</Typography>
-
-              <Box sx={{ mb: 3 }}>
-                <Typography variant="body2" sx={{ fontWeight: 500, mb: 1 }}>
-                  Freeze Columns
-                </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-                  Select columns to freeze (remain visible when scrolling horizontally)
-                </Typography>
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                  {['Task Name', 'Assignee', 'Stage', 'Status'].map((col) => (
-                    <FormControlLabel
-                      key={col}
-                      control={
-                        <Switch
-                          size="small"
-                          checked={projectSettings.freezeColumns?.includes(col)}
-                          onChange={(e) => {
-                            const newFrozen = e.target.checked
-                              ? [...(projectSettings.freezeColumns || []), col]
-                              : (projectSettings.freezeColumns || []).filter(c => c !== col);
-                            setProjectSettings({ ...projectSettings, freezeColumns: newFrozen });
-                          }}
-                        />
-                      }
-                      label={<Typography variant="body2">{col}</Typography>}
-                    />
-                  ))}
+                
+                {/* Custom Column Settings */}
+                <Box sx={{ maxWidth: 720, mx: 'auto', mt: 3 }}>
+                  <CustomColumnSettings
+                    projectId={project?.id}
+                    userRole={userRole}
+                    onSettingsChange={(newSettings) => {
+                      setProjectColumnSettings({ ...DEFAULT_CUSTOM_COLUMN_SETTINGS, ...(newSettings || {}) });
+                    }}
+                  />
                 </Box>
               </Box>
-
-              <TextField
-                fullWidth
-                type="number"
-                label="Auto-close after (days)"
-                value={projectSettings.autoCloseAfterDays}
-                onChange={(e) => setProjectSettings({ ...projectSettings, autoCloseAfterDays: parseInt(e.target.value) || 0 })}
-                helperText="Automatically close tasks after X days with no response (0 = disabled)"
-                sx={{ mb: 3 }}
-              />
-
-              <Button
-                variant="contained"
-                sx={{ textTransform: 'none', px: 4, mb: 4 }}
-                onClick={handleSaveSettings}
-                disabled={settingsSaving}
-              >
-                {settingsSaving ? 'Saving...' : 'Save Settings'}
-              </Button>
-
-              <Divider sx={{ my: 4 }} />
-
-              {/* Custom Column Settings (Feature 1) */}
-              <CustomColumnSettings
-                projectId={project?.id}
-                userRole={userRole}
-                onSettingsChange={(newSettings) => {
-                  setProjectColumnSettings({ ...DEFAULT_CUSTOM_COLUMN_SETTINGS, ...(newSettings || {}) });
-                }}
-              />
-            </Box>
-          </Fade>
+            </Fade>
           )}
         </Box>
       </Paper>
@@ -3596,6 +3602,91 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
         </DialogActions>
       </Dialog>
       
+      {/* Ownership Transfer Dialog */}
+      <Dialog
+        open={ownershipTransferOpen}
+        onClose={() => setOwnershipTransferOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 3 } }}
+      >
+        <DialogTitle sx={{ fontWeight: 600, color: 'warning.main' }}>
+          Transfer Project Ownership
+        </DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 3 }}>
+            <Typography variant="body2">
+              <strong>Warning:</strong> This will transfer all ownership rights to the selected member. 
+              You will become an Admin and lose the ability to transfer ownership again.
+            </Typography>
+          </Alert>
+          
+          <FormControl fullWidth sx={{ mt: 2 }}>
+            <InputLabel>Select New Owner</InputLabel>
+            <Select
+              value={transferTargetMember?.toString() || ''}
+              label="Select New Owner"
+              onChange={(e) => {
+                const newValue = e.target.value === '' ? '' : e.target.value;
+                console.log('Ownership transfer selection:', e.target.value, '->', newValue);
+                setTransferTargetMember(newValue);
+              }}
+            >
+              {/* Debug info */}
+              {process.env.NODE_ENV === 'development' && (members || []).length === 0 && (
+                <MenuItem disabled>
+                  <em>No members loaded yet... Total: {(members || []).length}</em>
+                </MenuItem>
+              )}
+              {process.env.NODE_ENV === 'development' && (members || []).length > 0 && (
+                <MenuItem disabled>
+                  <em>Debug: {(members || []).filter(m => m && m.id && m.id.toString() !== (user?.id || '').toString()).length} eligible members (excluding user {user?.id})</em>
+                </MenuItem>
+              )}
+              {(members || [])
+                .filter(m => m && m.id && m.id.toString() !== (user?.id || '').toString()) // All members except current user
+                .map(member => (
+                <MenuItem key={member.id} value={(member.id || '').toString()}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>
+                      {member.first_name?.[0] || 'U'}{member.last_name?.[0] || ''}
+                    </Avatar>
+                    <Typography>
+                      {member.first_name || 'Unknown'} {member.last_name || 'User'}
+                      <Chip 
+                        size="small" 
+                        label={member.role || 'Member'} 
+                        sx={{ ml: 1, height: 16, fontSize: '0.65rem' }}
+                      />
+                    </Typography>
+                  </Box>
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, pt: 0 }}>
+          <Button 
+            onClick={() => {
+              setOwnershipTransferOpen(false);
+              setTransferTargetMember('');
+            }}
+            sx={{ textTransform: 'none' }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleOwnershipTransfer}
+            disabled={!transferTargetMember || transferring}
+            color="warning" 
+            variant="contained"
+            sx={{ textTransform: 'none' }}
+          >
+            {transferring ? 'Transferring...' : 'Transfer Ownership'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Snackbar
         open={toast.open}
         autoHideDuration={4000}

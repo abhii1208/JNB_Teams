@@ -28,6 +28,16 @@ const clientsRouter = require('./routes/clients');
 const shareLinksRouter = require('./routes/shareLinks');
 const publicShareRouter = require('./routes/publicShare');
 const billingRouter = require('./routes/billing');
+const chatRouter = require('./routes/chat');
+const attachmentsRouter = require('./routes/attachments');
+const checklistRouter = require('./routes/checklist');
+const searchRouter = require('./routes/search');
+
+// Import WebSocket
+const { initializeChatWebSocket, chatBroadcast } = require('./chatWebSocket');
+
+// Import notification service for WebSocket integration
+const { setWebSocketBroadcast } = require('./services/notificationService');
 
 // Import background jobs
 const { initializeJobs, startJobs, stopJobs } = require('./jobs');
@@ -47,7 +57,7 @@ app.use(helmet({
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cors({
-  origin: [FRONTEND_URL, FRONTEND_URL_LOCAL, 'http://localhost:3000'],
+  origin: [FRONTEND_URL, FRONTEND_URL_LOCAL, 'http://localhost:3000', 'http://127.0.0.1:3000', 'null'],
   credentials: true,
 }));
 
@@ -65,7 +75,9 @@ function signToken(userId) {
 function authenticateToken(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  if (!token) return res.status(401).json({ error: 'Missing token' });
+  if (!token) {
+    return res.status(401).json({ error: 'Missing token' });
+  }
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     req.userId = payload.userId;
@@ -418,10 +430,31 @@ app.use('/api/admin', authenticateToken, adminRouter);
 app.use('/api/clients', authenticateToken, clientsRouter);
 app.use('/api/share-links', authenticateToken, shareLinksRouter);
 app.use('/api/billing', authenticateToken, billingRouter);
+app.use('/api/chat', authenticateToken, chatRouter);
+app.use('/api/attachments', authenticateToken, attachmentsRouter);
+app.use('/api/checklist', authenticateToken, checklistRouter);
+app.use('/api/search', authenticateToken, searchRouter);
 app.use('/public/share', publicShareRouter);
+
+// Serve test page
+const path = require('path');
+app.get('/test', (req, res) => {
+  res.sendFile(path.join(__dirname, 'test_api.html'));
+});
 
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  
+  // Initialize WebSocket server for chat
+  try {
+    initializeChatWebSocket(server);
+    
+    // Connect notification service to WebSocket for real-time notifications
+    setWebSocketBroadcast(chatBroadcast.notificationToUser);
+    console.log('✅ Notification WebSocket broadcast connected');
+  } catch (err) {
+    console.error('Failed to initialize chat WebSocket:', err);
+  }
   
   // Initialize and start background jobs
   try {

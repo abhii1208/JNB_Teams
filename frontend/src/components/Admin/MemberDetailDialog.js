@@ -25,6 +25,7 @@ import {
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { getAdminMemberDetails } from '../../apiClient';
+import { formatShortDateIST } from '../../utils/dateUtils';
 
 function MemberDetailDialog({ open, onClose, member, workspace, dateRange }) {
   const [data, setData] = useState(null);
@@ -61,7 +62,7 @@ function MemberDetailDialog({ open, onClose, member, workspace, dateRange }) {
 
   const formatDate = (dateString) => {
     if (!dateString) return '-';
-    return new Date(dateString).toLocaleDateString();
+    return formatShortDateIST(dateString);
   };
 
   const renderTaskList = (tasks, title) => {

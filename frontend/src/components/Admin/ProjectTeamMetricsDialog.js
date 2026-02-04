@@ -39,6 +39,7 @@ import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
 
 import { getAdminProjectTeamMetrics } from '../../apiClient';
+import { formatTimeIST } from '../../utils/dateUtils';
 
 // ----------------- Helpers -----------------
 const formatYYYYMMDDLocal = (d) => {
@@ -241,7 +242,7 @@ function ProjectTeamMetricsDialog({ open, onClose, project, workspace, dateRange
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
                 Team Performance Metrics
-                {lastRefreshed ? ` • Last refreshed ${lastRefreshed.toLocaleTimeString()}` : ''}
+                {lastRefreshed ? ` • Last refreshed ${formatTimeIST(lastRefreshed)}` : ''}
               </Typography>
             </Box>
           </Box>

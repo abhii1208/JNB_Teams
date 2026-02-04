@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 const { checkWorkspaceMember } = require('./workspaces');
+const notificationService = require('../services/notificationService');
 
 const CLIENT_ROLE_VALUES = new Set(['Primary', 'Billing', 'Stakeholder', 'Partner']);
 
@@ -254,6 +255,7 @@ router.put('/:projectId', async (req, res) => {
     client_ids,
     primary_client_id,
     project_clients,
+    approval_tagged_member_id,
   } = req.body;
 
   const hasClientListUpdate = client_ids !== undefined || project_clients !== undefined;
@@ -266,6 +268,31 @@ router.put('/:projectId', async (req, res) => {
     const normalizedFreezeColumns = freeze_columns !== undefined && freeze_columns !== null && typeof freeze_columns === 'object'
       ? JSON.stringify(freeze_columns)
       : freeze_columns;
+    
+    // Handle approval_tagged_member_id - verify member belongs to project
+    let normalizedApprovalTaggedMemberId = undefined;
+    if (approval_tagged_member_id !== undefined) {
+      if (approval_tagged_member_id === null || approval_tagged_member_id === '') {
+        normalizedApprovalTaggedMemberId = null;
+      } else {
+        const memberId = parseInt(approval_tagged_member_id, 10);
+        if (!Number.isFinite(memberId)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Invalid approval_tagged_member_id' });
+        }
+        // Verify user is a project member
+        const memberCheck = await client.query(
+          'SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2',
+          [req.params.projectId, memberId]
+        );
+        if (memberCheck.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Tagged member must be a project member' });
+        }
+        normalizedApprovalTaggedMemberId = memberId;
+      }
+    }
+
     const result = await client.query(
       `UPDATE projects 
        SET name = COALESCE($1, name), 
@@ -287,6 +314,7 @@ router.put('/:projectId', async (req, res) => {
            show_settings_to_admin = COALESCE($17, show_settings_to_admin),
            enable_multi_project_links = COALESCE($18, enable_multi_project_links),
            freeze_columns = COALESCE($19::jsonb, freeze_columns),
+           approval_tagged_member_id = COALESCE($21, approval_tagged_member_id),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $20 
        RETURNING *`,
@@ -311,6 +339,7 @@ router.put('/:projectId', async (req, res) => {
         enable_multi_project_links,
         normalizedFreezeColumns,
         req.params.projectId,
+        normalizedApprovalTaggedMemberId,
       ]
     );
     
@@ -457,7 +486,61 @@ router.put('/:projectId', async (req, res) => {
           'INSERT INTO activity_logs (user_id, workspace_id, project_id, type, action, item_name, details) VALUES ($1, $2, $3, $4, $5, $6, $7)',
           [req.userId, projectRow.workspace_id, req.params.projectId, 'Project', 'Primary Client Updated', projectRow.name, `Primary client set to ${primaryName}`]
         );
+        
+        // Notify about client change
+        await notificationService.notifyClientAdded({
+          projectId: parseInt(req.params.projectId),
+          projectName: projectRow.name,
+          clientName: primaryName,
+          adderId: req.userId,
+          workspaceId: projectRow.workspace_id,
+        });
       }
+    }
+    
+    // Send notifications for project settings changes
+    try {
+      // Determine what changed for notification
+      const settingsChanged = [];
+      if (admins_can_approve !== undefined) settingsChanged.push('approval permissions');
+      if (only_owner_approves !== undefined) settingsChanged.push('owner-only approval');
+      if (task_approval_required !== undefined) settingsChanged.push('approval requirement');
+      if (members_can_create_tasks !== undefined) settingsChanged.push('task creation permissions');
+      if (members_can_close_tasks !== undefined) settingsChanged.push('task closure permissions');
+      if (approval_tagged_member_id !== undefined) settingsChanged.push('approval reviewer');
+      
+      if (settingsChanged.length > 0) {
+        const changeDescription = settingsChanged.join(', ');
+        
+        // Get user's role to determine if they are admin or owner
+        const roleResult = await client.query(
+          'SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2',
+          [req.params.projectId, req.userId]
+        );
+        const userRole = roleResult.rows[0]?.role;
+        
+        if (userRole === 'Admin') {
+          // Notify owner when admin makes changes
+          await notificationService.notifyOwnerOfAdminChanges({
+            projectId: parseInt(req.params.projectId),
+            projectName: projectRow.name,
+            adminId: req.userId,
+            workspaceId: projectRow.workspace_id,
+            changeDescription,
+          });
+        }
+        
+        // Notify all admins and owner about settings changes
+        await notificationService.notifyProjectSettingsChanged({
+          projectId: parseInt(req.params.projectId),
+          projectName: projectRow.name,
+          changerId: req.userId,
+          workspaceId: projectRow.workspace_id,
+          changeDescription,
+        });
+      }
+    } catch (notifErr) {
+      console.error('Failed to send project settings notifications:', notifErr);
     }
 
     await client.query('COMMIT');
@@ -542,8 +625,14 @@ router.post('/:projectId/members', async (req, res) => {
 router.put('/:projectId/members/:userId', async (req, res) => {
   const { role } = req.body;
   const { projectId, userId } = req.params;
+  const targetUserId = parseInt(userId, 10);
 
   try {
+    // Prevent users from changing their own role
+    if (targetUserId === req.userId) {
+      return res.status(403).json({ error: 'You cannot change your own role. Ask another admin or owner to do this.' });
+    }
+
     // permission: only project Owner/Admin or workspace Owner/Admin/ProjectAdmin
     const projRes = await pool.query('SELECT workspace_id FROM projects WHERE id = $1', [projectId]);
     if (projRes.rows.length === 0) return res.status(404).json({ error: 'Project not found' });
@@ -552,26 +641,42 @@ router.put('/:projectId/members/:userId', async (req, res) => {
     const pmRes = await pool.query('SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, req.userId]);
     const requesterProjectRole = pmRes.rows[0]?.role;
     const isRequesterProjectOwner = requesterProjectRole === 'Owner';
-    const isRequesterProjectAdmin = requesterProjectRole === 'Owner' || requesterProjectRole === 'Admin';
+    const isRequesterProjectAdmin = requesterProjectRole === 'Admin';
 
     const wmRes = await pool.query('SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [workspaceId, req.userId]);
     const requesterWorkspaceRole = wmRes.rows[0]?.role;
     const hasWorkspaceAccess = ['Owner','Admin','ProjectAdmin'].includes(requesterWorkspaceRole);
     const isRequesterWorkspaceOwner = requesterWorkspaceRole === 'Owner';
+    const isRequesterWorkspaceAdmin = requesterWorkspaceRole === 'Admin';
 
-    const allowed = isRequesterProjectAdmin || hasWorkspaceAccess;
+    const allowed = isRequesterProjectOwner || isRequesterProjectAdmin || hasWorkspaceAccess;
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions to update project member' });
 
-    const targetRes = await pool.query('SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, userId]);
+    const targetRes = await pool.query('SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, targetUserId]);
     if (targetRes.rows.length === 0) return res.status(404).json({ error: 'Project member not found' });
     const targetRole = targetRes.rows[0].role;
 
-    const canManageOwner = isRequesterProjectOwner || isRequesterWorkspaceOwner;
-    if ((targetRole === 'Owner' || role === 'Owner') && !canManageOwner) {
-      return res.status(403).json({ error: 'Only project owners can modify owner access' });
+    // Owner role cannot be changed (only transferred)
+    if (targetRole === 'Owner') {
+      return res.status(403).json({ error: 'Owner role cannot be changed. Use ownership transfer instead.' });
     }
 
-    await pool.query('UPDATE project_members SET role = $1 WHERE project_id = $2 AND user_id = $3', [role, projectId, userId]);
+    // Only Owner (project or workspace) can assign Owner role
+    if (role === 'Owner' && !isRequesterProjectOwner && !isRequesterWorkspaceOwner) {
+      return res.status(403).json({ error: 'Only project or workspace owners can assign owner role' });
+    }
+
+    // Project Admin cannot modify other Project Admins (only Owner can)
+    if (targetRole === 'Admin' && isRequesterProjectAdmin && !isRequesterProjectOwner && !isRequesterWorkspaceOwner) {
+      return res.status(403).json({ error: 'Project admins cannot change other admins\' access. Only Owner can modify admin roles.' });
+    }
+
+    // Workspace Admin cannot modify Project Admins (only Workspace Owner or Project Owner can)
+    if (targetRole === 'Admin' && isRequesterWorkspaceAdmin && !isRequesterWorkspaceOwner && !isRequesterProjectOwner) {
+      return res.status(403).json({ error: 'Workspace admins cannot change project admin access. Only Workspace Owner or Project Owner can.' });
+    }
+
+    await pool.query('UPDATE project_members SET role = $1 WHERE project_id = $2 AND user_id = $3', [role, projectId, targetUserId]);
     res.json({ message: 'Project member updated' });
   } catch (err) {
     console.error('Update project member error:', err);
@@ -582,8 +687,14 @@ router.put('/:projectId/members/:userId', async (req, res) => {
 // Remove project member
 router.delete('/:projectId/members/:userId', async (req, res) => {
   const { projectId, userId } = req.params;
+  const targetUserId = parseInt(userId, 10);
 
   try {
+    // Prevent users from removing themselves
+    if (targetUserId === req.userId) {
+      return res.status(403).json({ error: 'You cannot remove yourself from the project.' });
+    }
+
     const projRes = await pool.query('SELECT workspace_id FROM projects WHERE id = $1', [projectId]);
     if (projRes.rows.length === 0) return res.status(404).json({ error: 'Project not found' });
     const workspaceId = projRes.rows[0].workspace_id;
@@ -591,26 +702,37 @@ router.delete('/:projectId/members/:userId', async (req, res) => {
     const pmRes = await pool.query('SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, req.userId]);
     const requesterProjectRole = pmRes.rows[0]?.role;
     const isRequesterProjectOwner = requesterProjectRole === 'Owner';
-    const isRequesterProjectAdmin = requesterProjectRole === 'Owner' || requesterProjectRole === 'Admin';
+    const isRequesterProjectAdmin = requesterProjectRole === 'Admin';
 
     const wmRes = await pool.query('SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [workspaceId, req.userId]);
     const requesterWorkspaceRole = wmRes.rows[0]?.role;
     const hasWorkspaceAccess = ['Owner','Admin','ProjectAdmin'].includes(requesterWorkspaceRole);
     const isRequesterWorkspaceOwner = requesterWorkspaceRole === 'Owner';
+    const isRequesterWorkspaceAdmin = requesterWorkspaceRole === 'Admin';
 
-    const allowed = isRequesterProjectAdmin || hasWorkspaceAccess;
+    const allowed = isRequesterProjectOwner || isRequesterProjectAdmin || hasWorkspaceAccess;
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions to remove project member' });
 
-    const targetRes = await pool.query('SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, userId]);
+    const targetRes = await pool.query('SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, targetUserId]);
     if (targetRes.rows.length === 0) return res.status(404).json({ error: 'Project member not found' });
     const targetRole = targetRes.rows[0].role;
 
-    const canManageOwner = isRequesterProjectOwner || isRequesterWorkspaceOwner;
-    if (targetRole === 'Owner' && !canManageOwner) {
-      return res.status(403).json({ error: 'Only project owners can modify owner access' });
+    // Cannot remove Owner (must transfer ownership first)
+    if (targetRole === 'Owner') {
+      return res.status(403).json({ error: 'Cannot remove project owner. Transfer ownership first.' });
     }
 
-    await pool.query('DELETE FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, userId]);
+    // Project Admin cannot remove other Project Admins (only Owner can)
+    if (targetRole === 'Admin' && isRequesterProjectAdmin && !isRequesterProjectOwner && !isRequesterWorkspaceOwner) {
+      return res.status(403).json({ error: 'Project admins cannot remove other admins. Only Owner can remove admin members.' });
+    }
+
+    // Workspace Admin cannot remove Project Admins (only Workspace Owner or Project Owner can)
+    if (targetRole === 'Admin' && isRequesterWorkspaceAdmin && !isRequesterWorkspaceOwner && !isRequesterProjectOwner) {
+      return res.status(403).json({ error: 'Workspace admins cannot remove project admins. Only Workspace Owner or Project Owner can.' });
+    }
+
+    await pool.query('DELETE FROM project_members WHERE project_id = $1 AND user_id = $2', [projectId, targetUserId]);
     res.json({ message: 'Project member removed' });
   } catch (err) {
     console.error('Remove project member error:', err);
@@ -673,6 +795,181 @@ router.put('/:projectId/access', async (req, res) => {
   } catch (err) {
     console.error('Update last accessed error:', err);
     res.status(500).json({ error: 'Failed to update last accessed' });
+  }
+});
+
+// Transfer project ownership
+router.post('/:projectId/transfer-ownership', async (req, res) => {
+  const { projectId } = req.params;
+  const { new_owner_id, reason } = req.body;
+
+  if (!new_owner_id) {
+    return res.status(400).json({ error: 'new_owner_id is required' });
+  }
+
+  const newOwnerId = parseInt(new_owner_id, 10);
+  if (!Number.isFinite(newOwnerId)) {
+    return res.status(400).json({ error: 'Invalid new_owner_id' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Get project info
+    const projRes = await client.query(
+      'SELECT id, workspace_id, created_by, name FROM projects WHERE id = $1',
+      [projectId]
+    );
+    if (projRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    const project = projRes.rows[0];
+
+    // Check if requester is current project owner or workspace owner
+    const pmRes = await client.query(
+      'SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2',
+      [projectId, req.userId]
+    );
+    const isProjectOwner = pmRes.rows[0]?.role === 'Owner';
+
+    const wmRes = await client.query(
+      'SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2',
+      [project.workspace_id, req.userId]
+    );
+    const isWorkspaceOwner = wmRes.rows[0]?.role === 'Owner';
+
+    if (!isProjectOwner && !isWorkspaceOwner) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Only project owner or workspace owner can transfer ownership' });
+    }
+
+    // Verify new owner is a project member
+    const newOwnerRes = await client.query(
+      'SELECT user_id, role FROM project_members WHERE project_id = $1 AND user_id = $2',
+      [projectId, newOwnerId]
+    );
+    if (newOwnerRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'New owner must be an existing project member' });
+    }
+
+    // Cannot transfer to yourself
+    if (newOwnerId === req.userId) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Cannot transfer ownership to yourself' });
+    }
+
+    // Find current owner
+    const currentOwnerRes = await client.query(
+      'SELECT user_id FROM project_members WHERE project_id = $1 AND role = $2',
+      [projectId, 'Owner']
+    );
+    const currentOwnerId = currentOwnerRes.rows[0]?.user_id;
+
+    // Update current owner to Admin (if exists and not the new owner)
+    if (currentOwnerId && currentOwnerId !== newOwnerId) {
+      await client.query(
+        'UPDATE project_members SET role = $1 WHERE project_id = $2 AND user_id = $3',
+        ['Admin', projectId, currentOwnerId]
+      );
+    }
+
+    // Update new owner to Owner
+    await client.query(
+      'UPDATE project_members SET role = $1 WHERE project_id = $2 AND user_id = $3',
+      ['Owner', projectId, newOwnerId]
+    );
+
+    // Update project created_by to reflect new owner
+    await client.query(
+      'UPDATE projects SET created_by = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [newOwnerId, projectId]
+    );
+
+    // Log transfer history
+    await client.query(
+      `INSERT INTO project_ownership_transfers 
+       (project_id, from_user_id, to_user_id, transferred_by, reason)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [projectId, currentOwnerId || req.userId, newOwnerId, req.userId, reason || null]
+    );
+
+    // Log activity
+    await client.query(
+      `INSERT INTO activity_logs 
+       (user_id, workspace_id, project_id, type, action, item_name, details)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        req.userId,
+        project.workspace_id,
+        projectId,
+        'Project',
+        'Ownership Transferred',
+        project.name,
+        `Project ownership transferred to new owner`
+      ]
+    );
+
+    // Notify new owner
+    await client.query(
+      `INSERT INTO notifications 
+       (user_id, type, title, message, project_id)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        newOwnerId,
+        'Project',
+        'Project Ownership Transferred',
+        `You are now the owner of project "${project.name}"`,
+        projectId
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    res.json({ message: 'Project ownership transferred successfully' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Transfer ownership error:', err);
+    res.status(500).json({ error: 'Failed to transfer project ownership' });
+  } finally {
+    client.release();
+  }
+});
+
+// Get project ownership transfer history
+router.get('/:projectId/transfer-history', async (req, res) => {
+  const { projectId } = req.params;
+
+  try {
+    // Verify access
+    const accessRes = await pool.query(
+      'SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2',
+      [projectId, req.userId]
+    );
+    if (accessRes.rows.length === 0) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const result = await pool.query(`
+      SELECT 
+        pot.*,
+        from_user.first_name || ' ' || from_user.last_name as from_user_name,
+        to_user.first_name || ' ' || to_user.last_name as to_user_name,
+        transferred_by_user.first_name || ' ' || transferred_by_user.last_name as transferred_by_name
+      FROM project_ownership_transfers pot
+      JOIN users from_user ON pot.from_user_id = from_user.id
+      JOIN users to_user ON pot.to_user_id = to_user.id
+      JOIN users transferred_by_user ON pot.transferred_by = transferred_by_user.id
+      WHERE pot.project_id = $1
+      ORDER BY pot.transferred_at DESC
+    `, [projectId]);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Get transfer history error:', err);
+    res.status(500).json({ error: 'Failed to fetch transfer history' });
   }
 });
 

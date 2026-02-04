@@ -31,6 +31,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 
 import { getAdminTeam } from '../../apiClient';
 import MemberDetailDialog from './MemberDetailDialog';
+import { formatTimeIST } from '../../utils/dateUtils';
 
 // ---------- Helpers ----------
 const toJSDate = (v) => {
@@ -328,7 +329,7 @@ function AdminTeamTab({ workspace, dateRange }) {
 
         {lastRefreshed && (
           <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
-            Last refreshed: {lastRefreshed.toLocaleTimeString()}
+            Last refreshed: {formatTimeIST(lastRefreshed)}
           </Typography>
         )}
 

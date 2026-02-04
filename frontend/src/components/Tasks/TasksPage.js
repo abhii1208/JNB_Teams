@@ -86,6 +86,7 @@ import {
   getFullUserPreferences,
   patchUserPreferences,
 } from '../../apiClient';
+import { formatShortDateIST } from '../../utils/dateUtils';
 
 const VIEW_TYPES = [
   { id: 'table', label: 'Table', icon: <ViewListIcon /> },
@@ -503,8 +504,18 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
           setHasPersistedPreferences(hasAnyPrefs);
           // Apply view type
           if (prefs.last_view_type) setViewType(prefs.last_view_type);
-          // Apply visible columns
-          if (prefs.visible_columns?.length) setVisibleColumns(prefs.visible_columns);
+          // Apply visible columns - add completion_percentage if not present
+          if (prefs.visible_columns?.length) {
+            const columns = [...prefs.visible_columns];
+            // Add completion_percentage before actions if not already present
+            if (!columns.includes('completion_percentage') && columns.includes('actions')) {
+              const actionsIndex = columns.indexOf('actions');
+              columns.splice(actionsIndex, 0, 'completion_percentage');
+            } else if (!columns.includes('completion_percentage')) {
+              columns.push('completion_percentage');
+            }
+            setVisibleColumns(columns);
+          }
           // Apply column order
           if (prefs.column_order?.length) setColumnOrder(prefs.column_order);
           // Apply filters
@@ -735,13 +746,33 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
         end_date: endOfMonth.toISOString().split('T')[0],
       };
       if (filters.projects.length > 0) params.projects = filters.projects.join(',');
+      if (filters.assignee && filters.assignee !== 'all') params.assignee = filters.assignee;
       
       const res = await getCalendarTasks(workspace.id, params);
-      setCalendarTasks(res.data || []);
+      const items = Array.isArray(res.data) ? res.data : [];
+      if (filters.assignee && filters.assignee !== 'all') {
+        if (filters.assignee === 'unassigned') {
+          setCalendarTasks(items.filter((task) => !task.assignee_id));
+        } else if (filters.assignee === 'me') {
+          if (user?.id) {
+            setCalendarTasks(
+              items.filter((task) => String(task.assignee_id) === String(user.id))
+            );
+          } else {
+            setCalendarTasks(items);
+          }
+        } else {
+          setCalendarTasks(
+            items.filter((task) => String(task.assignee_id) === String(filters.assignee))
+          );
+        }
+      } else {
+        setCalendarTasks(items);
+      }
     } catch (err) {
       console.error('Failed to fetch calendar tasks:', err);
     }
-  }, [workspace?.id, viewType, calendarDate, filters.projects]);
+  }, [workspace?.id, viewType, calendarDate, filters.projects, filters.assignee, user?.id]);
 
   // Load tasks when params change
   useEffect(() => {
@@ -1065,6 +1096,14 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
     return fullName || member.username || member.email || 'Unknown';
   };
 
+  const getAssigneeFilterLabel = (value) => {
+    if (!value || value === 'all') return 'All Assignees';
+    if (value === 'me') return 'Assigned to me';
+    if (value === 'unassigned') return 'Unassigned';
+    const member = workspaceMembers.find((m) => String(m.id) === String(value));
+    return member ? getMemberLabel(member) : 'Assignee';
+  };
+
   const applyBulkDueDate = () => {
     if (!bulkDueDate) return;
     handleBulkUpdate({ due_date: bulkDueDate });
@@ -1140,10 +1179,10 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
       task.status || '',
       task.priority || '',
       task.assignee_name || '',
-      task.due_date ? new Date(task.due_date).toLocaleDateString() : '',
-      task.target_date ? new Date(task.target_date).toLocaleDateString() : '',
+      task.due_date ? formatShortDateIST(task.due_date) : '',
+      task.target_date ? formatShortDateIST(task.target_date) : '',
       task.created_by_name || '',
-      task.created_at ? new Date(task.created_at).toLocaleDateString() : '',
+      task.created_at ? formatShortDateIST(task.created_at) : '',
       (task.notes || '').replace(/"/g, '""')
     ]);
     
@@ -1241,10 +1280,18 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
           <Select
             value={filters.assignee}
             onChange={(e) => setFilters(prev => ({ ...prev, assignee: e.target.value }))}
+            displayEmpty
+            renderValue={(selected) => getAssigneeFilterLabel(selected)}
           >
             <MenuItem value="all">All Assignees</MenuItem>
             <MenuItem value="me">Assigned to me</MenuItem>
             <MenuItem value="unassigned">Unassigned</MenuItem>
+            {workspaceMembers.length > 0 && <Divider sx={{ my: 1 }} />}
+            {workspaceMembers.map((member) => (
+              <MenuItem key={member.id} value={member.id}>
+                {getMemberLabel(member)}
+              </MenuItem>
+            ))}
           </Select>
         </FormControl>
       </Box>
@@ -1857,7 +1904,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
             {filters.assignee !== 'all' && (
               <Chip
                 size="small"
-                label={filters.assignee === 'me' ? 'Assigned to me' : 'Unassigned'}
+                label={getAssigneeFilterLabel(filters.assignee)}
                 onDelete={() => setFilters(prev => ({ ...prev, assignee: 'all' }))}
               />
             )}

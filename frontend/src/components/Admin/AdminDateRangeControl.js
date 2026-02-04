@@ -13,6 +13,7 @@ import {
 } from '@mui/material';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import { formatShortDateIST } from '../../utils/dateUtils';
 
 function AdminDateRangeControl({ dateRange, onDateRangeChange }) {
   const [anchorEl, setAnchorEl] = useState(null);
@@ -45,7 +46,7 @@ function AdminDateRangeControl({ dateRange, onDateRangeChange }) {
 
   const formatDateRange = () => {
     if (dateRange.preset === 'custom' && dateRange.from && dateRange.to) {
-      return `${new Date(dateRange.from).toLocaleDateString()} - ${new Date(dateRange.to).toLocaleDateString()}`;
+      return `${formatShortDateIST(dateRange.from)} - ${formatShortDateIST(dateRange.to)}`;
     }
     const preset = presets.find(p => p.value === dateRange.preset);
     return preset?.label || 'Last 30 days';

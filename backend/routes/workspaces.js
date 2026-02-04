@@ -270,21 +270,36 @@ router.put('/:workspaceId/members/:userId', checkWorkspaceMember, async (req, re
 
   const { userId } = req.params;
   const { role } = req.body;
+  const targetUserId = parseInt(userId, 10);
+  
   if (!role) return res.status(400).json({ error: 'Role is required' });
 
   try {
+    // Prevent users from changing their own role
+    if (targetUserId === req.userId) {
+      return res.status(403).json({ error: 'You cannot change your own role. Ask another admin or owner to do this.' });
+    }
+
     if (role === 'Owner' && req.workspaceRole !== 'Owner') {
       return res.status(403).json({ error: 'Only Owner can assign Owner role' });
     }
 
-    // Prevent changing the owner by non-owner
-    const targetRes = await pool.query('SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [req.params.workspaceId, userId]);
+    // Get target user's current role
+    const targetRes = await pool.query('SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [req.params.workspaceId, targetUserId]);
     if (targetRes.rows.length === 0) return res.status(404).json({ error: 'Member not found' });
-    if (targetRes.rows[0].role === 'Owner' && req.workspaceRole !== 'Owner') {
-      return res.status(403).json({ error: 'Only Owner can change Owner role' });
+    const targetRole = targetRes.rows[0].role;
+
+    // Prevent changing the owner's role (owner can only transfer, not demote)
+    if (targetRole === 'Owner') {
+      return res.status(403).json({ error: 'Owner role cannot be changed. Use ownership transfer instead.' });
     }
 
-    await pool.query('UPDATE workspace_members SET role = $1 WHERE workspace_id = $2 AND user_id = $3', [role, req.params.workspaceId, userId]);
+    // Admin cannot change other Admin's role (only Owner can)
+    if (targetRole === 'Admin' && req.workspaceRole === 'Admin') {
+      return res.status(403).json({ error: 'Admins cannot change other admins\' access. Only Owner can modify admin roles.' });
+    }
+
+    await pool.query('UPDATE workspace_members SET role = $1 WHERE workspace_id = $2 AND user_id = $3', [role, req.params.workspaceId, targetUserId]);
     res.json({ message: 'Role updated' });
   } catch (err) {
     console.error('Update workspace member role error:', err);
@@ -300,14 +315,29 @@ router.delete('/:workspaceId/members/:userId', checkWorkspaceMember, async (req,
   }
 
   const { userId } = req.params;
+  const targetUserId = parseInt(userId, 10);
+  
   try {
-    const targetRes = await pool.query('SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [req.params.workspaceId, userId]);
-    if (targetRes.rows.length === 0) return res.status(404).json({ error: 'Member not found' });
-    if (targetRes.rows[0].role === 'Owner') {
-      return res.status(403).json({ error: 'Cannot remove the Owner from a workspace' });
+    // Prevent users from removing themselves
+    if (targetUserId === req.userId) {
+      return res.status(403).json({ error: 'You cannot remove yourself from the workspace.' });
     }
 
-    await pool.query('DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [req.params.workspaceId, userId]);
+    const targetRes = await pool.query('SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [req.params.workspaceId, targetUserId]);
+    if (targetRes.rows.length === 0) return res.status(404).json({ error: 'Member not found' });
+    const targetRole = targetRes.rows[0].role;
+
+    // Cannot remove the Owner
+    if (targetRole === 'Owner') {
+      return res.status(403).json({ error: 'Cannot remove the Owner from a workspace. Transfer ownership first.' });
+    }
+
+    // Admin cannot remove other Admins (only Owner can)
+    if (targetRole === 'Admin' && req.workspaceRole === 'Admin') {
+      return res.status(403).json({ error: 'Admins cannot remove other admins. Only Owner can remove admin members.' });
+    }
+
+    await pool.query('DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [req.params.workspaceId, targetUserId]);
     res.json({ message: 'Member removed' });
   } catch (err) {
     console.error('Remove workspace member error:', err);

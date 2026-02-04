@@ -20,6 +20,7 @@ import {
     Avatar,
     Tooltip
 } from '@mui/material';
+import { formatShortDateIST } from '../../utils/dateUtils';
 import AddIcon from '@mui/icons-material/Add';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import SearchIcon from '@mui/icons-material/Search';
@@ -451,11 +452,7 @@ function SeriesList({ workspace, onCreateNew, onEdit, onViewDetail }) {
                                         }}>
                                             <EventRepeatIcon sx={{ fontSize: 14, color: '#3b82f6' }} />
                                             <Typography variant="caption" sx={{ color: '#3b82f6', fontWeight: 500 }}>
-                                                Next: {new Date(item.next_occurrence).toLocaleDateString('en-GB', { 
-                                                    day: '2-digit', 
-                                                    month: 'short', 
-                                                    year: 'numeric' 
-                                                })}
+                                                Next: {formatShortDateIST(item.next_occurrence)}
                                             </Typography>
                                         </Box>
                                     )}

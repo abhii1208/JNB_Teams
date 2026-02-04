@@ -54,6 +54,7 @@ import {
   isValid,
   startOfDay,
 } from 'date-fns';
+import { getTodayIST, formatDateIST, isPastIST, isTodayIST } from '../../utils/dateUtils';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WEEKDAYS_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -81,7 +82,7 @@ const getStatusBgColor = (status) => {
 
 // Get color for tasks based on date
 const getTaskDateColor = (dateStr) => {
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const today = getTodayIST();
   const taskDate = dateStr;
   
   if (taskDate < today) return '#dc2626'; // Overdue - red
@@ -142,6 +143,7 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
     return localStorage.getItem('calendarDensity') || 'comfortable';
   });
   const [filterAnchor, setFilterAnchor] = useState(null);
+  // Empty default - show all tasks (users can filter if needed)
   const [statusFilter, setStatusFilter] = useState([]);
   const [priorityFilter, setPriorityFilter] = useState([]);
   const [draggedTask, setDraggedTask] = useState(null);
@@ -316,7 +318,16 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
         key={task.id}
         title={
           <Box>
-            <Typography variant="body2" fontWeight={600}>{task.name}</Typography>
+            <Typography 
+              variant="body2" 
+              fontWeight={600}
+              sx={{
+                textDecoration: task.status === 'Completed' || task.status === 'Closed' ? 'line-through' : 'none',
+                color: task.status === 'Completed' || task.status === 'Closed' ? 'text.secondary' : 'inherit',
+              }}
+            >
+              {task.name}
+            </Typography>
             <Typography variant="caption" display="block">Project: {task.project_name}</Typography>
             <Typography variant="caption" display="block">Status: {task.status}</Typography>
             <Typography variant="caption" display="block">Priority: {task.priority}</Typography>
@@ -352,6 +363,24 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
             },
           }}
         >
+          {/* Task Code */}
+          {task.task_code && (
+            <Typography
+              variant="caption"
+              sx={{
+                fontSize: isCompact ? '0.55rem' : '0.6rem',
+                fontWeight: 600,
+                fontFamily: 'monospace',
+                color: '#64748b',
+                bgcolor: '#f1f5f9',
+                px: 0.5,
+                borderRadius: 0.5,
+                flexShrink: 0,
+              }}
+            >
+              {task.task_code}
+            </Typography>
+          )}
           <Typography
             variant="caption"
             sx={{
@@ -362,8 +391,8 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
               whiteSpace: 'nowrap',
               fontSize: isCompact ? '0.65rem' : '0.7rem',
               fontWeight: 500,
-              color: task.status === 'Completed' ? 'text.secondary' : dateColor,
-              textDecoration: task.status === 'Completed' ? 'line-through' : 'none',
+              color: task.status === 'Completed' || task.status === 'Closed' ? 'text.secondary' : dateColor,
+              textDecoration: task.status === 'Completed' || task.status === 'Closed' ? 'line-through' : 'none',
             }}
           >
             {task.name}
@@ -564,7 +593,29 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
                                 borderRadius: 1,
                               }}
                             />
-                            <Typography variant="body2" fontWeight={500}>
+                            {task.task_code && (
+                              <Chip
+                                label={task.task_code}
+                                size="small"
+                                sx={{
+                                  height: 20,
+                                  fontSize: '0.65rem',
+                                  fontWeight: 600,
+                                  fontFamily: 'monospace',
+                                  bgcolor: '#f1f5f9',
+                                  color: '#475569',
+                                  '& .MuiChip-label': { px: 0.75 },
+                                }}
+                              />
+                            )}
+                            <Typography 
+                              variant="body2" 
+                              fontWeight={500}
+                              sx={{
+                                textDecoration: task.status === 'Completed' || task.status === 'Closed' ? 'line-through' : 'none',
+                                color: task.status === 'Completed' || task.status === 'Closed' ? 'text.secondary' : 'inherit',
+                              }}
+                            >
                               {task.name}
                             </Typography>
                             {indicators.map((ind, i) => (

@@ -7,6 +7,7 @@ const cron = require('node-cron');
 const { generateAllPendingInstances } = require('../services/instanceGenerator');
 const { sendPendingReminders } = require('./sendReminders');
 const { autoCloseOverdueTasks } = require('./autoCloseTasks');
+const approvalEscalation = require('./approvalEscalation');
 
 // Job registry
 const jobs = {};
@@ -93,6 +94,23 @@ function initializeJobs() {
                 console.log(`[Job] Nightly generation: ${result.totalGenerated} created across ${result.processed} series`);
             } catch (err) {
                 console.error('[Job] Nightly generation failed:', err);
+            }
+        });
+    }, { scheduled: false });
+
+    // ============================================
+    // 5. Approval Escalation (Every 15 minutes)
+    // ============================================
+    jobs.approvalEscalation = cron.schedule('*/15 * * * *', async () => {
+        await runNoOverlap('approvalEscalation', async () => {
+            console.log('[Job] Checking for approval escalations...');
+            try {
+                const result = await approvalEscalation.run();
+                if (result.escalated > 0 || result.reminders > 0) {
+                    console.log(`[Job] Escalation: ${result.escalated} escalated, ${result.reminders} reminders sent`);
+                }
+            } catch (err) {
+                console.error('[Job] Approval escalation failed:', err);
             }
         });
     }, { scheduled: false });

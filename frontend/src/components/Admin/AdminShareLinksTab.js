@@ -28,6 +28,7 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteIcon from '@mui/icons-material/Delete';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { listShareLinks, revokeShareLink, updateShareLink } from '../../apiClient';
+import { formatTimeIST } from '../../utils/dateUtils';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -266,7 +267,7 @@ export default function AdminShareLinksTab({ workspace }) {
 
         {lastRefreshed && (
           <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
-            Last refreshed: {lastRefreshed.toLocaleTimeString()}
+            Last refreshed: {formatTimeIST(lastRefreshed)}
           </Typography>
         )}
 

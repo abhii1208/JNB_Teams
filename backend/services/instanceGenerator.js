@@ -362,6 +362,13 @@ async function createTaskInstance(client, series, dueDate, isException = false) 
     // Ensure we have a valid project_id to satisfy tasks.project_id NOT NULL
     const projectId = await ensureProjectForSeries(client, series);
 
+    // Generate unique task code for this workspace
+    const taskCodeResult = await client.query(
+        'SELECT generate_task_code($1) as task_code',
+        [projectId]
+    );
+    const taskCode = taskCodeResult.rows[0].task_code;
+
     const result = await client.query(`
         INSERT INTO tasks (
             series_id,
@@ -378,8 +385,9 @@ async function createTaskInstance(client, series, dueDate, isException = false) 
             is_exception,
             generated_at,
             notes,
+            task_code,
             created_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13, $14)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13, $14, $15)
         RETURNING id
     `, [
         series.id,
@@ -395,6 +403,7 @@ async function createTaskInstance(client, series, dueDate, isException = false) 
         dueDate,
         isException,
         template.notes || null,
+        taskCode,
         series.created_by
     ]);
 

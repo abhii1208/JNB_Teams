@@ -98,9 +98,34 @@ export const addTaskCollaborator = (taskId, userId) =>
 export const getApprovals = (filters = {}) => api.get('/api/approvals', { params: filters });
 export const getApprovalCount = (workspaceId) => 
   api.get('/api/approvals/count', { params: workspaceId ? { workspace_id: workspaceId } : {} });
-export const approveApproval = (approvalId) => api.put(`/api/approvals/${approvalId}/approve`);
+export const approveApproval = (approvalId, notes) => 
+  api.put(`/api/approvals/${approvalId}/approve`, { notes });
 export const rejectApproval = (approvalId, reason) => 
   api.put(`/api/approvals/${approvalId}/reject`, { reject_reason: reason });
+
+// Approval Audit Trail
+export const getApprovalAuditTrail = (approvalId) => 
+  api.get(`/api/approvals/${approvalId}/audit`);
+
+// Multiple Approvers Management
+export const getProjectApprovers = (projectId) => 
+  api.get(`/api/approvals/project/${projectId}/approvers`);
+export const addProjectApprover = (projectId, userId, priority = 1) => 
+  api.post(`/api/approvals/project/${projectId}/approvers`, { user_id: userId, priority });
+export const removeProjectApprover = (projectId, userId) => 
+  api.delete(`/api/approvals/project/${projectId}/approvers/${userId}`);
+
+// Escalation Settings
+export const getEscalationSettings = (projectId) => 
+  api.get(`/api/approvals/project/${projectId}/escalation`);
+export const updateEscalationSettings = (projectId, settings) => 
+  api.put(`/api/approvals/project/${projectId}/escalation`, settings);
+
+// Approval Comments
+export const getApprovalComments = (approvalId) => 
+  api.get(`/api/approvals/${approvalId}/comments`);
+export const addApprovalComment = (approvalId, comment) => 
+  api.post(`/api/approvals/${approvalId}/comments`, { comment });
 
 // Activity API
 export const getActivity = (filters = {}) => api.get('/api/activity', { params: filters });
@@ -206,3 +231,219 @@ export const unlockPublicShare = (slug, password) =>
   publicApi.post(`/public/share/${slug}/unlock`, { password });
 export const getPublicShareTasks = (slug, token) =>
   publicApi.get(`/public/share/${slug}/tasks`, token ? { headers: { Authorization: `Bearer ${token}` } } : {});
+
+// =====================================================
+// CHAT API
+// =====================================================
+
+// Threads
+export const getChatThreads = (workspaceId) =>
+  api.get(`/api/chat/${workspaceId}/threads`);
+export const getChatThread = (workspaceId, threadId) =>
+  api.get(`/api/chat/${workspaceId}/threads/${threadId}`);
+export const createDmThread = (workspaceId, userId) =>
+  api.post(`/api/chat/${workspaceId}/threads/dm`, { user_id: userId });
+export const createGroupThread = (workspaceId, name, memberIds) =>
+  api.post(`/api/chat/${workspaceId}/threads/group`, { name, member_ids: memberIds });
+export const updateChatThread = (workspaceId, threadId, data) =>
+  api.patch(`/api/chat/${workspaceId}/threads/${threadId}`, data);
+
+// Thread Members
+export const addThreadMembers = (workspaceId, threadId, userIds) =>
+  api.post(`/api/chat/${workspaceId}/threads/${threadId}/members`, { user_ids: userIds });
+export const removeThreadMember = (workspaceId, threadId, userId) =>
+  api.delete(`/api/chat/${workspaceId}/threads/${threadId}/members/${userId}`);
+
+// Messages
+export const getChatMessages = (workspaceId, threadId, params = {}) =>
+  api.get(`/api/chat/${workspaceId}/threads/${threadId}/messages`, { params });
+export const sendChatMessage = (workspaceId, threadId, content, attachmentIds = []) =>
+  api.post(`/api/chat/${workspaceId}/threads/${threadId}/messages`, { content, attachmentIds });
+
+// Read Tracking
+export const markThreadRead = (workspaceId, threadId, messageId = null) =>
+  api.put(`/api/chat/${workspaceId}/threads/${threadId}/read`, { message_id: messageId });
+export const getChatUnreadCount = (workspaceId) =>
+  api.get(`/api/chat/${workspaceId}/unread-count`);
+
+// Search & Mentions
+export const searchChatThreads = (workspaceId, query) =>
+  api.get(`/api/chat/${workspaceId}/search`, { params: { q: query } });
+export const getChatMentionables = (workspaceId, params = {}) =>
+  api.get(`/api/chat/${workspaceId}/mentionables`, { params });
+
+// =====================================================
+// ATTACHMENTS API
+// =====================================================
+
+export const uploadAttachments = (formData) =>
+  api.post('/api/attachments', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+
+export const getAttachments = (entityType, entityId) =>
+  api.get(`/api/attachments/${entityType}/${entityId}`);
+
+export const downloadAttachment = (attachmentId) =>
+  api.get(`/api/attachments/download/${attachmentId}`, { responseType: 'blob' });
+
+export const deleteAttachment = (attachmentId) =>
+  api.delete(`/api/attachments/${attachmentId}`);
+
+// =====================================================
+// PROJECT OWNERSHIP TRANSFER API
+// =====================================================
+
+export const transferProjectOwnership = (projectId, newOwnerId, reason) =>
+  api.post(`/api/projects/${projectId}/transfer-ownership`, { 
+    new_owner_id: newOwnerId, 
+    reason 
+  });
+
+export const getProjectTransferHistory = (projectId) =>
+  api.get(`/api/projects/${projectId}/transfer-history`);
+
+// =====================================================
+// CHECKLIST API (Monthly Client Checklist)
+// =====================================================
+
+// Checklist Items
+export const getChecklistItems = (workspaceId, filters = {}) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/items`, { params: filters });
+
+export const getClientChecklistItems = (clientId, filters = {}) =>
+  api.get(`/api/checklist/client/${clientId}/items`, { params: filters });
+
+export const getChecklistItem = (itemId) =>
+  api.get(`/api/checklist/items/${itemId}`);
+
+export const createChecklistItem = (workspaceId, data) =>
+  api.post(`/api/checklist/workspace/${workspaceId}/items`, data);
+
+export const updateChecklistItem = (itemId, data) =>
+  api.put(`/api/checklist/items/${itemId}`, data);
+
+export const updateChecklistAssignments = (itemId, assigneeIds, effectiveFrom) =>
+  api.put(`/api/checklist/items/${itemId}/assignments`, { assigneeIds, effectiveFrom });
+
+// Client Holidays
+export const getClientHolidays = (clientId, year = null) =>
+  api.get(`/api/checklist/client/${clientId}/holidays`, { params: { year } });
+
+export const addClientHoliday = (clientId, data) =>
+  api.post(`/api/checklist/client/${clientId}/holidays`, data);
+
+export const deleteClientHoliday = (clientId, holidayDate) =>
+  api.delete(`/api/checklist/client/${clientId}/holidays/${holidayDate}`);
+
+export const copyClientHolidays = (clientId, sourceClientId, year) =>
+  api.post(`/api/checklist/client/${clientId}/holidays/copy`, { sourceClientId, year });
+
+// Occurrences & Grid
+export const getChecklistGrid = (workspaceId, clientId, year, month, filters = {}) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/grid`, { 
+    params: { clientId, year, month, ...filters } 
+  });
+
+export const getTodaysChecklistItems = (workspaceId, clientId = null) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/today`, { params: { clientId } });
+
+export const getChecklistOccurrence = (occurrenceId) =>
+  api.get(`/api/checklist/occurrences/${occurrenceId}`);
+
+// Confirmations
+export const confirmChecklistOccurrence = (occurrenceId, remarks = null) =>
+  api.post(`/api/checklist/occurrences/${occurrenceId}/confirm`, { remarks });
+
+export const lateConfirmChecklistOccurrence = (occurrenceId, userId, reason) =>
+  api.post(`/api/checklist/occurrences/${occurrenceId}/late-confirm`, { userId, reason });
+
+// Reports
+export const getChecklistSummaryReport = (workspaceId, filters = {}) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/reports/summary`, { params: filters });
+
+export const getChecklistDetailedReport = (workspaceId, filters = {}) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/reports/detailed`, { params: filters });
+
+export const getChecklistPerformanceReport = (workspaceId, year, month) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/reports/performance`, { params: { year, month } });
+
+export const exportChecklistCSV = (workspaceId, filters = {}) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/reports/export/csv`, { 
+    params: filters,
+    responseType: 'blob'
+  });
+
+export const exportChecklistPDF = (workspaceId, filters = {}) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/reports/export/pdf`, { 
+    params: filters,
+    responseType: 'blob'
+  });
+
+// Categories
+export const getChecklistCategories = (workspaceId) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/categories`);
+
+export const createChecklistCategory = (workspaceId, data) =>
+  api.post(`/api/checklist/workspace/${workspaceId}/categories`, data);
+
+// Client Settings
+export const getClientChecklistSettings = (clientId) =>
+  api.get(`/api/checklist/client/${clientId}/settings`);
+
+export const updateClientChecklistSettings = (clientId, data) =>
+  api.put(`/api/checklist/client/${clientId}/settings`, data);
+
+// Workspace Settings
+export const getWorkspaceChecklistSettings = (workspaceId) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/settings`);
+
+export const updateWorkspaceChecklistSettings = (workspaceId, data) =>
+  api.put(`/api/checklist/workspace/${workspaceId}/settings`, data);
+
+// Checklist Item Delete
+export const deleteChecklistItem = (itemId) =>
+  api.delete(`/api/checklist/items/${itemId}`);
+
+// User Performance Report
+export const getChecklistUserPerformance = (workspaceId, filters = {}) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/reports/user-performance`, { params: filters });
+
+// Delete Client Holiday by ID
+export const deleteClientHolidayById = (holidayId) =>
+  api.delete(`/api/checklist/holidays/${holidayId}`);
+
+// Client User Assignments
+export const getClientAssignments = (workspaceId) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/client-assignments`);
+
+export const getClientUserAssignments = (clientId) =>
+  api.get(`/api/checklist/client/${clientId}/assignments`);
+
+export const getUserAssignedClients = (workspaceId, userId) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/user/${userId}/assigned-clients`);
+
+export const assignUserToClient = (clientId, userId, notes = null) =>
+  api.post(`/api/checklist/client/${clientId}/assignments`, { userId, notes });
+
+export const removeUserFromClient = (clientId, userId) =>
+  api.delete(`/api/checklist/client/${clientId}/assignments/${userId}`);
+
+export const bulkAssignUsersToClient = (clientId, userIds) =>
+  api.post(`/api/checklist/client/${clientId}/assignments/bulk`, { userIds });
+
+// ============================================
+// Global Search API
+// ============================================
+export const globalSearch = (workspaceId, query, options = {}) =>
+  api.get('/api/search', { 
+    params: { 
+      workspaceId, 
+      q: query, 
+      types: options.types?.join(','),
+      limit: options.limit || 10
+    } 
+  });
+
+export const getRecentItems = (workspaceId) =>
+  api.get('/api/search/recent', { params: { workspaceId } });

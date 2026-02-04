@@ -29,6 +29,8 @@ import {
   FormControlLabel,
   Switch,
   Collapse,
+  Slider,
+  LinearProgress,
 } from '@mui/material';
 
 import AvatarGroup from '@mui/material/AvatarGroup';
@@ -45,6 +47,7 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
 import { getProjectColumnOptions, getProjectColumnSettings, getProjectMembers } from '../../apiClient';
 import { formatShortDate } from '../../utils/date';
+import FileAttachments from '../shared/FileAttachments';
 
 const stageOptions = ['Planned', 'In-process', 'Completed', 'On-hold', 'Dropped'];
 
@@ -193,6 +196,7 @@ function TaskForm({
   userRole = null,
   currentUserId = null,
   workspaceProjects = [],
+  workspaceId = null,
   enableMultiProjectLinks = false,
   onDelete,
   onCreateRecurring,
@@ -339,7 +343,8 @@ function TaskForm({
 
   const showEstimated = columnSettings.enable_estimated_hours;
   const showActual = columnSettings.enable_actual_hours;
-  const showCompletion = columnSettings.enable_completion_percentage;
+  // Always show completion percentage when editing a task, or when enabled in column settings
+  const showCompletion = isEdit || columnSettings.enable_completion_percentage;
   const showTags = columnSettings.enable_tags;
   const showExternalId = columnSettings.enable_external_id;
   const showCustomFieldsSection =
@@ -1365,23 +1370,76 @@ function TaskForm({
                     )}
 
                     {showCompletion && (
-                      <TextField
-                        disabled={!canEdit}
-                        fullWidth
-                        label="Completion %"
-                        type="number"
-                        value={formData.completionPercentage}
-                        onChange={(e) =>
-                          handleChange(
-                            'completionPercentage',
-                            Math.min(100, Math.max(0, parseInt(e.target.value) || 0))
-                          )
-                        }
-                        inputProps={{ min: 0, max: 100 }}
-                        placeholder="0"
-                        sx={fieldSx}
-                        size="small"
-                      />
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                          Completion %
+                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                          <Slider
+                            disabled={!canEdit}
+                            value={parseInt(formData.completionPercentage) || 0}
+                            onChange={(_, value) => handleChange('completionPercentage', value)}
+                            min={0}
+                            max={100}
+                            step={5}
+                            valueLabelDisplay="auto"
+                            sx={{
+                              flex: 1,
+                              '& .MuiSlider-thumb': {
+                                width: 16,
+                                height: 16,
+                              },
+                              '& .MuiSlider-track': {
+                                background: `linear-gradient(90deg, 
+                                  ${(parseInt(formData.completionPercentage) || 0) < 25 ? '#ef4444' : 
+                                    (parseInt(formData.completionPercentage) || 0) < 50 ? '#f97316' : 
+                                    (parseInt(formData.completionPercentage) || 0) < 75 ? '#eab308' : '#22c55e'} 0%, 
+                                  ${(parseInt(formData.completionPercentage) || 0) < 25 ? '#ef4444' : 
+                                    (parseInt(formData.completionPercentage) || 0) < 50 ? '#f97316' : 
+                                    (parseInt(formData.completionPercentage) || 0) < 75 ? '#eab308' : '#22c55e'} 100%)`,
+                              },
+                              '& .MuiSlider-rail': {
+                                backgroundColor: '#e2e8f0',
+                              },
+                            }}
+                          />
+                          <TextField
+                            disabled={!canEdit}
+                            type="number"
+                            value={formData.completionPercentage || 0}
+                            onChange={(e) =>
+                              handleChange(
+                                'completionPercentage',
+                                Math.min(100, Math.max(0, parseInt(e.target.value) || 0))
+                              )
+                            }
+                            inputProps={{ min: 0, max: 100, style: { textAlign: 'center' } }}
+                            sx={{ width: 70 }}
+                            size="small"
+                          />
+                          <Typography variant="body2" color="text.secondary">%</Typography>
+                        </Box>
+                        <LinearProgress
+                          variant="determinate"
+                          value={parseInt(formData.completionPercentage) || 0}
+                          sx={{
+                            mt: 1,
+                            height: 8,
+                            borderRadius: 4,
+                            backgroundColor: '#e2e8f0',
+                            '& .MuiLinearProgress-bar': {
+                              borderRadius: 4,
+                              background: `linear-gradient(90deg, 
+                                ${(parseInt(formData.completionPercentage) || 0) < 25 ? '#ef4444' : 
+                                  (parseInt(formData.completionPercentage) || 0) < 50 ? '#f97316' : 
+                                  (parseInt(formData.completionPercentage) || 0) < 75 ? '#eab308' : '#22c55e'} 0%, 
+                                ${(parseInt(formData.completionPercentage) || 0) < 25 ? '#f87171' : 
+                                  (parseInt(formData.completionPercentage) || 0) < 50 ? '#fb923c' : 
+                                  (parseInt(formData.completionPercentage) || 0) < 75 ? '#facc15' : '#4ade80'} 100%)`,
+                            },
+                          }}
+                        />
+                      </Box>
                     )}
                   </Box>
                 )}
@@ -1449,6 +1507,21 @@ function TaskForm({
                     )}
                   </Box>
                 )}
+              </Section>
+            )}
+
+            {/* ===================== ATTACHMENTS ===================== */}
+            {isEdit && workspaceId && (
+              <Section title="Attachments">
+                <FileAttachments
+                  entityType="task"
+                  entityId={task?.id}
+                  workspaceId={workspaceId}
+                  canEdit={canEdit}
+                  showTitle={false}
+                  compact={false}
+                  maxFiles={5}
+                />
               </Section>
             )}
 

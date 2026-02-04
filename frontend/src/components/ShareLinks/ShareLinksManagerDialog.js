@@ -26,12 +26,13 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { listShareLinks, revokeShareLink, updateShareLink } from '../../apiClient';
+import { formatDateTimeIST } from '../../utils/dateUtils';
 
 const formatDateTime = (value) => {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
+  return formatDateTimeIST(date, 'MMM d, yyyy h:mm a');
 };
 
 const HOURS_24 = 24 * 60 * 60 * 1000;

@@ -52,6 +52,13 @@ import {
   differenceInCalendarDays,
 } from 'date-fns';
 import { parseDateInput } from '../../utils/date';
+import { 
+  formatShortDateIST, 
+  formatRelativeTimeIST, 
+  isTodayIST, 
+  isTomorrowIST, 
+  isPastIST 
+} from '../../utils/dateUtils';
 
 /* ---------------- helpers ---------------- */
 
@@ -89,13 +96,13 @@ const parseDateValue = (value) => {
 const formatDate = (dateStr) => {
   const date = parseDateValue(dateStr);
   if (!date) return '-';
-  return format(date, 'dd-MMM-yy');
+  return formatShortDateIST(date);
 };
 
 const formatRelativeDate = (dateStr) => {
   const date = parseDateValue(dateStr);
   if (!date) return null;
-  return formatDistanceToNow(date, { addSuffix: true });
+  return formatRelativeTimeIST(date);
 };
 
 const getClientDisplayName = (task) => {
@@ -120,10 +127,7 @@ const getClientTooltip = (task) => {
 const isToday = (dateStr) => {
   const d = parseDateValue(dateStr);
   if (!d) return false;
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
+  return isTodayIST(d);
 };
 
 const getDueSignal = (dateStr, taskStatus = null) => {
@@ -133,10 +137,11 @@ const getDueSignal = (dateStr, taskStatus = null) => {
   const d = parseDateValue(dateStr);
   if (!d) return null;
 
+  if (isTodayIST(d)) return { label: 'Today', color: '#2563eb', bg: '#eff6ff', filterKey: 'today' };
+  if (isPastIST(d)) return { label: 'Overdue', color: '#dc2626', bg: '#fef2f2', filterKey: 'overdue' };
+  if (isTomorrowIST(d)) return { label: 'Tomorrow', color: '#0f766e', bg: 'rgba(15,118,110,0.08)', filterKey: 'tomorrow' };
+  
   const diff = differenceInCalendarDays(d, new Date()); // future = positive
-  if (diff === 0) return { label: 'Today', color: '#2563eb', bg: '#eff6ff', filterKey: 'today' };
-  if (diff < 0) return { label: 'Overdue', color: '#dc2626', bg: '#fef2f2', filterKey: 'overdue' };
-  if (diff === 1) return { label: 'Tomorrow', color: '#0f766e', bg: 'rgba(15,118,110,0.08)', filterKey: 'tomorrow' };
   if (diff > 0 && diff <= 7) return { label: `in ${diff}d`, color: '#0f766e', bg: 'rgba(15,118,110,0.08)', filterKey: 'week' };
   if (diff > 7 && diff <= 31) return { label: 'This month', color: '#64748b', bg: '#f8fafc', filterKey: 'month' };
   return null;
@@ -230,7 +235,7 @@ const COLUMNS = [
 
 const DEFAULT_VISIBLE_COLUMNS = [
   'name', 'project_name', 'client_name', 'stage', 'status', 'priority',
-  'assignee_name', 'due_date', 'actions'
+  'assignee_name', 'due_date', 'completion_percentage', 'actions'
 ];
 
 const getColumnById = (id) => COLUMNS.find((c) => c.id === id);
@@ -420,7 +425,25 @@ const TaskRow = React.memo(function TaskRow({
                       arrow
                     >
                     <Box sx={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', minWidth: 0, gap: 1 }}>
+                        {/* Task Code Chip */}
+                        {task.task_code && (
+                          <Chip
+                            label={task.task_code}
+                            size="small"
+                            sx={{
+                              height: 20,
+                              fontSize: '0.7rem',
+                              fontWeight: 600,
+                              fontFamily: 'monospace',
+                              bgcolor: '#f1f5f9',
+                              color: '#475569',
+                              border: '1px solid #e2e8f0',
+                              flexShrink: 0,
+                              '& .MuiChip-label': { px: 1 },
+                            }}
+                          />
+                        )}
                         <Box sx={{ flex: 1, minWidth: 0, maxWidth: `${TASK_NAME_TEXT_CH}ch` }}>
                           <Typography
                             variant="body2"
@@ -718,12 +741,33 @@ const TaskRow = React.memo(function TaskRow({
                   );
 
                 case 'completion_percentage':
-                  return task.completion_percentage != null ? (
-                    <Typography variant="body2" noWrap sx={NOWRAP_SX}>
-                      {task.completion_percentage}%
-                    </Typography>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary" noWrap sx={NOWRAP_SX}>-</Typography>
+                  const completionValue = task.completion_percentage ?? 0;
+                  const getCompletionColor = (val) => {
+                    if (val < 25) return '#ef4444';
+                    if (val < 50) return '#f97316';
+                    if (val < 75) return '#eab308';
+                    return '#22c55e';
+                  };
+                  return (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100 }}>
+                      <LinearProgress
+                        variant="determinate"
+                        value={completionValue}
+                        sx={{
+                          flex: 1,
+                          height: 6,
+                          borderRadius: 3,
+                          backgroundColor: '#e2e8f0',
+                          '& .MuiLinearProgress-bar': {
+                            borderRadius: 3,
+                            backgroundColor: getCompletionColor(completionValue),
+                          },
+                        }}
+                      />
+                      <Typography variant="caption" sx={{ minWidth: 32, textAlign: 'right', fontWeight: 500 }}>
+                        {completionValue}%
+                      </Typography>
+                    </Box>
                   );
 
                 case 'tags':

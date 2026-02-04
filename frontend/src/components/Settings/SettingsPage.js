@@ -25,6 +25,7 @@ import SecurityIcon from '@mui/icons-material/Security';
 import PaletteIcon from '@mui/icons-material/Palette';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import { getUserSettings, updateUserProfile, changePassword, getWorkspaces, updateWorkspace } from '../../apiClient';
+import { formatDateIST } from '../../utils/dateUtils';
 
 function SettingsPage({ user, workspace }) {
   const [activeTab, setActiveTab] = useState(0);
@@ -723,7 +724,7 @@ function SettingsPage({ user, workspace }) {
                     Member Since
                   </Typography>
                   <Typography variant="body1" sx={{ fontWeight: 500 }}>
-                    {profile.createdAt ? new Date(profile.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : 'N/A'}
+                    {profile.createdAt ? formatDateIST(profile.createdAt, 'MMMM d, yyyy') : 'N/A'}
                   </Typography>
                 </CardContent>
               </Card>
