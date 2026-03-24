@@ -123,10 +123,26 @@ DECLARE
     task_rec RECORD;
     task_num INTEGER;
     ws_prefix VARCHAR(3);
+    candidate_code VARCHAR(12);
 BEGIN
     FOR ws IN SELECT id, code_prefix FROM workspaces LOOP
         ws_prefix := ws.code_prefix;
-        task_num := 1;
+
+        -- Continue from existing max code number in this workspace (idempotent-safe)
+        SELECT COALESCE(
+            MAX(
+                CASE
+                    WHEN t.task_code ~ '^[A-Z0-9]{3}-[0-9]{4}$'
+                    THEN SUBSTRING(t.task_code FROM 5)::INTEGER
+                    ELSE NULL
+                END
+            ),
+            0
+        ) + 1
+        INTO task_num
+        FROM tasks t
+        JOIN projects p ON t.project_id = p.id
+        WHERE p.workspace_id = ws.id;
         
         -- Get all tasks for this workspace ordered by creation date
         FOR task_rec IN 
@@ -136,8 +152,16 @@ BEGIN
             WHERE p.workspace_id = ws.id AND t.task_code IS NULL
             ORDER BY t.created_at ASC, t.id ASC
         LOOP
+            candidate_code := ws_prefix || '-' || LPAD(task_num::VARCHAR, 4, '0');
+
+            -- Ensure we never collide with an already assigned code
+            WHILE EXISTS (SELECT 1 FROM tasks WHERE task_code = candidate_code) LOOP
+                task_num := task_num + 1;
+                candidate_code := ws_prefix || '-' || LPAD(task_num::VARCHAR, 4, '0');
+            END LOOP;
+
             UPDATE tasks 
-            SET task_code = ws_prefix || '-' || LPAD(task_num::VARCHAR, 4, '0')
+            SET task_code = candidate_code
             WHERE id = task_rec.id;
             task_num := task_num + 1;
         END LOOP;

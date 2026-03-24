@@ -118,7 +118,11 @@ async function sendWeeklyReminders() {
       
       // Check if today is the reminder day (default Wednesday = 3)
       const dayOfWeek = new Date(today).getDay();
-      const reminderDay = workspace.weekly_reminder_day || 3; // 0=Sun, 1=Mon, etc.
+      // Stored as ISO day (1=Mon ... 7=Sun). Backward-compat: treat 0 as Sunday.
+      let reminderDay = workspace.weekly_reminder_day;
+      if (reminderDay === null || reminderDay === undefined) reminderDay = 3;
+      if (reminderDay === 0) reminderDay = 7;
+      if (reminderDay < 1 || reminderDay > 7) reminderDay = 3;
       
       // Convert to ISO day (1=Mon, 7=Sun)
       const isoDay = dayOfWeek === 0 ? 7 : dayOfWeek;

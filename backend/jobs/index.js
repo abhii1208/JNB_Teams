@@ -1,6 +1,5 @@
 /**
  * Background Jobs Manager
- * SIMPLIFIED: Daily task generation at 1 AM
  */
 
 const cron = require('node-cron');
@@ -8,6 +7,7 @@ const { generateAllDailyTasks } = require('../routes/recurringV2');
 const { sendPendingReminders } = require('./sendReminders');
 const { autoCloseOverdueTasks } = require('./autoCloseTasks');
 const approvalEscalation = require('./approvalEscalation');
+const checklistJobs = require('./checklistJobs');
 
 // Job registry
 const jobs = {};
@@ -31,12 +31,9 @@ async function runNoOverlap(jobName, handler) {
  * Initialize all background jobs
  */
 function initializeJobs() {
-    console.log('🕐 Initializing background jobs...');
+    console.log('[Job] Initializing background jobs...');
 
-    // ============================================
-    // 1. DAILY TASK GENERATION (1:00 AM)
-    // SIMPLE: Create TODAY's recurring tasks
-    // ============================================
+    // 1) Daily recurring generation at 1 AM
     jobs.dailyGeneration = cron.schedule('0 1 * * *', async () => {
         await runNoOverlap('dailyGeneration', async () => {
             console.log('[Job] Running 1 AM daily generation...');
@@ -49,9 +46,7 @@ function initializeJobs() {
         });
     }, { scheduled: false });
 
-    // ============================================
-    // 2. Reminder Sending (Every 5 minutes)
-    // ============================================
+    // 2) Reminder sending every 5 minutes
     jobs.sendReminders = cron.schedule('*/5 * * * *', async () => {
         await runNoOverlap('sendReminders', async () => {
             console.log('[Job] Checking for pending reminders...');
@@ -66,9 +61,7 @@ function initializeJobs() {
         });
     }, { scheduled: false });
 
-    // ============================================
-    // 5. Auto-close Overdue (Daily at 2 AM)
-    // ============================================
+    // 3) Auto-close overdue tasks daily at 2 AM
     jobs.autoClose = cron.schedule('0 2 * * *', async () => {
         await runNoOverlap('autoClose', async () => {
             console.log('[Job] Running auto-close for overdue tasks...');
@@ -81,9 +74,7 @@ function initializeJobs() {
         });
     }, { scheduled: false });
 
-    // ============================================
-    // 6. Approval Escalation (Every 15 minutes)
-    // ============================================
+    // 4) Approval escalation every 15 minutes
     jobs.approvalEscalation = cron.schedule('*/15 * * * *', async () => {
         await runNoOverlap('approvalEscalation', async () => {
             console.log('[Job] Checking for approval escalations...');
@@ -98,10 +89,7 @@ function initializeJobs() {
         });
     }, { scheduled: false });
 
-    // ============================================
-    // 7. Generation Log Cleanup (Weekly on Sunday at 4 AM)
-    // LOW PRIORITY FIX: Clean up old generation logs
-    // ============================================
+    // 5) Generation log cleanup weekly on Sunday at 4 AM
     jobs.logCleanup = cron.schedule('0 4 * * 0', async () => {
         await runNoOverlap('logCleanup', async () => {
             console.log('[Job] Running generation log cleanup...');
@@ -118,38 +106,105 @@ function initializeJobs() {
         });
     }, { scheduled: false });
 
-    console.log('✅ Background jobs initialized');
+    // 6) Checklist: mark overdue at 00:05
+    jobs.checklistOverdue = cron.schedule('5 0 * * *', async () => {
+        await runNoOverlap('checklistOverdue', async () => {
+            try {
+                await checklistJobs.processOverdueOccurrences();
+            } catch (err) {
+                console.error('[Job] Checklist overdue processing failed:', err);
+            }
+        });
+    }, { scheduled: false });
+
+    // 7) Checklist: generate future occurrences at 00:10
+    jobs.checklistGenerate = cron.schedule('10 0 * * *', async () => {
+        await runNoOverlap('checklistGenerate', async () => {
+            try {
+                await checklistJobs.generateFutureOccurrences();
+            } catch (err) {
+                console.error('[Job] Checklist generation failed:', err);
+            }
+        });
+    }, { scheduled: false });
+
+    // 8) Checklist reminders
+    jobs.checklistDailyReminder = cron.schedule('0 9 * * *', async () => {
+        await runNoOverlap('checklistDailyReminder', async () => {
+            try {
+                await checklistJobs.sendDailyReminders();
+            } catch (err) {
+                console.error('[Job] Checklist daily reminder failed:', err);
+            }
+        });
+    }, { scheduled: false });
+
+    jobs.checklistWeeklyReminder = cron.schedule('30 9 * * 3', async () => {
+        await runNoOverlap('checklistWeeklyReminder', async () => {
+            try {
+                await checklistJobs.sendWeeklyReminders();
+            } catch (err) {
+                console.error('[Job] Checklist weekly reminder failed:', err);
+            }
+        });
+    }, { scheduled: false });
+
+    jobs.checklistMonthlyReminder = cron.schedule('0 10 25 * *', async () => {
+        await runNoOverlap('checklistMonthlyReminder', async () => {
+            try {
+                await checklistJobs.sendMonthlyReminders();
+            } catch (err) {
+                console.error('[Job] Checklist monthly reminder failed:', err);
+            }
+        });
+    }, { scheduled: false });
+
+    jobs.checklistMonthlyFinalReminder = cron.schedule('0 10 28-31 * *', async () => {
+        await runNoOverlap('checklistMonthlyFinalReminder', async () => {
+            try {
+                const today = new Date();
+                const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+                if (today.getDate() === lastDay) {
+                    await checklistJobs.sendMonthlyReminders();
+                }
+            } catch (err) {
+                console.error('[Job] Checklist month-end reminder failed:', err);
+            }
+        });
+    }, { scheduled: false });
+
+    console.log('[Job] Background jobs initialized');
 }
 
 /**
  * Start all jobs
  */
 function startJobs() {
-    console.log('▶️ Starting background jobs...');
+    console.log('[Job] Starting background jobs...');
     Object.values(jobs).forEach(job => job.start());
-    console.log('✅ All jobs started');
+    console.log('[Job] All jobs started');
 }
 
 /**
  * Stop all jobs
  */
 function stopJobs() {
-    console.log('⏹️ Stopping background jobs...');
+    console.log('[Job] Stopping background jobs...');
     Object.values(jobs).forEach(job => job.stop());
-    console.log('✅ All jobs stopped');
+    console.log('[Job] All jobs stopped');
 }
 
 /**
  * Run a specific job immediately (for testing/manual trigger)
  */
 async function runJobNow(jobName) {
-    console.log(`🔧 Manually triggering job: ${jobName}`);
-    
+    console.log(`[Job] Manually triggering job: ${jobName}`);
+
     switch (jobName) {
         case 'dailyGeneration':
         case 'generateInstances':
             return await runNoOverlap('dailyGeneration', async () => (
-                await generateAllPendingInstances({ batchSize: 200 })
+                await generateAllDailyTasks()
             ));
         case 'sendReminders':
             return await runNoOverlap('sendReminders', async () => (
@@ -159,8 +214,28 @@ async function runJobNow(jobName) {
             return await runNoOverlap('autoClose', async () => (
                 await autoCloseOverdueTasks()
             ));
+        case 'checklistOverdue':
+            return await runNoOverlap('checklistOverdue', async () => (
+                await checklistJobs.processOverdueOccurrences()
+            ));
+        case 'checklistGenerate':
+            return await runNoOverlap('checklistGenerate', async () => (
+                await checklistJobs.generateFutureOccurrences()
+            ));
+        case 'checklistDailyReminder':
+            return await runNoOverlap('checklistDailyReminder', async () => (
+                await checklistJobs.sendDailyReminders()
+            ));
+        case 'checklistWeeklyReminder':
+            return await runNoOverlap('checklistWeeklyReminder', async () => (
+                await checklistJobs.sendWeeklyReminders()
+            ));
+        case 'checklistMonthlyReminder':
+            return await runNoOverlap('checklistMonthlyReminder', async () => (
+                await checklistJobs.sendMonthlyReminders()
+            ));
         default:
-            throw new Error(`Unknown job: ${jobName}. Available: dailyGeneration, sendReminders, autoClose`);
+            throw new Error('Unknown job: ' + jobName + '. Available: dailyGeneration, sendReminders, autoClose, checklistOverdue, checklistGenerate, checklistDailyReminder, checklistWeeklyReminder, checklistMonthlyReminder');
     }
 }
 

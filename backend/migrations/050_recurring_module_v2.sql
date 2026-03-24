@@ -13,7 +13,7 @@ DROP TABLE IF EXISTS recurring_series CASCADE;
 -- MAIN TABLE: recurring_tasks
 -- Stores recurring task templates and patterns
 -- =====================================================
-CREATE TABLE recurring_tasks (
+CREATE TABLE IF NOT EXISTS recurring_tasks (
     id SERIAL PRIMARY KEY,
     
     -- Ownership
@@ -59,10 +59,10 @@ CREATE TABLE recurring_tasks (
 );
 
 -- Indexes
-CREATE INDEX idx_recurring_tasks_workspace ON recurring_tasks(workspace_id);
-CREATE INDEX idx_recurring_tasks_project ON recurring_tasks(project_id);
-CREATE INDEX idx_recurring_tasks_active ON recurring_tasks(is_active) WHERE is_active = true;
-CREATE INDEX idx_recurring_tasks_frequency ON recurring_tasks(frequency);
+CREATE INDEX IF NOT EXISTS idx_recurring_tasks_workspace ON recurring_tasks(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_recurring_tasks_project ON recurring_tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_recurring_tasks_active ON recurring_tasks(is_active) WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS idx_recurring_tasks_frequency ON recurring_tasks(frequency);
 
 -- =====================================================
 -- Update tasks table: add recurring_task_id reference
@@ -75,7 +75,7 @@ BEGIN
         WHERE table_name = 'tasks' AND column_name = 'recurring_task_id'
     ) THEN
         ALTER TABLE tasks ADD COLUMN recurring_task_id INTEGER REFERENCES recurring_tasks(id) ON DELETE SET NULL;
-        CREATE INDEX idx_tasks_recurring ON tasks(recurring_task_id) WHERE recurring_task_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_tasks_recurring ON tasks(recurring_task_id) WHERE recurring_task_id IS NOT NULL;
     END IF;
 END $$;
 

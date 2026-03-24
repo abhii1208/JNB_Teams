@@ -323,8 +323,36 @@ export const createChecklistItem = (workspaceId, data) =>
 export const updateChecklistItem = (itemId, data) =>
   api.put(`/api/checklist/items/${itemId}`, data);
 
-export const updateChecklistAssignments = (itemId, assigneeIds, effectiveFrom) =>
-  api.put(`/api/checklist/items/${itemId}/assignments`, { assigneeIds, effectiveFrom });
+export const updateChecklistAssignments = (
+  itemId,
+  primaryAssigneeIdOrPayload,
+  secondaryAssigneeIds = [],
+  effectiveFrom = null
+) => {
+  let payload;
+
+  // Backward compatibility: old signature (itemId, assigneeIds, effectiveFrom)
+  if (Array.isArray(primaryAssigneeIdOrPayload)) {
+    payload = {
+      assigneeIds: primaryAssigneeIdOrPayload,
+      effectiveFrom: secondaryAssigneeIds || null
+    };
+  } else if (
+    primaryAssigneeIdOrPayload &&
+    typeof primaryAssigneeIdOrPayload === 'object' &&
+    !Array.isArray(primaryAssigneeIdOrPayload)
+  ) {
+    payload = primaryAssigneeIdOrPayload;
+  } else {
+    payload = {
+      primaryAssigneeId: primaryAssigneeIdOrPayload,
+      secondaryAssigneeIds,
+      effectiveFrom
+    };
+  }
+
+  return api.put(`/api/checklist/items/${itemId}/assignments`, payload);
+};
 
 // Client Holidays
 export const getClientHolidays = (clientId, year = null) =>
@@ -339,21 +367,46 @@ export const deleteClientHoliday = (clientId, holidayDate) =>
 export const copyClientHolidays = (clientId, sourceClientId, year) =>
   api.post(`/api/checklist/client/${clientId}/holidays/copy`, { sourceClientId, year });
 
+export const syncWeekendHolidayRules = (clientId, payload) =>
+  api.post(`/api/checklist/client/${clientId}/holidays/weekend-sync`, payload);
+
 // Occurrences & Grid
 export const getChecklistGrid = (workspaceId, clientId, year, month, filters = {}) =>
   api.get(`/api/checklist/workspace/${workspaceId}/grid`, { 
     params: { clientId, year, month, ...filters } 
   });
 
-export const getTodaysChecklistItems = (workspaceId, clientId = null) =>
-  api.get(`/api/checklist/workspace/${workspaceId}/today`, { params: { clientId } });
+export const getTodaysChecklistItems = (workspaceId, clientId = null, options = {}) =>
+  api.get(`/api/checklist/workspace/${workspaceId}/today`, {
+    params: {
+      clientId,
+      includeSecondary: options.includeSecondary === true ? 'true' : 'false'
+    }
+  });
 
 export const getChecklistOccurrence = (occurrenceId) =>
   api.get(`/api/checklist/occurrences/${occurrenceId}`);
 
 // Confirmations
-export const confirmChecklistOccurrence = (occurrenceId, remarks = null) =>
-  api.post(`/api/checklist/occurrences/${occurrenceId}/confirm`, { remarks });
+export const confirmChecklistOccurrence = (occurrenceId, remarks = null, customFieldValues = null) =>
+  api.post(`/api/checklist/occurrences/${occurrenceId}/confirm`, { remarks, customFieldValues });
+
+export const adminUpdateChecklistConfirmation = (
+  occurrenceId,
+  userId,
+  remarks = null,
+  customFieldValues = null
+) =>
+  api.put(`/api/checklist/occurrences/${occurrenceId}/confirmations/${userId}`, {
+    remarks,
+    customFieldValues
+  });
+
+export const updateChecklistOccurrenceCustomFields = (occurrenceId, customFieldValues) =>
+  api.put(`/api/checklist/occurrences/${occurrenceId}/custom-fields`, { customFieldValues });
+
+export const deactivateChecklistCustomField = (itemId, fieldId, disabledFrom) =>
+  api.put(`/api/checklist/items/${itemId}/custom-fields/${fieldId}/deactivate`, { disabledFrom });
 
 export const lateConfirmChecklistOccurrence = (occurrenceId, userId, reason) =>
   api.post(`/api/checklist/occurrences/${occurrenceId}/late-confirm`, { userId, reason });

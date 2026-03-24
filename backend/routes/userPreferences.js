@@ -64,7 +64,8 @@ router.put('/workspace/:workspaceId', async (req, res) => {
     board_group_by,
     page_size,
     selected_projects,
-    active_saved_view_id
+    active_saved_view_id,
+    checklist_include_secondary
   } = req.body;
   
   try {
@@ -76,6 +77,7 @@ router.put('/workspace/:workspaceId', async (req, res) => {
         sort_by, sort_order, group_by,
         calendar_view_mode, calendar_date_mode, calendar_density,
         board_group_by, page_size, selected_projects, active_saved_view_id,
+        checklist_include_secondary,
         last_active_at
       ) VALUES (
         $1, $2,
@@ -83,6 +85,7 @@ router.put('/workspace/:workspaceId', async (req, res) => {
         COALESCE($7, 'created_at'), COALESCE($8, 'desc'), $9,
         COALESCE($10, 'month'), COALESCE($11, 'due'), COALESCE($12, 'comfortable'),
         COALESCE($13, 'status'), COALESCE($14, 50), COALESCE($15, '[]'::jsonb), $16,
+        COALESCE($17, FALSE),
         CURRENT_TIMESTAMP
       )
       ON CONFLICT (user_id, workspace_id) DO UPDATE SET
@@ -100,6 +103,7 @@ router.put('/workspace/:workspaceId', async (req, res) => {
         page_size = COALESCE($14, user_view_preferences.page_size),
         selected_projects = COALESCE($15, user_view_preferences.selected_projects),
         active_saved_view_id = $16,
+        checklist_include_secondary = COALESCE($17, user_view_preferences.checklist_include_secondary),
         last_active_at = CURRENT_TIMESTAMP,
         updated_at = CURRENT_TIMESTAMP
       RETURNING *
@@ -113,7 +117,8 @@ router.put('/workspace/:workspaceId', async (req, res) => {
       calendar_view_mode, calendar_date_mode, calendar_density,
       board_group_by, page_size,
       selected_projects ? JSON.stringify(selected_projects) : null,
-      active_saved_view_id
+      active_saved_view_id,
+      checklist_include_secondary
     ]);
     
     res.json(result.rows[0]);
@@ -139,7 +144,8 @@ router.patch('/workspace/:workspaceId', async (req, res) => {
     'last_view_type', 'visible_columns', 'column_order', 'filters',
     'sort_by', 'sort_order', 'group_by',
     'calendar_view_mode', 'calendar_date_mode', 'calendar_density',
-    'board_group_by', 'page_size', 'selected_projects', 'active_saved_view_id'
+    'board_group_by', 'page_size', 'selected_projects', 'active_saved_view_id',
+    'checklist_include_secondary'
   ];
   
   try {

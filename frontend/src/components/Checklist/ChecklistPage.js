@@ -23,17 +23,20 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import TodayIcon from '@mui/icons-material/Today';
 import ListAltIcon from '@mui/icons-material/ListAlt';
-import AssessmentIcon from '@mui/icons-material/Assessment';
 import PeopleIcon from '@mui/icons-material/People';
 import { getClients, getUserAssignedClients } from '../../apiClient';
 import ChecklistGrid from './ChecklistGrid';
 import DailyFocusView from './DailyFocusView';
 import ChecklistItemManager from './ChecklistItemManager';
-import ChecklistReports from './ChecklistReports';
 import HolidayManager from './HolidayManager';
 import ClientUserAssignments from './ClientUserAssignments';
 
 function ChecklistPage({ workspace, user }) {
+  const TAB_MONTHLY_GRID = 0;
+  const TAB_TODAYS_ITEMS = 1;
+  const TAB_MANAGE_ITEMS = 2;
+  const TAB_CLIENT_ACCESS = 3;
+
   const [activeTab, setActiveTab] = useState(0);
   const [clients, setClients] = useState([]);
   const [selectedClientId, setSelectedClientId] = useState(null);
@@ -42,8 +45,12 @@ function ChecklistPage({ workspace, user }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showHolidayManager, setShowHolidayManager] = useState(false);
+  const [gridRefreshToken, setGridRefreshToken] = useState(0);
 
   const isAdmin = workspace?.role === 'Owner' || workspace?.role === 'Admin';
+  const isTodaysItemsTab = activeTab === TAB_TODAYS_ITEMS;
+  const isClientAccessTab = isAdmin && activeTab === TAB_CLIENT_ACCESS;
+  const showClientSelector = !isTodaysItemsTab && !isClientAccessTab;
 
   // Fetch clients - for admins get all, for regular users get assigned clients only
   const fetchClients = useCallback(async () => {
@@ -142,23 +149,25 @@ function ChecklistPage({ workspace, user }) {
         
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
           {/* Client Selector */}
-          <FormControl size="small" sx={{ minWidth: 200 }}>
-            <InputLabel>Client</InputLabel>
-            <Select
-              value={selectedClientId || ''}
-              onChange={(e) => setSelectedClientId(e.target.value)}
-              label="Client"
-            >
-              {clients.map((client) => (
-                <MenuItem key={client.id} value={client.id}>
-                  {client.name || client.client_name}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+          {showClientSelector && (
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel>Client</InputLabel>
+              <Select
+                value={selectedClientId || ''}
+                onChange={(e) => setSelectedClientId(e.target.value)}
+                label="Client"
+              >
+                {clients.map((client) => (
+                  <MenuItem key={client.id} value={client.id}>
+                    {client.name || client.client_name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
 
           {/* Month/Year Selector for Grid view */}
-          {activeTab === 0 && (
+          {activeTab === TAB_MONTHLY_GRID && (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Button size="small" onClick={() => handleMonthChange('prev')}>
                 ‹
@@ -219,13 +228,12 @@ function ChecklistPage({ workspace, user }) {
         <Tab icon={<CalendarMonthIcon />} iconPosition="start" label="Monthly Grid" />
         <Tab icon={<TodayIcon />} iconPosition="start" label="Today's Items" />
         {isAdmin && <Tab icon={<ListAltIcon />} iconPosition="start" label="Manage Items" />}
-        {isAdmin && <Tab icon={<PeopleIcon />} iconPosition="start" label="User Assignments" />}
-        <Tab icon={<AssessmentIcon />} iconPosition="start" label="Reports" />
+        {isAdmin && <Tab icon={<PeopleIcon />} iconPosition="start" label="Client Access" />}
       </Tabs>
 
       {/* Tab Content */}
       <Card elevation={0} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2, p: 3 }}>
-        {activeTab === 0 && selectedClientId && (
+        {activeTab === TAB_MONTHLY_GRID && selectedClientId && (
           <ChecklistGrid
             workspaceId={workspace.id}
             clientId={selectedClientId}
@@ -233,18 +241,18 @@ function ChecklistPage({ workspace, user }) {
             month={selectedMonth}
             isAdmin={isAdmin}
             userId={user?.id}
+            refreshToken={gridRefreshToken}
           />
         )}
 
-        {activeTab === 1 && (
+        {activeTab === TAB_TODAYS_ITEMS && (
           <DailyFocusView
             workspaceId={workspace.id}
-            clientId={selectedClientId}
             userId={user?.id}
           />
         )}
 
-        {activeTab === 2 && isAdmin && selectedClientId && (
+        {activeTab === TAB_MANAGE_ITEMS && isAdmin && selectedClientId && (
           <ChecklistItemManager
             workspaceId={workspace.id}
             clientId={selectedClientId}
@@ -253,17 +261,9 @@ function ChecklistPage({ workspace, user }) {
           />
         )}
 
-        {activeTab === 3 && isAdmin && (
+        {activeTab === TAB_CLIENT_ACCESS && isAdmin && (
           <ClientUserAssignments
             workspaceId={workspace.id}
-            clients={clients}
-          />
-        )}
-
-        {((activeTab === 2 && !isAdmin) || (activeTab === 4 && isAdmin) || (activeTab === 3 && !isAdmin)) && (
-          <ChecklistReports
-            workspaceId={workspace.id}
-            clientId={selectedClientId}
             clients={clients}
           />
         )}
@@ -277,6 +277,9 @@ function ChecklistPage({ workspace, user }) {
           clientId={selectedClientId}
           clientName={clients.find(c => c.id === selectedClientId)?.name || clients.find(c => c.id === selectedClientId)?.client_name || 'Client'}
           isAdmin={isAdmin}
+          clients={clients}
+          onClientChange={setSelectedClientId}
+          onHolidaysChanged={() => setGridRefreshToken((prev) => prev + 1)}
         />
       )}
     </Box>

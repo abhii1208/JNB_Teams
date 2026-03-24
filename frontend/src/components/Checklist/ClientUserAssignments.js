@@ -6,8 +6,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
-  Card,
-  CardContent,
   Table,
   TableBody,
   TableCell,
@@ -30,6 +28,10 @@ import {
   ListItemText,
   ListItemSecondaryAction,
   Checkbox,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import BusinessIcon from '@mui/icons-material/Business';
@@ -52,9 +54,18 @@ function ClientUserAssignments({ workspaceId, clients }) {
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState(null);
   const [selectedUsers, setSelectedUsers] = useState([]);
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+  const [bulkSelectedClientIds, setBulkSelectedClientIds] = useState([]);
+  const [bulkSelectedUserIds, setBulkSelectedUserIds] = useState([]);
 
   // View mode: 'by-client' or 'by-user'
   const [viewMode, setViewMode] = useState('by-client');
+
+  const normalizeMultiSelectValue = (value) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') return value.split(',');
+    return [];
+  };
 
   // Fetch data
   const fetchData = useCallback(async () => {
@@ -105,7 +116,6 @@ function ClientUserAssignments({ workspaceId, clients }) {
     const grouped = {};
     members.forEach(member => {
       const userId = member.id || member.user_id || member.userId; // Try different field names
-      console.log('Processing member for assignmentsByUser:', member, 'resolved userId:', userId);
       grouped[userId] = {
         user: member,
         clients: assignments
@@ -121,15 +131,16 @@ function ClientUserAssignments({ workspaceId, clients }) {
     return grouped;
   }, [members, assignments]);
 
+  const regularMembers = React.useMemo(
+    () => members.filter((m) => !['Owner', 'Admin'].includes(m.role)),
+    [members]
+  );
+
   // Open assign dialog for a client
   const handleOpenAssignDialog = (client) => {
-    console.log('Opening dialog for client:', client);
     setSelectedClient(client);
     const currentAssignments = assignmentsByClient[client.id]?.users || [];
-    console.log('Current assignments:', currentAssignments);
-    console.log('assignmentsByClient:', assignmentsByClient);
     const initialSelectedUsers = currentAssignments.map(u => u.id);
-    console.log('Initial selected users:', initialSelectedUsers);
     setSelectedUsers(initialSelectedUsers);
     setAssignDialogOpen(true);
   };
@@ -142,11 +153,6 @@ function ClientUserAssignments({ workspaceId, clients }) {
       setSaving(true);
       setError(null);
 
-      console.log('Saving assignments:', {
-        clientId: selectedClient.id,
-        selectedUsers: selectedUsers
-      });
-
       await bulkAssignUsersToClient(selectedClient.id, selectedUsers);
       
       setAssignDialogOpen(false);
@@ -154,6 +160,34 @@ function ClientUserAssignments({ workspaceId, clients }) {
     } catch (err) {
       console.error('Error saving assignments:', err);
       setError(err.response?.data?.error || 'Failed to save assignments');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleOpenBulkDialog = () => {
+    setBulkSelectedClientIds([]);
+    setBulkSelectedUserIds([]);
+    setBulkDialogOpen(true);
+  };
+
+  const handleApplyBulkAccess = async () => {
+    if (bulkSelectedClientIds.length === 0 || bulkSelectedUserIds.length === 0) {
+      setError('Select at least one client and one user for bulk access');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError(null);
+      await Promise.all(
+        bulkSelectedClientIds.map((clientId) => bulkAssignUsersToClient(clientId, bulkSelectedUserIds))
+      );
+      setBulkDialogOpen(false);
+      fetchData();
+    } catch (err) {
+      console.error('Error applying bulk access:', err);
+      setError(err.response?.data?.error || 'Failed to apply bulk access');
     } finally {
       setSaving(false);
     }
@@ -176,15 +210,10 @@ function ClientUserAssignments({ workspaceId, clients }) {
 
   // Toggle user selection
   const handleToggleUser = (userId) => {
-    console.log('Toggling user:', userId, 'Type:', typeof userId);
-    console.log('Current selectedUsers:', selectedUsers);
-    console.log('selectedUsers types:', selectedUsers.map(id => ({ id, type: typeof id })));
-    
     setSelectedUsers(prev => {
-      const newSelection = prev.includes(userId) 
+      const newSelection = prev.includes(userId)
         ? prev.filter(id => id !== userId)
         : [...prev, userId];
-      console.log('New selection:', newSelection);
       return newSelection;
     });
   };
@@ -208,9 +237,17 @@ function ClientUserAssignments({ workspaceId, clients }) {
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h6" sx={{ fontWeight: 600 }}>
-          Client User Assignments
+          Client Access
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button
+            variant="outlined"
+            startIcon={<AddIcon />}
+            onClick={handleOpenBulkDialog}
+            size="small"
+          >
+            Bulk Access
+          </Button>
           <Button
             variant={viewMode === 'by-client' ? 'contained' : 'outlined'}
             startIcon={<BusinessIcon />}
@@ -238,59 +275,73 @@ function ClientUserAssignments({ workspaceId, clients }) {
 
       {/* View by Client */}
       {viewMode === 'by-client' && (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {clients.map(client => {
-            const clientData = assignmentsByClient[client.id];
-            const assignedUsers = clientData?.users || [];
-            
-            return (
-              <Card key={client.id} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)' }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <BusinessIcon color="primary" />
-                      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                        {client.name || client.client_name}
-                      </Typography>
-                      {client.code && (
-                        <Chip label={client.code || client.client_code} size="small" variant="outlined" />
+        <TableContainer component={Paper} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)' }}>
+          <Table>
+            <TableHead>
+              <TableRow sx={{ backgroundColor: '#f8fafc' }}>
+                <TableCell sx={{ fontWeight: 600 }}>Client</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Code</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Assigned Users</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Count</TableCell>
+                <TableCell sx={{ fontWeight: 600, textAlign: 'center' }}>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {clients.map((client) => {
+                const clientData = assignmentsByClient[client.id];
+                const assignedUsers = clientData?.users || [];
+                return (
+                  <TableRow key={client.id} hover>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <BusinessIcon color="primary" fontSize="small" />
+                        <Typography>{client.name || client.client_name}</Typography>
+                      </Box>
+                    </TableCell>
+                    <TableCell>{client.code || client.client_code || '-'}</TableCell>
+                    <TableCell>
+                      {assignedUsers.length === 0 ? (
+                        <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                          No users assigned
+                        </Typography>
+                      ) : (
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                          {assignedUsers.map((user) => (
+                            <Chip
+                              key={user.id}
+                              size="small"
+                              avatar={<Avatar sx={{ bgcolor: '#0f766e' }}>{user.name?.charAt(0) || 'U'}</Avatar>}
+                              label={user.name}
+                              onDelete={() => handleRemoveAssignment(client.id, user.id)}
+                            />
+                          ))}
+                        </Box>
                       )}
-                    </Box>
-                    <Button
-                      variant="outlined"
-                      startIcon={<AddIcon />}
-                      onClick={() => handleOpenAssignDialog(client)}
-                      size="small"
-                    >
-                      Manage Users
-                    </Button>
-                  </Box>
-
-                  {assignedUsers.length === 0 ? (
-                    <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                      No users assigned. Only admins can view this client's checklist.
-                    </Typography>
-                  ) : (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                      {assignedUsers.map(user => (
-                        <Chip
-                          key={user.id}
-                          avatar={<Avatar sx={{ bgcolor: '#0f766e' }}>{user.name?.charAt(0) || 'U'}</Avatar>}
-                          label={user.name}
-                          onDelete={() => handleRemoveAssignment(client.id, user.id)}
-                          sx={{ 
-                            backgroundColor: '#f0fdfa',
-                            '& .MuiChip-deleteIcon': { color: '#dc2626' }
-                          }}
-                        />
-                      ))}
-                    </Box>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
-        </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Chip
+                        size="small"
+                        label={assignedUsers.length}
+                        color={assignedUsers.length > 0 ? 'success' : 'default'}
+                        variant={assignedUsers.length > 0 ? 'filled' : 'outlined'}
+                      />
+                    </TableCell>
+                    <TableCell align="center">
+                      <Button
+                        variant="outlined"
+                        startIcon={<AddIcon />}
+                        onClick={() => handleOpenAssignDialog(client)}
+                        size="small"
+                      >
+                        Manage Users
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
 
       {/* View by User */}
@@ -381,12 +432,9 @@ function ClientUserAssignments({ workspaceId, clients }) {
           </Typography>
           
           <List sx={{ maxHeight: 400, overflow: 'auto' }}>
-            {members
-              .filter(m => !['Owner', 'Admin'].includes(m.role)) // Exclude admins from list
+            {regularMembers
               .map((member, index) => {
-                console.log(`Member ${index}:`, member); // Debug: check member structure
                 const userId = member.id || member.user_id || member.userId; // Try different field names
-                console.log(`Resolved userId for member:`, userId);
                 return (
                 <ListItem 
                   key={userId || `member-${index}`} 
@@ -407,14 +455,9 @@ function ClientUserAssignments({ workspaceId, clients }) {
                   <ListItemSecondaryAction>
                     <Checkbox
                       edge="end"
-                      checked={(() => {
-                        const isChecked = selectedUsers.includes(userId);
-                        console.log(`Checkbox for user ${userId} (${typeof userId}): ${isChecked}`);
-                        return isChecked;
-                      })()}
+                      checked={selectedUsers.includes(userId)}
                       onChange={(e) => {
                         e.stopPropagation();
-                        console.log('Checkbox onChange for:', userId);
                         handleToggleUser(userId);
                       }}
                     />
@@ -424,13 +467,13 @@ function ClientUserAssignments({ workspaceId, clients }) {
               })}
           </List>
 
-          {members.filter(m => !['Owner', 'Admin'].includes(m.role)).length === 0 && (
+          {regularMembers.length === 0 && (
             <Alert severity="info">
               No regular users in this workspace. All current members are Admins or Owners.
             </Alert>
           )}
         </DialogContent>
-        <DialogActions>
+      <DialogActions>
           <Button onClick={() => setAssignDialogOpen(false)}>Cancel</Button>
           <Button 
             variant="contained" 
@@ -438,6 +481,88 @@ function ClientUserAssignments({ workspaceId, clients }) {
             disabled={saving}
           >
             {saving ? 'Saving...' : 'Save Assignments'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Bulk Access Dialog */}
+      <Dialog
+        open={bulkDialogOpen}
+        onClose={() => setBulkDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Bulk Access</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            Bulk access will replace current non-admin user assignments for selected clients.
+          </Alert>
+
+          <FormControl fullWidth sx={{ mb: 2 }}>
+            <InputLabel>Clients</InputLabel>
+            <Select
+              multiple
+              value={bulkSelectedClientIds}
+              label="Clients"
+              onChange={(e) => {
+                const normalized = normalizeMultiSelectValue(e.target.value);
+                setBulkSelectedClientIds(normalized.map((v) => Number(v)));
+              }}
+              renderValue={(selected) => {
+                const selectedSet = new Set(selected.map((v) => Number(v)));
+                return clients
+                  .filter((client) => selectedSet.has(Number(client.id)))
+                  .map((client) => client.name || client.client_name)
+                  .join(', ');
+              }}
+            >
+              {clients.map((client) => (
+                <MenuItem key={client.id} value={client.id}>
+                  <Checkbox checked={bulkSelectedClientIds.includes(Number(client.id))} />
+                  <ListItemText primary={client.name || client.client_name} />
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          <FormControl fullWidth>
+            <InputLabel>Users</InputLabel>
+            <Select
+              multiple
+              value={bulkSelectedUserIds}
+              label="Users"
+              onChange={(e) => {
+                const normalized = normalizeMultiSelectValue(e.target.value);
+                setBulkSelectedUserIds(normalized.map((v) => Number(v)));
+              }}
+              renderValue={(selected) => {
+                const selectedSet = new Set(selected.map((v) => Number(v)));
+                return regularMembers
+                  .filter((member) => selectedSet.has(Number(member.id || member.user_id || member.userId)))
+                  .map((member) => member.name || member.username)
+                  .join(', ');
+              }}
+            >
+              {regularMembers.map((member) => {
+                const userId = Number(member.id || member.user_id || member.userId);
+                return (
+                  <MenuItem key={userId} value={userId}>
+                    <Checkbox checked={bulkSelectedUserIds.includes(userId)} />
+                    <ListItemText primary={member.name || member.username} secondary={member.email} />
+                  </MenuItem>
+                );
+              })}
+            </Select>
+          </FormControl>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBulkDialogOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleApplyBulkAccess}
+            disabled={saving || bulkSelectedClientIds.length === 0 || bulkSelectedUserIds.length === 0}
+          >
+            {saving ? 'Applying...' : 'Apply Access'}
           </Button>
         </DialogActions>
       </Dialog>

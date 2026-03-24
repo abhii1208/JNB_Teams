@@ -39,6 +39,7 @@ const NOTIFICATION_TYPES = {
   // Client notifications
   CLIENT_ADDED: 'client_added',
   CLIENT_CHANGED: 'client_changed',
+  CHECKLIST_UPDATED: 'checklist_updated',
   
   // Approval notifications
   APPROVAL_REQUESTED: 'approval_requested',
@@ -113,6 +114,9 @@ function generateActionUrl({ type, workspaceId, projectId, taskId, chatThreadId,
         return `/clients/${clientId}`;
       }
       return `/clients`;
+
+    case NOTIFICATION_TYPES.CHECKLIST_UPDATED:
+      return `/checklist`;
     
     // Approval URLs
     case NOTIFICATION_TYPES.APPROVAL_REQUESTED:

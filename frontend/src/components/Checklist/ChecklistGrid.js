@@ -29,6 +29,7 @@ import {
   Alert,
   Avatar,
   AvatarGroup,
+  IconButton,
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -36,13 +37,24 @@ import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import BlockIcon from '@mui/icons-material/Block';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import FilterListIcon from '@mui/icons-material/FilterList';
+import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
+import FullscreenIcon from '@mui/icons-material/Fullscreen';
+import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
 import {
   getChecklistGrid,
   confirmChecklistOccurrence,
+  adminUpdateChecklistConfirmation,
   lateConfirmChecklistOccurrence,
   getChecklistCategories,
+  updateChecklistOccurrenceCustomFields,
 } from '../../apiClient';
 import { formatDateTimeIST } from '../../utils/dateUtils';
+import {
+  buildInitialCustomFieldDraft,
+  formatCustomFieldValue,
+  getCustomFieldResolvedValue,
+  isCustomFieldValueEmpty,
+} from './customFieldUtils';
 
 const STATUS_COLORS = {
   pending: { bg: '#f1f5f9', color: '#64748b', icon: <HelpOutlineIcon fontSize="small" /> },
@@ -58,24 +70,70 @@ const FREQUENCY_LABELS = {
   monthly: 'Monthly',
 };
 
-function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) {
+const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function getOccurrenceScheduleLabel(occurrence) {
+  if (!occurrence) return '-';
+
+  if (occurrence.frequency === 'daily') {
+    return 'Only on that day';
+  }
+
+  if (occurrence.frequency === 'weekly') {
+    if (occurrence.weekly_schedule_type === 'specific_day') {
+      const dayLabel = WEEKDAY_LABELS[Number(occurrence.weekly_day_of_week)] || 'Selected day';
+      return `Particular day: ${dayLabel}`;
+    }
+    return 'Any day in week';
+  }
+
+  if (occurrence.frequency === 'monthly') {
+    if (occurrence.monthly_schedule_type === 'month_end') {
+      return 'Month-end only';
+    }
+    if (occurrence.monthly_schedule_type === 'specific_day') {
+      return `Particular day: ${occurrence.monthly_day_of_month || 1}`;
+    }
+    return 'Any day in month';
+  }
+
+  return '-';
+}
+
+function parseIsoDateLocal(dateStr) {
+  if (!dateStr) return null;
+  const [year, month, day] = String(dateStr).split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+}
+
+function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId, refreshToken = 0 }) {
+  const gridRootRef = React.useRef(null);
   const [occurrences, setOccurrences] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   
   // Filters
   const [frequencyFilter, setFrequencyFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [itemFilter, setItemFilter] = useState('');
+  const [sortBy, setSortBy] = useState('item_asc');
   const [showFilters, setShowFilters] = useState(false);
 
   // Confirmation dialog
   const [selectedOccurrence, setSelectedOccurrence] = useState(null);
   const [confirmRemarks, setConfirmRemarks] = useState('');
   const [confirming, setConfirming] = useState(false);
+  const [updatingConfirmation, setUpdatingConfirmation] = useState(false);
   const [lateConfirmUserId, setLateConfirmUserId] = useState('');
   const [lateConfirmReason, setLateConfirmReason] = useState('');
+  const [adminEditUserId, setAdminEditUserId] = useState('');
+  const [adminEditRemarks, setAdminEditRemarks] = useState('');
+  const [customFieldDraft, setCustomFieldDraft] = useState({});
+  const [updatingCustomFields, setUpdatingCustomFields] = useState(false);
 
   // Calculate days in month
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -113,7 +171,22 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
 
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
+  }, [fetchData, refreshToken]);
+
+  const categoryNameById = React.useMemo(() => {
+    const lookup = new Map();
+    categories.forEach((cat) => {
+      lookup.set(String(cat.id), cat.name);
+    });
+    return lookup;
+  }, [categories]);
+
+  const resolveCategoryName = useCallback((rawCategory) => {
+    if (rawCategory === null || rawCategory === undefined || rawCategory === '') {
+      return '';
+    }
+    return categoryNameById.get(String(rawCategory)) || String(rawCategory);
+  }, [categoryNameById]);
 
   // Group occurrences by checklist item
   const groupedItems = React.useMemo(() => {
@@ -126,7 +199,12 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
           itemId: occ.checklist_item_id,
           title: occ.title,
           category: occ.category,
+          categoryName: resolveCategoryName(occ.category),
           frequency: occ.frequency,
+          weeklyScheduleType: occ.weekly_schedule_type || 'any_day',
+          weeklyDayOfWeek: occ.weekly_day_of_week,
+          monthlyScheduleType: occ.monthly_schedule_type || 'any_day',
+          monthlyDayOfMonth: occ.monthly_day_of_month,
           completionRule: occ.completion_rule,
           remarksRequired: occ.remarks_required,
           assignees: occ.assignees || [],
@@ -134,34 +212,122 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
         };
       }
       
-      // For daily items, use the day number directly
-      // For weekly/monthly, we show on occurrence_date
-      const occDate = new Date(occ.occurrence_date);
-      const day = occDate.getDate();
-      
-      groups[key].days[day] = occ;
+      const occDate = parseIsoDateLocal(occ.occurrence_date);
+      const periodEndDate = parseIsoDateLocal(occ.period_end_date);
+      const isAnyDayWeekly = occ.frequency === 'weekly' && occ.weekly_schedule_type === 'any_day';
+      const isAnyDayMonthly = occ.frequency === 'monthly' && occ.monthly_schedule_type === 'any_day';
+
+      if (occDate && periodEndDate && (isAnyDayWeekly || isAnyDayMonthly)) {
+        for (let d = new Date(occDate); d <= periodEndDate; d.setDate(d.getDate() + 1)) {
+          if (d.getFullYear() !== year || d.getMonth() + 1 !== month) {
+            continue;
+          }
+          groups[key].days[d.getDate()] = occ;
+        }
+      } else if (occDate) {
+        groups[key].days[occDate.getDate()] = occ;
+      }
     });
 
     return Object.values(groups);
-  }, [occurrences]);
+  }, [occurrences, resolveCategoryName, year, month]);
+
+  const displayedItems = React.useMemo(() => {
+    const normalizedItemFilter = itemFilter.trim().toLowerCase();
+    const normalizedCategoryFilter = categoryFilter ? String(categoryFilter) : '';
+    const normalizedFrequencyFilter = frequencyFilter || '';
+
+    const filtered = groupedItems.filter((item) => {
+      if (normalizedItemFilter && !item.title?.toLowerCase().includes(normalizedItemFilter)) {
+        return false;
+      }
+
+      if (normalizedCategoryFilter && String(item.category ?? '') !== normalizedCategoryFilter) {
+        return false;
+      }
+
+      if (normalizedFrequencyFilter && item.frequency !== normalizedFrequencyFilter) {
+        return false;
+      }
+
+      return true;
+    });
+
+    const sorted = [...filtered].sort((a, b) => {
+      const aTitle = a.title || '';
+      const bTitle = b.title || '';
+      const aCategory = a.categoryName || '';
+      const bCategory = b.categoryName || '';
+      const aFrequency = a.frequency || '';
+      const bFrequency = b.frequency || '';
+
+      switch (sortBy) {
+        case 'item_desc':
+          return bTitle.localeCompare(aTitle);
+        case 'category_asc':
+          return aCategory.localeCompare(bCategory) || aTitle.localeCompare(bTitle);
+        case 'category_desc':
+          return bCategory.localeCompare(aCategory) || aTitle.localeCompare(bTitle);
+        case 'frequency_asc':
+          return aFrequency.localeCompare(bFrequency) || aTitle.localeCompare(bTitle);
+        case 'frequency_desc':
+          return bFrequency.localeCompare(aFrequency) || aTitle.localeCompare(bTitle);
+        case 'item_asc':
+        default:
+          return aTitle.localeCompare(bTitle);
+      }
+    });
+
+    return sorted;
+  }, [groupedItems, itemFilter, categoryFilter, frequencyFilter, sortBy]);
+
+  const hasUserConfirmed = (occurrence) => {
+    return occurrence?.confirmations?.some(c => c.user_id === userId);
+  };
+
+  const hasActiveFilters = Boolean(
+    itemFilter ||
+    frequencyFilter ||
+    categoryFilter ||
+    statusFilter ||
+    sortBy !== 'item_asc'
+  );
 
   // Check if user can confirm an occurrence
   const canConfirm = (occurrence) => {
-    if (!occurrence || occurrence.status === 'confirmed' || occurrence.status === 'exempt') {
+    if (!occurrence || occurrence.status === 'exempt' || occurrence.status === 'late_confirmed' || occurrence.status === 'missed') {
       return false;
     }
 
-    // Check if user is assigned
-    const isAssigned = occurrence.assignees?.some(a => a.user_id === userId);
-    if (!isAssigned && !isAdmin) return false;
+    if (hasUserConfirmed(occurrence)) {
+      return false;
+    }
+
+    const myAssignment = occurrence.assignees?.find((a) => Number(a.user_id) === Number(userId));
+    if (!myAssignment) return false;
+
+    const hasActivePrimary = occurrence.assignees?.some((a) => a.assignment_role === 'primary');
+    if (myAssignment.assignment_role === 'secondary' && hasActivePrimary) {
+      return false;
+    }
+
+    // If item is already fully confirmed under "any" rule, still allow other assignees
+    // to add their own confirmation/remarks within the open window.
+    if (occurrence.status === 'confirmed') {
+      if (occurrence.completion_rule !== 'any') return false;
+    }
 
     // Check if within window (simplified - backend handles full validation)
     const today = new Date();
-    const occDate = new Date(occurrence.occurrence_date);
-    const periodEnd = new Date(occurrence.period_end_date);
+    today.setHours(0, 0, 0, 0);
+    const occDate = parseIsoDateLocal(occurrence.occurrence_date);
+    const periodEnd = parseIsoDateLocal(occurrence.period_end_date);
+    if (!occDate || !periodEnd) return false;
+    occDate.setHours(0, 0, 0, 0);
+    periodEnd.setHours(0, 0, 0, 0);
 
     if (occurrence.frequency === 'daily') {
-      return today.toDateString() === occDate.toDateString();
+      return today.getTime() === occDate.getTime();
     } else {
       return today >= occDate && today <= periodEnd;
     }
@@ -178,25 +344,67 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
   // Handle cell click
   const handleCellClick = (occurrence) => {
     if (!occurrence) return;
-    
-    if (occurrence.status === 'exempt') {
-      // Show exemption reason
-      return;
-    }
 
     setSelectedOccurrence(occurrence);
     setConfirmRemarks('');
     setLateConfirmUserId('');
     setLateConfirmReason('');
+    setAdminEditUserId('');
+    setAdminEditRemarks('');
+    setCustomFieldDraft(buildInitialCustomFieldDraft(occurrence.custom_fields || []));
   };
+
+  const handleClearFilters = () => {
+    setItemFilter('');
+    setFrequencyFilter('');
+    setCategoryFilter('');
+    setStatusFilter('');
+    setSortBy('item_asc');
+  };
+
+  const handleToggleFullscreen = async () => {
+    const root = gridRootRef.current;
+    if (!root) return;
+
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else if (root.requestFullscreen) {
+        await root.requestFullscreen();
+      }
+    } catch (err) {
+      console.error('Unable to toggle fullscreen mode:', err);
+    }
+  };
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(document.fullscreenElement === gridRootRef.current);
+    };
+
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+    };
+  }, []);
 
   // Handle confirmation
   const handleConfirm = async () => {
     if (!selectedOccurrence) return;
 
+    const missingFields = getMissingRequiredCustomFields(selectedOccurrence);
+    if (missingFields.length > 0) {
+      setError(`Required custom fields missing: ${missingFields.join(', ')}`);
+      return;
+    }
+
     try {
       setConfirming(true);
-      await confirmChecklistOccurrence(selectedOccurrence.id, confirmRemarks);
+      await confirmChecklistOccurrence(
+        selectedOccurrence.id,
+        confirmRemarks,
+        customFieldDraft
+      );
       setSelectedOccurrence(null);
       fetchData();
     } catch (err) {
@@ -228,7 +436,224 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
     }
   };
 
+  const handleAdminUpdateConfirmation = async () => {
+    if (!selectedOccurrence || !adminEditUserId) return;
+
+    try {
+      setUpdatingConfirmation(true);
+      await adminUpdateChecklistConfirmation(
+        selectedOccurrence.id,
+        Number(adminEditUserId),
+        adminEditRemarks || null,
+        customFieldDraft
+      );
+      setSelectedOccurrence(null);
+      fetchData();
+    } catch (err) {
+      console.error('Error updating confirmation:', err);
+      setError(err.response?.data?.error || 'Failed to update confirmation');
+    } finally {
+      setUpdatingConfirmation(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedOccurrence || !adminEditUserId) return;
+
+    const selectedUserConfirmation = selectedOccurrence.confirmations?.find(
+      (conf) => String(conf.user_id) === String(adminEditUserId)
+    );
+    setAdminEditRemarks(selectedUserConfirmation?.remarks || '');
+  }, [selectedOccurrence, adminEditUserId]);
+
+  useEffect(() => {
+    if (!selectedOccurrence) {
+      setCustomFieldDraft({});
+    }
+  }, [selectedOccurrence]);
+
+  const getOccurrenceCustomFields = useCallback((occurrence) => (
+    Array.isArray(occurrence?.custom_fields) ? occurrence.custom_fields : []
+  ), []);
+
+  const getMissingRequiredCustomFields = useCallback((occurrence) => {
+    if (!occurrence) {
+      return [];
+    }
+    return getOccurrenceCustomFields(occurrence)
+      .filter((field) => field.required)
+      .filter((field) => isCustomFieldValueEmpty(getCustomFieldResolvedValue(field, customFieldDraft), field.field_type))
+      .map((field) => field.label);
+  }, [customFieldDraft, getOccurrenceCustomFields]);
+
+  const handleCustomFieldValueChange = useCallback((fieldId, value) => {
+    setCustomFieldDraft((prev) => ({
+      ...prev,
+      [String(fieldId)]: value
+    }));
+  }, []);
+
+  const handleAdminSaveCustomFields = async () => {
+    if (!selectedOccurrence || !isAdmin) return;
+
+    try {
+      setUpdatingCustomFields(true);
+      await updateChecklistOccurrenceCustomFields(selectedOccurrence.id, customFieldDraft);
+      setSelectedOccurrence(null);
+      await fetchData();
+    } catch (err) {
+      console.error('Error updating custom fields:', err);
+      setError(err.response?.data?.error || 'Failed to update custom fields');
+    } finally {
+      setUpdatingCustomFields(false);
+    }
+  };
+
   // Render status cell
+  const renderCustomFieldEditor = (field, readOnly = false) => {
+    const value = getCustomFieldResolvedValue(field, customFieldDraft);
+    const label = `${field.label}${field.required ? ' *' : ''}`;
+
+    if (readOnly) {
+      return (
+        <TextField
+          fullWidth
+          size="small"
+          label={label}
+          value={formatCustomFieldValue(value, field.field_type)}
+          InputProps={{ readOnly: true }}
+        />
+      );
+    }
+
+    if (field.field_type === 'text') {
+      return (
+        <TextField
+          fullWidth
+          size="small"
+          label={label}
+          value={value ?? ''}
+          onChange={(e) => handleCustomFieldValueChange(field.id, e.target.value)}
+        />
+      );
+    }
+
+    if (field.field_type === 'number') {
+      return (
+        <TextField
+          fullWidth
+          size="small"
+          type="number"
+          label={label}
+          value={value ?? ''}
+          onChange={(e) => handleCustomFieldValueChange(field.id, e.target.value === '' ? null : Number(e.target.value))}
+        />
+      );
+    }
+
+    if (field.field_type === 'date') {
+      return (
+        <TextField
+          fullWidth
+          size="small"
+          type="date"
+          label={label}
+          value={value ?? ''}
+          InputLabelProps={{ shrink: true }}
+          onChange={(e) => handleCustomFieldValueChange(field.id, e.target.value || null)}
+        />
+      );
+    }
+
+    if (field.field_type === 'date_range') {
+      const rangeValue = value && typeof value === 'object' ? value : {};
+      return (
+        <Box sx={{ border: '1px solid #e2e8f0', borderRadius: 1, p: 1.5 }}>
+          <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 1 }}>
+            {label}
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <TextField
+              fullWidth
+              size="small"
+              type="date"
+              label="Start"
+              value={rangeValue.startDate || ''}
+              InputLabelProps={{ shrink: true }}
+              onChange={(e) =>
+                (() => {
+                  const nextRange = {
+                    startDate: e.target.value || '',
+                    endDate: rangeValue.endDate || ''
+                  };
+                  const normalized = nextRange.startDate || nextRange.endDate ? nextRange : null;
+                  handleCustomFieldValueChange(field.id, normalized);
+                })()
+              }
+            />
+            <TextField
+              fullWidth
+              size="small"
+              type="date"
+              label="End"
+              value={rangeValue.endDate || ''}
+              InputLabelProps={{ shrink: true }}
+              onChange={(e) =>
+                (() => {
+                  const nextRange = {
+                    startDate: rangeValue.startDate || '',
+                    endDate: e.target.value || ''
+                  };
+                  const normalized = nextRange.startDate || nextRange.endDate ? nextRange : null;
+                  handleCustomFieldValueChange(field.id, normalized);
+                })()
+              }
+            />
+          </Box>
+        </Box>
+      );
+    }
+
+    if (field.field_type === 'boolean') {
+      return (
+        <FormControl fullWidth size="small">
+          <InputLabel>{label}</InputLabel>
+          <Select
+            value={value === null || value === undefined ? '' : value === true ? 'yes' : 'no'}
+            label={label}
+            onChange={(e) => {
+              const next = e.target.value;
+              handleCustomFieldValueChange(field.id, next === '' ? null : next === 'yes');
+            }}
+          >
+            <MenuItem value="">Select</MenuItem>
+            <MenuItem value="yes">Yes</MenuItem>
+            <MenuItem value="no">No</MenuItem>
+          </Select>
+        </FormControl>
+      );
+    }
+
+    const options = Array.isArray(field.options) ? field.options : [];
+    return (
+      <FormControl fullWidth size="small">
+        <InputLabel>{label}</InputLabel>
+        <Select
+          value={value ?? ''}
+          label={label}
+          onChange={(e) => handleCustomFieldValueChange(field.id, e.target.value || null)}
+        >
+          <MenuItem value="">Select</MenuItem>
+          {options.map((option) => (
+            <MenuItem key={`${field.id}-${option}`} value={option}>
+              {option}
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+    );
+  };
+
   const renderStatusCell = (item, day) => {
     const occurrence = item.days[day];
     
@@ -252,7 +677,14 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
     }
 
     const statusStyle = STATUS_COLORS[occurrence.status] || STATUS_COLORS.pending;
-    const canClick = canConfirm(occurrence) || (isAdmin && isPastWindow(occurrence)) || occurrence.confirmations?.length > 0;
+    const isAnyDayCell = (
+      (occurrence.frequency === 'weekly' && occurrence.weekly_schedule_type === 'any_day') ||
+      (occurrence.frequency === 'monthly' && occurrence.monthly_schedule_type === 'any_day')
+    );
+    const iconToRender = occurrence.status === 'pending' && isAnyDayCell
+      ? <MoreHorizIcon fontSize="small" />
+      : statusStyle.icon;
+    const canClick = Boolean(occurrence);
 
     return (
       <TableCell 
@@ -275,6 +707,11 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
               <Typography variant="caption" sx={{ fontWeight: 600 }}>
                 {occurrence.status.replace('_', ' ').toUpperCase()}
               </Typography>
+              {occurrence.status === 'pending' && isAnyDayCell && (
+                <Typography variant="caption" display="block">
+                  Any day window
+                </Typography>
+              )}
               {occurrence.exemption_reason && (
                 <Typography variant="caption" display="block">
                   Reason: {occurrence.exemption_reason}
@@ -299,7 +736,7 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
               color: statusStyle.color,
             }}
           >
-            {statusStyle.icon}
+            {iconToRender}
           </Box>
         </Tooltip>
       </TableCell>
@@ -315,7 +752,10 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
   }
 
   return (
-    <Box>
+    <Box
+      ref={gridRootRef}
+      sx={isFullscreen ? { backgroundColor: '#fff', p: 2, height: '100%', overflow: 'auto' } : undefined}
+    >
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
@@ -332,9 +772,26 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
         >
           Filters
         </Button>
+        <Button
+          onClick={handleClearFilters}
+          variant="text"
+          size="small"
+          disabled={!hasActiveFilters}
+        >
+          Clear Filters
+        </Button>
 
         {showFilters && (
           <>
+            <TextField
+              size="small"
+              label="Checklist Item"
+              placeholder="Search item"
+              value={itemFilter}
+              onChange={(e) => setItemFilter(e.target.value)}
+              sx={{ minWidth: 220 }}
+            />
+
             <FormControl size="small" sx={{ minWidth: 120 }}>
               <InputLabel>Frequency</InputLabel>
               <Select
@@ -358,7 +815,7 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
               >
                 <MenuItem value="">All</MenuItem>
                 {categories.map((cat) => (
-                  <MenuItem key={cat.id} value={cat.name}>{cat.name}</MenuItem>
+                  <MenuItem key={cat.id} value={String(cat.id)}>{cat.name}</MenuItem>
                 ))}
               </Select>
             </FormControl>
@@ -378,11 +835,32 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
                 <MenuItem value="exempt">Exempt</MenuItem>
               </Select>
             </FormControl>
+
+            <FormControl size="small" sx={{ minWidth: 180 }}>
+              <InputLabel>Sort By</InputLabel>
+              <Select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                label="Sort By"
+              >
+                <MenuItem value="item_asc">Item A-Z</MenuItem>
+                <MenuItem value="item_desc">Item Z-A</MenuItem>
+                <MenuItem value="category_asc">Category A-Z</MenuItem>
+                <MenuItem value="category_desc">Category Z-A</MenuItem>
+                <MenuItem value="frequency_asc">Frequency A-Z</MenuItem>
+                <MenuItem value="frequency_desc">Frequency Z-A</MenuItem>
+              </Select>
+            </FormControl>
           </>
         )}
 
         {/* Legend */}
         <Box sx={{ display: 'flex', gap: 2, ml: 'auto' }}>
+          <Tooltip title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}>
+            <IconButton size="small" onClick={handleToggleFullscreen}>
+              {isFullscreen ? <FullscreenExitIcon fontSize="small" /> : <FullscreenIcon fontSize="small" />}
+            </IconButton>
+          </Tooltip>
           {Object.entries(STATUS_COLORS).map(([status, style]) => (
             <Chip
               key={status}
@@ -400,12 +878,12 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
       </Box>
 
       {/* Grid Table */}
-      {groupedItems.length === 0 ? (
+      {displayedItems.length === 0 ? (
         <Alert severity="info">
           No checklist items found for this month. {isAdmin && 'Go to "Manage Items" to create checklist items.'}
         </Alert>
       ) : (
-        <TableContainer sx={{ maxHeight: 'calc(100vh - 400px)', overflow: 'auto' }}>
+        <TableContainer sx={{ maxHeight: isFullscreen ? 'calc(100vh - 220px)' : 'calc(100vh - 400px)', overflow: 'auto' }}>
           <Table stickyHeader size="small">
             <TableHead>
               <TableRow>
@@ -415,11 +893,14 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
                     left: 0, 
                     zIndex: 3, 
                     backgroundColor: '#f8fafc',
-                    minWidth: 250,
+                    minWidth: 300,
                     fontWeight: 700,
                   }}
                 >
                   Checklist Item
+                </TableCell>
+                <TableCell sx={{ minWidth: 160, fontWeight: 700, backgroundColor: '#f8fafc' }}>
+                  Category
                 </TableCell>
                 <TableCell sx={{ minWidth: 80, fontWeight: 700, backgroundColor: '#f8fafc' }}>
                   Freq
@@ -442,7 +923,7 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
               </TableRow>
             </TableHead>
             <TableBody>
-              {groupedItems.map((item) => (
+              {displayedItems.map((item) => (
                 <TableRow key={item.itemId} hover>
                   <TableCell 
                     sx={{ 
@@ -453,18 +934,18 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
                       borderRight: '2px solid #e2e8f0',
                     }}
                   >
-                    <Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
                       <Typography variant="body2" sx={{ fontWeight: 600 }}>
                         {item.title}
                       </Typography>
-                      {item.category && (
-                        <Chip label={item.category} size="small" sx={{ mt: 0.5, height: 20, fontSize: '0.7rem' }} />
-                      )}
                       {item.assignees?.length > 0 && (
-                        <AvatarGroup max={3} sx={{ mt: 0.5, '& .MuiAvatar-root': { width: 20, height: 20, fontSize: '0.6rem' } }}>
+                        <AvatarGroup max={3} sx={{ '& .MuiAvatar-root': { width: 20, height: 20, fontSize: '0.6rem' } }}>
                           {item.assignees.map((a) => (
-                            <Tooltip key={a.user_id} title={a.user_name}>
-                              <Avatar sx={{ bgcolor: '#0f766e' }}>
+                            <Tooltip
+                              key={a.user_id}
+                              title={`${a.user_name} (${a.assignment_role === 'primary' ? 'Primary' : 'Secondary'})`}
+                            >
+                              <Avatar sx={{ bgcolor: a.assignment_role === 'primary' ? '#1d4ed8' : '#0f766e' }}>
                                 {a.user_name?.charAt(0).toUpperCase()}
                               </Avatar>
                             </Tooltip>
@@ -472,6 +953,13 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
                         </AvatarGroup>
                       )}
                     </Box>
+                  </TableCell>
+                  <TableCell>
+                    {item.categoryName ? (
+                      <Chip label={item.categoryName} size="small" sx={{ height: 22, fontSize: '0.7rem' }} />
+                    ) : (
+                      <Typography color="text.secondary">-</Typography>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Chip 
@@ -503,7 +991,9 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
         fullWidth
       >
         <DialogTitle>
-          {selectedOccurrence?.status === 'confirmed' || selectedOccurrence?.status === 'late_confirmed'
+          {canConfirm(selectedOccurrence)
+            ? 'Confirm Checklist Item'
+            : selectedOccurrence?.status === 'confirmed' || selectedOccurrence?.status === 'late_confirmed'
             ? 'Confirmation Details'
             : isPastWindow(selectedOccurrence) && isAdmin
             ? 'Late Confirmation (Admin)'
@@ -517,9 +1007,37 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
               </Typography>
               
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                {FREQUENCY_LABELS[selectedOccurrence.frequency]} • 
+                {FREQUENCY_LABELS[selectedOccurrence.frequency]} | {getOccurrenceScheduleLabel(selectedOccurrence)} |{' '}
                 {selectedOccurrence.occurrence_date} to {selectedOccurrence.period_end_date}
               </Typography>
+
+              {getOccurrenceCustomFields(selectedOccurrence).length > 0 && (
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Custom Fields
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+                    {getOccurrenceCustomFields(selectedOccurrence).map((field) => {
+                      const fieldHasStoredValue = !isCustomFieldValueEmpty(
+                        getCustomFieldResolvedValue(field, {}),
+                        field.field_type
+                      );
+                      const readOnlyForUser = !isAdmin && (!canConfirm(selectedOccurrence) || fieldHasStoredValue);
+                      return (
+                        <Box key={`grid-custom-field-${selectedOccurrence.id}-${field.id}`}>
+                          {renderCustomFieldEditor(field, readOnlyForUser)}
+                        </Box>
+                      );
+                    })}
+                  </Box>
+
+                  {getMissingRequiredCustomFields(selectedOccurrence).length > 0 && (
+                    <Alert severity="warning" sx={{ mt: 1.5 }}>
+                      Required fields missing: {getMissingRequiredCustomFields(selectedOccurrence).join(', ')}
+                    </Alert>
+                  )}
+                </Box>
+              )}
 
               {/* Show existing confirmations */}
               {selectedOccurrence.confirmations?.length > 0 && (
@@ -541,21 +1059,52 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
                 </Box>
               )}
 
+              {isAdmin && selectedOccurrence.confirmations?.length > 0 && (
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Admin Edit Confirmation
+                  </Typography>
+                  <FormControl fullWidth sx={{ mb: 1.5 }}>
+                    <InputLabel>User</InputLabel>
+                    <Select
+                      value={adminEditUserId}
+                      onChange={(e) => setAdminEditUserId(e.target.value)}
+                      label="User"
+                    >
+                      {selectedOccurrence.confirmations.map((conf) => (
+                        <MenuItem key={conf.user_id} value={conf.user_id}>
+                          {conf.user_name}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <TextField
+                    fullWidth
+                    label="Update Remarks"
+                    multiline
+                    rows={2}
+                    value={adminEditRemarks}
+                    onChange={(e) => setAdminEditRemarks(e.target.value)}
+                    disabled={!adminEditUserId}
+                  />
+                </Box>
+              )}
+
               {/* Confirmation form - only show if can confirm */}
+              {canConfirm(selectedOccurrence) && (
+                <TextField
+                  fullWidth
+                  label={selectedOccurrence.remarks_required ? 'Remarks (Required)' : 'Remarks (Optional)'}
+                  multiline
+                  rows={3}
+                  value={confirmRemarks}
+                  onChange={(e) => setConfirmRemarks(e.target.value)}
+                  sx={{ mb: 2 }}
+                />
+              )}
+
               {selectedOccurrence.status === 'pending' && (
                 <>
-                  {canConfirm(selectedOccurrence) && (
-                    <TextField
-                      fullWidth
-                      label={selectedOccurrence.remarks_required ? 'Remarks (Required)' : 'Remarks (Optional)'}
-                      multiline
-                      rows={3}
-                      value={confirmRemarks}
-                      onChange={(e) => setConfirmRemarks(e.target.value)}
-                      sx={{ mb: 2 }}
-                    />
-                  )}
-
                   {/* Late confirm form for admin */}
                   {isAdmin && isPastWindow(selectedOccurrence) && (
                     <>
@@ -572,7 +1121,7 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
                         >
                           {selectedOccurrence.assignees?.map((a) => (
                             <MenuItem key={a.user_id} value={a.user_id}>
-                              {a.user_name}
+                              {a.user_name} ({a.assignment_role === 'primary' ? 'Primary' : 'Secondary'})
                             </MenuItem>
                           ))}
                         </Select>
@@ -607,7 +1156,7 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
                     >
                       {selectedOccurrence.assignees?.map((a) => (
                         <MenuItem key={a.user_id} value={a.user_id}>
-                          {a.user_name}
+                          {a.user_name} ({a.assignment_role === 'primary' ? 'Primary' : 'Secondary'})
                         </MenuItem>
                       ))}
                     </Select>
@@ -630,11 +1179,17 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
         <DialogActions>
           <Button onClick={() => setSelectedOccurrence(null)}>Close</Button>
           
-          {selectedOccurrence?.status === 'pending' && canConfirm(selectedOccurrence) && (
+          {canConfirm(selectedOccurrence) && (
             <Button 
               onClick={handleConfirm} 
               variant="contained" 
-              disabled={confirming || (selectedOccurrence.remarks_required && !confirmRemarks.trim())}
+              disabled={
+                confirming
+                || updatingConfirmation
+                || updatingCustomFields
+                || (selectedOccurrence.remarks_required && !confirmRemarks.trim())
+                || getMissingRequiredCustomFields(selectedOccurrence).length > 0
+              }
             >
               {confirming ? <CircularProgress size={20} /> : 'Confirm'}
             </Button>
@@ -646,9 +1201,36 @@ function ChecklistGrid({ workspaceId, clientId, year, month, isAdmin, userId }) 
               onClick={handleLateConfirm} 
               variant="contained" 
               color="warning"
-              disabled={confirming || !lateConfirmUserId || !lateConfirmReason.trim()}
+              disabled={confirming || updatingConfirmation || !lateConfirmUserId || !lateConfirmReason.trim()}
             >
               {confirming ? <CircularProgress size={20} /> : 'Late Confirm'}
+            </Button>
+          )}
+
+          {isAdmin && getOccurrenceCustomFields(selectedOccurrence).length > 0 && (
+            <Button
+              onClick={handleAdminSaveCustomFields}
+              variant="contained"
+              color="inherit"
+              disabled={
+                confirming
+                || updatingConfirmation
+                || updatingCustomFields
+                || getMissingRequiredCustomFields(selectedOccurrence).length > 0
+              }
+            >
+              {updatingCustomFields ? <CircularProgress size={20} /> : 'Save Fields'}
+            </Button>
+          )}
+
+          {isAdmin && selectedOccurrence?.confirmations?.length > 0 && (
+            <Button
+              onClick={handleAdminUpdateConfirmation}
+              variant="contained"
+              color="secondary"
+              disabled={confirming || updatingConfirmation || updatingCustomFields || !adminEditUserId}
+            >
+              {updatingConfirmation ? <CircularProgress size={20} /> : 'Update Confirmation'}
             </Button>
           )}
         </DialogActions>

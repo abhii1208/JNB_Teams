@@ -262,7 +262,7 @@ function ChecklistReports({ workspaceId, clientId }) {
       {/* Summary Cards */}
       {summary && (
         <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={12} md={3}>
+          <Grid size={{ xs: 12, md: 3 }}>
             <Card sx={{ height: '100%', backgroundColor: '#f0fdf4' }}>
               <CardContent>
                 <Typography variant="h3" sx={{ fontWeight: 700, color: '#16a34a' }}>
@@ -285,7 +285,7 @@ function ChecklistReports({ workspaceId, clientId }) {
               </CardContent>
             </Card>
           </Grid>
-          <Grid item xs={12} md={3}>
+          <Grid size={{ xs: 12, md: 3 }}>
             <Card sx={{ height: '100%' }}>
               <CardContent>
                 <Typography variant="h3" sx={{ fontWeight: 700, color: '#0f766e' }}>
@@ -301,7 +301,7 @@ function ChecklistReports({ workspaceId, clientId }) {
               </CardContent>
             </Card>
           </Grid>
-          <Grid item xs={12} md={3}>
+          <Grid size={{ xs: 12, md: 3 }}>
             <Card sx={{ height: '100%', backgroundColor: '#fef3c7' }}>
               <CardContent>
                 <Typography variant="h3" sx={{ fontWeight: 700, color: '#b45309' }}>
@@ -316,7 +316,7 @@ function ChecklistReports({ workspaceId, clientId }) {
               </CardContent>
             </Card>
           </Grid>
-          <Grid item xs={12} md={3}>
+          <Grid size={{ xs: 12, md: 3 }}>
             <Card sx={{ height: '100%', backgroundColor: '#dbeafe' }}>
               <CardContent>
                 <Typography variant="h3" sx={{ fontWeight: 700, color: '#1d4ed8' }}>
