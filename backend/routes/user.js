@@ -7,7 +7,21 @@ const bcrypt = require('bcrypt');
 router.get('/settings', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, username, email, first_name, last_name, license_type, created_at FROM users WHERE id = $1',
+      `SELECT
+         id,
+         username,
+         email,
+         first_name,
+         last_name,
+         date_of_birth,
+         manager_user_id,
+         license_type,
+         created_at,
+         last_workspace_id,
+         app_sidebar_collapsed,
+         app_presence_status
+       FROM users
+       WHERE id = $1`,
       [req.userId]
     );
     
@@ -22,14 +36,98 @@ router.get('/settings', async (req, res) => {
   }
 });
 
+router.patch('/preferences', async (req, res) => {
+  const { last_workspace_id, app_sidebar_collapsed, app_presence_status } = req.body || {};
+  const allowedPresence = new Set(['online', 'busy', 'away']);
+
+  if (
+    last_workspace_id === undefined
+    && app_sidebar_collapsed === undefined
+    && app_presence_status === undefined
+  ) {
+    return res.status(400).json({ error: 'No preference updates provided' });
+  }
+
+  try {
+    if (app_presence_status !== undefined && !allowedPresence.has(app_presence_status)) {
+      return res.status(400).json({ error: 'Invalid presence status' });
+    }
+
+    if (last_workspace_id !== undefined && last_workspace_id !== null) {
+      const membership = await pool.query(
+        'SELECT 1 FROM workspace_members WHERE user_id = $1 AND workspace_id = $2',
+        [req.userId, last_workspace_id]
+      );
+
+      if (membership.rows.length === 0) {
+        return res.status(403).json({ error: 'Workspace access denied' });
+      }
+    }
+
+    const updates = [];
+    const values = [];
+
+    if (last_workspace_id !== undefined) {
+      values.push(last_workspace_id);
+      updates.push(`last_workspace_id = $${values.length}`);
+    }
+
+    if (app_sidebar_collapsed !== undefined) {
+      values.push(Boolean(app_sidebar_collapsed));
+      updates.push(`app_sidebar_collapsed = $${values.length}`);
+    }
+
+    if (app_presence_status !== undefined) {
+      values.push(app_presence_status);
+      updates.push(`app_presence_status = $${values.length}`);
+    }
+
+    values.push(req.userId);
+
+    const result = await pool.query(
+      `UPDATE users
+       SET ${updates.join(', ')}
+       WHERE id = $${values.length}
+       RETURNING
+         id,
+         username,
+         email,
+         first_name,
+         last_name,
+         date_of_birth,
+         manager_user_id,
+         license_type,
+         created_at,
+         last_workspace_id,
+         app_sidebar_collapsed,
+         app_presence_status`,
+      values
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Update user preferences error:', err);
+    res.status(500).json({ error: 'Failed to update preferences' });
+  }
+});
+
 // Update user profile
 router.put('/profile', async (req, res) => {
-  const { first_name, last_name } = req.body;
+  const { first_name, last_name, date_of_birth } = req.body;
   
   try {
     const result = await pool.query(
-      'UPDATE users SET first_name = $1, last_name = $2 WHERE id = $3 RETURNING id, username, email, first_name, last_name',
-      [first_name, last_name, req.userId]
+      `UPDATE users
+       SET first_name = $1,
+           last_name = $2,
+           date_of_birth = $3
+       WHERE id = $4
+       RETURNING id, username, email, first_name, last_name, date_of_birth, manager_user_id`,
+      [first_name, last_name, date_of_birth || null, req.userId]
     );
     
     if (result.rows.length === 0) {

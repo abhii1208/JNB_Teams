@@ -8,6 +8,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const { OAuth2Client } = require('google-auth-library');
 const { pool } = require('./db');
 
 // Import routes
@@ -31,6 +32,9 @@ const chatRouter = require('./routes/chat');
 const attachmentsRouter = require('./routes/attachments');
 const checklistRouter = require('./routes/checklist');
 const searchRouter = require('./routes/search');
+const servicesRouter = require('./routes/services');
+const enterpriseRouter = require('./routes/enterprise');
+const taskBulkUploadRouter = require('./routes/taskBulkUpload');
 
 // Import WebSocket
 const { initializeChatWebSocket, chatBroadcast } = require('./chatWebSocket');
@@ -46,9 +50,26 @@ const PORT = process.env.PORT || 5000;
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const FRONTEND_URL_LOCAL = process.env.FRONTEND_URL_LOCAL || 'http://localhost:3000';
+const MOBILE_APP_URL = process.env.MOBILE_APP_URL || 'com.jnbteams.app://auth/callback';
 const REDIRECT_URL = process.env.NODE_ENV === 'production' ? FRONTEND_URL : FRONTEND_URL_LOCAL;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 const googleEnabled = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+const googleIdentityAudiences = Array.from(new Set([
+  process.env.GOOGLE_SERVER_CLIENT_ID,
+  process.env.GOOGLE_ANDROID_SERVER_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_ID,
+].filter(Boolean)));
+const googleTokenClient = new OAuth2Client();
+const ALLOWED_ORIGINS = Array.from(new Set([
+  FRONTEND_URL,
+  FRONTEND_URL_LOCAL,
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost',
+  'https://localhost',
+  'capacitor://localhost',
+  'null',
+].filter(Boolean)));
 
 app.use(helmet({
   crossOriginEmbedderPolicy: false,
@@ -56,7 +77,7 @@ app.use(helmet({
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cors({
-  origin: [FRONTEND_URL, FRONTEND_URL_LOCAL, 'http://localhost:3000', 'http://127.0.0.1:3000', 'null'],
+  origin: ALLOWED_ORIGINS,
   credentials: true,
 }));
 
@@ -67,8 +88,89 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+function sanitizeRedirectUrl(rawUrl) {
+  const value = String(rawUrl || '').trim();
+  if (!value) return null;
+
+  if (value.startsWith('com.jnbteams.app://')) {
+    return value;
+  }
+
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.toString();
+    }
+  } catch (_err) {
+    return null;
+  }
+
+  return null;
+}
+
 function signToken(userId) {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '30d' });
+}
+
+async function ensureUserHasWorkspace(userId) {
+  const client = await pool.connect();
+  let transactionStarted = false;
+  try {
+    const memberCheck = await client.query(
+      'SELECT 1 FROM workspace_members WHERE user_id = $1 LIMIT 1',
+      [userId]
+    );
+
+    if (memberCheck.rows.length > 0) {
+      return;
+    }
+
+    await client.query('BEGIN');
+    transactionStarted = true;
+    const wsRes = await client.query(
+      'INSERT INTO workspaces (name, created_by) VALUES ($1, $2) RETURNING id',
+      ['Personal', userId]
+    );
+    await client.query(
+      'INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, $3)',
+      [wsRes.rows[0].id, userId, 'Owner']
+    );
+    await client.query('COMMIT');
+    transactionStarted = false;
+  } catch (error) {
+    if (transactionStarted) {
+      await client.query('ROLLBACK');
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function verifyGoogleIdentityToken(identityToken) {
+  if (!googleIdentityAudiences.length) {
+    const error = new Error('Google identity audiences are not configured');
+    error.code = 'GOOGLE_NOT_CONFIGURED';
+    throw error;
+  }
+
+  const ticket = await googleTokenClient.verifyIdToken({
+    idToken: identityToken,
+    audience: googleIdentityAudiences,
+  });
+  const payload = ticket.getPayload();
+
+  if (!payload?.email || payload.email_verified === false) {
+    const error = new Error('Google account did not return a verified email');
+    error.code = 'GOOGLE_EMAIL_NOT_VERIFIED';
+    throw error;
+  }
+
+  return {
+    email: payload.email,
+    first_name: payload.given_name || '',
+    last_name: payload.family_name || '',
+  };
 }
 
 function authenticateToken(req, res, next) {
@@ -133,18 +235,36 @@ if (googleEnabled) {
     }
   }));
 
-  app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+  app.get('/auth/google', (req, res, next) => {
+    const redirectTarget =
+      sanitizeRedirectUrl(req.query.redirect_uri)
+      || (req.query.mobile === '1' ? MOBILE_APP_URL : null)
+      || REDIRECT_URL;
+
+    passport.authenticate('google', {
+      scope: ['profile', 'email'],
+      state: redirectTarget,
+    })(req, res, next);
+  });
 
     app.get('/auth/google/callback',
-    passport.authenticate('google', { session: false, failureRedirect: `${REDIRECT_URL}?error=google` }),
-    (req, res) => {
+    (req, res, next) => {
+      const redirectTarget = sanitizeRedirectUrl(req.query.state) || REDIRECT_URL;
+      passport.authenticate('google', {
+        session: false,
+        failureRedirect: `${redirectTarget}?error=google`,
+      })(req, res, next);
+    },
+    async (req, res) => {
+      const redirectTarget = sanitizeRedirectUrl(req.query.state) || REDIRECT_URL;
       if (!req.user) {
-        return res.redirect(`${REDIRECT_URL}?error=google`);
+        return res.redirect(`${redirectTarget}?error=google`);
       }
 
       if (req.user.id) {
+        await ensureUserHasWorkspace(req.user.id);
         const token = signToken(req.user.id);
-        return res.redirect(`${REDIRECT_URL}?token=${token}&id=${req.user.id}`);
+        return res.redirect(`${redirectTarget}?token=${token}&id=${req.user.id}`);
       }
 
       const email = encodeURIComponent(req.user.email || '');
@@ -152,7 +272,7 @@ if (googleEnabled) {
       const lastName = encodeURIComponent(req.user.last_name || '');
 
       return res.redirect(
-        `${REDIRECT_URL}?google_signup=1&email=${email}&first_name=${firstName}&last_name=${lastName}`
+        `${redirectTarget}?google_signup=1&email=${email}&first_name=${firstName}&last_name=${lastName}`
       );
     }
   );
@@ -165,6 +285,44 @@ if (googleEnabled) {
     res.status(503).send('Google auth not configured');
   });
 }
+
+app.post('/auth/google/native', authLimiter, async (req, res) => {
+  const identityToken = String(req.body.identityToken || '').trim();
+  if (!identityToken) {
+    return res.status(400).json({ error: 'Google identity token is required' });
+  }
+
+  try {
+    const googleProfile = await verifyGoogleIdentityToken(identityToken);
+    const existingRes = await pool.query(
+      'SELECT id, email, username, first_name, last_name FROM users WHERE LOWER(email) = LOWER($1)',
+      [googleProfile.email]
+    );
+
+    if (existingRes.rows.length > 0) {
+      const user = existingRes.rows[0];
+      await ensureUserHasWorkspace(user.id);
+      const token = signToken(user.id);
+      return res.json({ id: user.id, token, username: user.username });
+    }
+
+    return res.json({
+      requiresProfileCompletion: true,
+      email: googleProfile.email,
+      first_name: googleProfile.first_name,
+      last_name: googleProfile.last_name,
+    });
+  } catch (err) {
+    console.error('Native Google auth error:', err);
+    if (err.code === 'GOOGLE_NOT_CONFIGURED') {
+      return res.status(503).json({ error: 'Google sign-in is not configured on the server' });
+    }
+    if (err.code === 'GOOGLE_EMAIL_NOT_VERIFIED') {
+      return res.status(401).json({ error: 'Google account email is not verified' });
+    }
+    return res.status(401).json({ error: 'Google sign-in failed. Please try again with a valid Google account.' });
+  }
+});
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -234,32 +392,7 @@ app.post('/api/login', authLimiter, async (req, res) => {
     if (!match) return res.status(401).json({ error: 'Invalid credentials' });
 
     // Ensure the user has at least one workspace (create personal if missing)
-    const client = await pool.connect();
-    try {
-      const memberCheck = await client.query(
-        'SELECT 1 FROM workspace_members WHERE user_id = $1 LIMIT 1',
-        [user.id]
-      );
-
-      if (memberCheck.rows.length === 0) {
-        await client.query('BEGIN');
-        const wsRes = await client.query(
-          'INSERT INTO workspaces (name, created_by) VALUES ($1, $2) RETURNING id, name, created_at, updated_at',
-          ['Personal', user.id]
-        );
-        const workspace = wsRes.rows[0];
-        await client.query(
-          'INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, $3)',
-          [workspace.id, user.id, 'Owner']
-        );
-        await client.query('COMMIT');
-      }
-    } catch (e) {
-      await client.query('ROLLBACK');
-      console.error('Ensure personal workspace error:', e);
-    } finally {
-      client.release();
-    }
+    await ensureUserHasWorkspace(user.id);
 
     const token = signToken(user.id);
     return res.json({ id: user.id, token, username: user.username });
@@ -432,6 +565,9 @@ app.use('/api/chat', authenticateToken, chatRouter);
 app.use('/api/attachments', authenticateToken, attachmentsRouter);
 app.use('/api/checklist', authenticateToken, checklistRouter);
 app.use('/api/search', authenticateToken, searchRouter);
+app.use('/api/services', authenticateToken, servicesRouter);
+app.use('/api/enterprise', authenticateToken, enterpriseRouter);
+app.use('/api/task-bulk', authenticateToken, taskBulkUploadRouter);
 app.use('/public/share', publicShareRouter);
 
 // Serve test page

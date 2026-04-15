@@ -135,6 +135,179 @@ const validateProjectClientLink = async (dbClient, projectId, clientId) => {
   return clientId;
 };
 
+const getWorkspaceRole = async (dbClient, workspaceId, userId) => {
+  const result = await dbClient.query(
+    'SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2',
+    [workspaceId, userId]
+  );
+  return result.rows[0]?.role || null;
+};
+
+const canManageServices = (workspaceRole) => ['Owner', 'Admin', 'ProjectAdmin'].includes(workspaceRole);
+
+const parseJsonField = (value, fallback = []) => {
+  if (!value) return fallback;
+  if (Array.isArray(value)) return value;
+  try {
+    return JSON.parse(value);
+  } catch (_err) {
+    return fallback;
+  }
+};
+
+const normalizeWorkLogInput = ({ start_time, end_time, hours, work_date, notes }) => {
+  const normalizedHours = normalizeNumericInput(hours);
+  let computedHours = normalizedHours;
+
+  if (start_time && end_time) {
+    const start = new Date(start_time);
+    const end = new Date(end_time);
+    if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && end >= start) {
+      computedHours = Number(((end.getTime() - start.getTime()) / (1000 * 60 * 60)).toFixed(2));
+    }
+  }
+
+  return {
+    start_time: start_time || null,
+    end_time: end_time || null,
+    hours: computedHours,
+    work_date: work_date || null,
+    notes: notes || null,
+  };
+};
+
+const syncTaskWorkedHours = async (dbClient, taskId) => {
+  const aggregateResult = await dbClient.query(
+    `SELECT
+       COALESCE(SUM(COALESCE(hours, 0)), 0)::numeric(10,2) AS worked_hours,
+       MIN(start_time) AS first_start_time,
+       MAX(end_time) AS last_end_time
+     FROM task_work_logs
+     WHERE task_id = $1`,
+    [taskId]
+  );
+
+  const aggregate = aggregateResult.rows[0] || {};
+
+  const taskUpdate = await dbClient.query(
+    `UPDATE tasks
+     SET worked_hours = $2,
+         start_time = COALESCE($3, start_time),
+         end_time = COALESCE($4, end_time),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+     RETURNING worked_hours, start_time, end_time`,
+    [
+      taskId,
+      aggregate.worked_hours || 0,
+      aggregate.first_start_time || null,
+      aggregate.last_end_time || null,
+    ]
+  );
+
+  return taskUpdate.rows[0] || null;
+};
+
+const getTaskDetailById = async (dbClient, taskId, userId) => {
+  const result = await dbClient.query(
+    `SELECT
+       t.*,
+       p.workspace_id,
+       p.name AS project_name,
+       p.service_id AS project_service_id,
+       COALESCE(u.first_name || ' ' || u.last_name, u.username) AS assignee_name,
+       COALESCE(creator.first_name || ' ' || creator.last_name, creator.username) AS created_by_name,
+       s.name AS service_name,
+       s.category AS service_category,
+       COALESCE(
+         (
+           SELECT json_agg(json_build_object(
+             'id', tc.id,
+             'user_id', tc.user_id,
+             'user_name', COALESCE(cu.first_name || ' ' || cu.last_name, cu.username),
+             'comment', tc.comment,
+             'created_at', tc.created_at,
+             'updated_at', tc.updated_at
+           ) ORDER BY tc.created_at ASC)
+           FROM task_comments tc
+           JOIN users cu ON cu.id = tc.user_id
+           WHERE tc.task_id = t.id AND tc.deleted_at IS NULL
+         ),
+         '[]'::json
+       ) AS comments,
+       COALESCE(
+         (
+           SELECT json_agg(json_build_object(
+             'id', twl.id,
+             'user_id', twl.user_id,
+             'user_name', COALESCE(wu.first_name || ' ' || wu.last_name, wu.username),
+             'work_date', twl.work_date,
+             'start_time', twl.start_time,
+             'end_time', twl.end_time,
+             'hours', twl.hours,
+             'notes', twl.notes,
+             'created_at', twl.created_at
+           ) ORDER BY twl.work_date DESC, twl.created_at DESC)
+           FROM task_work_logs twl
+           JOIN users wu ON wu.id = twl.user_id
+           WHERE twl.task_id = t.id
+         ),
+         '[]'::json
+       ) AS work_logs,
+       COALESCE(
+         (
+           SELECT json_agg(json_build_object(
+             'id', tr.id,
+             'recipient_id', tr.recipient_id,
+             'recipient_name', COALESCE(ru.first_name || ' ' || ru.last_name, ru.username),
+             'sender_id', tr.sender_id,
+             'sender_name', COALESCE(su.first_name || ' ' || su.last_name, su.username),
+             'message', tr.message,
+             'delivery_channels', tr.delivery_channels,
+             'sent_at', tr.sent_at
+           ) ORDER BY tr.sent_at DESC)
+           FROM task_reminders tr
+           JOIN users ru ON ru.id = tr.recipient_id
+           JOIN users su ON su.id = tr.sender_id
+           WHERE tr.task_id = t.id
+         ),
+         '[]'::json
+       ) AS reminders,
+       COALESCE(
+         (
+           SELECT json_agg(json_build_object(
+             'id', u2.id,
+             'name', COALESCE(u2.first_name || ' ' || u2.last_name, u2.username),
+             'email', u2.email
+           ) ORDER BY u2.first_name, u2.last_name)
+           FROM task_collaborators tc2
+           JOIN users u2 ON u2.id = tc2.user_id
+           WHERE tc2.task_id = t.id
+         ),
+         '[]'::json
+       ) AS collaborators
+     FROM tasks t
+     JOIN projects p ON p.id = t.project_id
+     LEFT JOIN users u ON u.id = t.assignee_id
+     LEFT JOIN users creator ON creator.id = t.created_by
+     LEFT JOIN services s ON s.id = t.service_id
+     LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
+     WHERE t.id = $1
+       AND t.deleted_at IS NULL
+       AND (pm.user_id IS NOT NULL OR p.created_by = $2)`,
+    [taskId, userId]
+  );
+
+  if (!result.rows.length) return null;
+
+  const task = result.rows[0];
+  task.comments = parseJsonField(task.comments, []);
+  task.work_logs = parseJsonField(task.work_logs, []);
+  task.reminders = parseJsonField(task.reminders, []);
+  task.collaborators = parseJsonField(task.collaborators, []);
+  return task;
+};
+
 // Get ALL tasks for a workspace (cross-project)
 // Supports filtering, sorting, pagination
 router.get('/workspace/:workspaceId', async (req, res) => {
@@ -211,6 +384,8 @@ router.get('/workspace/:workspaceId', async (req, res) => {
         t.*,
         p.name as project_name,
         p.id as project_id,
+        s.name as service_name,
+        s.category as service_category,
         COALESCE(task_client.client_name, pc_client.client_name) as client_name,
         COALESCE(task_client.legal_name, pc_client.legal_name) as client_legal_name,
         COALESCE(task_client.series_no, pc_client.series_no) as client_series_no,
@@ -227,6 +402,8 @@ router.get('/workspace/:workspaceId', async (req, res) => {
         CASE WHEN t.due_date < CURRENT_DATE AND t.status NOT IN ('Closed', 'Completed') THEN true ELSE false END as is_overdue,
         CASE WHEN rt.id IS NOT NULL THEN true ELSE false END as is_recurring,
         (SELECT status FROM approvals WHERE task_id = t.id ORDER BY created_at DESC LIMIT 1) as latest_approval_status,
+        COALESCE((SELECT COUNT(*) FROM task_comments tc WHERE tc.task_id = t.id AND tc.deleted_at IS NULL), 0) as comments_count,
+        COALESCE((SELECT COUNT(*) FROM task_reminders tr WHERE tr.task_id = t.id), 0) as reminders_count,
         COALESCE(
           (SELECT array_agg(DISTINCT tpl.project_id)
            FROM task_project_links tpl
@@ -235,6 +412,7 @@ router.get('/workspace/:workspaceId', async (req, res) => {
         ) as linked_project_ids
       FROM tasks t
       JOIN projects p ON t.project_id = p.id
+      LEFT JOIN services s ON s.id = t.service_id
       LEFT JOIN clients task_client ON task_client.id = t.client_id
       LEFT JOIN LATERAL (
         SELECT c.id as client_id, c.client_name, c.legal_name, c.series_no
@@ -726,7 +904,7 @@ async function getGroupMetadata(workspaceId, projectIds, groupBy, pool) {
 // Get tasks for calendar view (date-based)
 router.get('/workspace/:workspaceId/calendar', async (req, res) => {
   const { workspaceId } = req.params;
-  const { start_date, end_date, projects, assignee } = req.query;
+  const { start_date, end_date, projects, assignee, include_completed } = req.query;
 
   try {
     // Get user's accessible projects
@@ -754,12 +932,15 @@ router.get('/workspace/:workspaceId/calendar', async (req, res) => {
 
     let query = `
       SELECT 
-        t.id, t.name, t.due_date, t.target_date, t.status, t.stage, t.priority, t.assignee_id,
+        t.id, t.name, t.description, t.due_date, t.target_date, t.status, t.stage, t.priority, t.assignee_id,
+        t.worked_hours, t.start_time, t.end_time,
         p.id as project_id, p.name as project_name,
+        s.name as service_name,
         u.first_name || ' ' || u.last_name as assignee_name,
         CASE WHEN rt.id IS NOT NULL THEN true ELSE false END as is_recurring
       FROM tasks t
       JOIN projects p ON t.project_id = p.id
+      LEFT JOIN services s ON s.id = t.service_id
       LEFT JOIN users u ON t.assignee_id = u.id
       LEFT JOIN recurring_tasks rt ON t.recurring_task_id = rt.id
       WHERE (
@@ -772,11 +953,15 @@ router.get('/workspace/:workspaceId/calendar', async (req, res) => {
       )
         AND t.deleted_at IS NULL
         AND t.archived_at IS NULL
+        AND ($4::boolean = true OR t.status NOT IN ('Closed', 'Completed'))
         AND (
           (t.due_date >= $2 AND t.due_date <= $3)
           OR (t.target_date >= $2 AND t.target_date <= $3)
         )
     `;
+
+    params.splice(3, 0, include_completed === 'true');
+    paramIndex = 5;
 
     if (assignee && assignee !== 'all') {
       if (assignee === 'me') {
@@ -979,6 +1164,8 @@ router.get('/project/:projectId', async (req, res) => {
     const archiveCondition = includeArchived ? '' : 'AND t.archived_at IS NULL';
     const result = await pool.query(`
       SELECT t.*,
+        s.name as service_name,
+        s.category as service_category,
         COALESCE(task_client.client_name, pc_client.client_name) as client_name,
         COALESCE(task_client.legal_name, pc_client.legal_name) as client_legal_name,
         COALESCE(task_client.series_no, pc_client.series_no) as client_series_no,
@@ -992,11 +1179,14 @@ router.get('/project/:projectId', async (req, res) => {
            WHERE tpl.task_id = t.id),
           ARRAY[]::int[]
         ) as linked_project_ids,
+        COALESCE((SELECT COUNT(*) FROM task_comments tc WHERE tc.task_id = t.id AND tc.deleted_at IS NULL), 0) as comments_count,
+        COALESCE((SELECT COUNT(*) FROM task_reminders tr WHERE tr.task_id = t.id), 0) as reminders_count,
         (SELECT json_agg(json_build_object('id', u2.id, 'name', u2.first_name || ' ' || u2.last_name))
          FROM task_collaborators tc
          JOIN users u2 ON tc.user_id = u2.id
          WHERE tc.task_id = t.id) as collaborators
       FROM tasks t
+      LEFT JOIN services s ON s.id = t.service_id
       LEFT JOIN clients task_client ON task_client.id = t.client_id
       LEFT JOIN LATERAL (
         SELECT c.id as client_id, c.client_name, c.legal_name, c.series_no
@@ -1039,6 +1229,10 @@ router.post('/', async (req, res) => {
     description,
     project_id,
     assignee_id,
+    service_id,
+    worked_hours,
+    start_time,
+    end_time,
     client_id,
     clientId,
     stage = 'Planned',
@@ -1063,6 +1257,8 @@ router.post('/', async (req, res) => {
   const normalizedEstimatedHours = normalizeNumericInput(estimated_hours ?? estimatedHours);
   const normalizedActualHours = normalizeNumericInput(actual_hours ?? actualHours);
   const normalizedCompletionPercentage = normalizeNumericInput(completion_percentage ?? completionPercentage);
+  const normalizedWorkedHours = normalizeNumericInput(worked_hours);
+  const normalizedServiceId = normalizeNumericInput(service_id);
   const normalizedExternalId = external_id ?? externalId ?? null;
   const normalizedTags = Array.isArray(tags) ? tags : null;
   const requestedClientId = normalizeClientIdInput(client_id ?? clientId);
@@ -1161,13 +1357,14 @@ router.post('/', async (req, res) => {
     console.log('[Task Create] Inserting task into database...');
     const taskResult = await client.query(
       `INSERT INTO tasks 
-       (name, description, project_id, assignee_id, stage, status, priority, due_date, target_date, notes, category, section, estimated_hours, actual_hours, completion_percentage, tags, external_id, client_id, task_code, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING *`,
+       (name, description, project_id, assignee_id, service_id, stage, status, priority, due_date, target_date, notes, category, section, estimated_hours, actual_hours, completion_percentage, tags, external_id, client_id, task_code, created_by, worked_hours, start_time, end_time)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24) RETURNING *`,
       [
         name,
         description,
         project_id,
         assignee_id,
+        normalizedServiceId,
         stage,
         status,
         priority,
@@ -1184,6 +1381,9 @@ router.post('/', async (req, res) => {
         resolvedClientId,
         taskCode,
         req.userId,
+        normalizedWorkedHours,
+        start_time || null,
+        end_time || null,
       ]
     );
     
@@ -1274,6 +1474,10 @@ router.put('/:taskId', async (req, res) => {
     name,
     description,
     assignee_id,
+    service_id,
+    worked_hours,
+    start_time,
+    end_time,
     client_id,
     clientId,
     stage,
@@ -1298,6 +1502,8 @@ router.put('/:taskId', async (req, res) => {
   const normalizedEstimatedHours = normalizeNumericInput(estimated_hours ?? estimatedHours);
   const normalizedActualHours = normalizeNumericInput(actual_hours ?? actualHours);
   const normalizedCompletionPercentage = normalizeNumericInput(completion_percentage ?? completionPercentage);
+  const normalizedWorkedHours = normalizeNumericInput(worked_hours);
+  const normalizedServiceId = normalizeNumericInput(service_id);
   const normalizedExternalId = external_id ?? externalId ?? null;
   const normalizedTags = Array.isArray(tags) ? tags : null;
   const hasClientId = Object.prototype.hasOwnProperty.call(req.body, 'client_id')
@@ -1477,9 +1683,13 @@ router.put('/:taskId', async (req, res) => {
            tags = COALESCE($15, tags),
            external_id = COALESCE($16, external_id),
            client_id = CASE WHEN $18 THEN $17 ELSE client_id END,
-           archived_at = CASE WHEN $20 THEN CURRENT_TIMESTAMP ELSE archived_at END,
+           service_id = COALESCE($19, service_id),
+           worked_hours = COALESCE($20, worked_hours),
+           start_time = COALESCE($21, start_time),
+           end_time = COALESCE($22, end_time),
+           archived_at = CASE WHEN $24 THEN CURRENT_TIMESTAMP ELSE archived_at END,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $19
+       WHERE id = $23
        RETURNING *`,
       [
         name,
@@ -1500,6 +1710,10 @@ router.put('/:taskId', async (req, res) => {
         normalizedExternalId,
         resolvedClientId,
         hasClientId,
+        normalizedServiceId,
+        normalizedWorkedHours,
+        start_time || null,
+        end_time || null,
         req.params.taskId,
         shouldArchive,
       ]
@@ -1650,6 +1864,285 @@ router.put('/:taskId', async (req, res) => {
     }
     console.error('Update task error:', err);
     res.status(500).json({ error: 'Failed to update task' });
+  } finally {
+    client.release();
+  }
+});
+
+router.get('/:taskId/details', async (req, res) => {
+  try {
+    const task = await getTaskDetailById(pool, req.params.taskId, req.userId);
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    res.json(task);
+  } catch (err) {
+    console.error('Get task details error:', err);
+    res.status(500).json({ error: 'Failed to fetch task details' });
+  }
+});
+
+router.get('/:taskId/comments', async (req, res) => {
+  try {
+    const task = await getTaskDetailById(pool, req.params.taskId, req.userId);
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    res.json(task.comments || []);
+  } catch (err) {
+    console.error('Get task comments error:', err);
+    res.status(500).json({ error: 'Failed to fetch task comments' });
+  }
+});
+
+router.post('/:taskId/comments', async (req, res) => {
+  const comment = String(req.body.comment || '').trim();
+  if (!comment) {
+    return res.status(400).json({ error: 'Comment is required' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const task = await getTaskDetailById(client, req.params.taskId, req.userId);
+    if (!task) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    const insertResult = await client.query(
+      `INSERT INTO task_comments (task_id, user_id, comment)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [req.params.taskId, req.userId, comment]
+    );
+
+    await client.query(
+      `INSERT INTO activity_logs (user_id, workspace_id, project_id, task_id, type, action, item_name, details)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [req.userId, task.workspace_id, task.project_id, task.id, 'Task', 'Comment Added', task.name, 'Added a task comment']
+    );
+
+    await client.query('COMMIT');
+
+    const followers = await notificationService.getTaskFollowers(task.id, req.userId);
+    await notificationService.notifyTaskComment({
+      taskId: task.id,
+      taskName: task.name,
+      commentPreview: comment,
+      commenterId: req.userId,
+      projectId: task.project_id,
+      workspaceId: task.workspace_id,
+      followers,
+    });
+
+    res.status(201).json(insertResult.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Add task comment error:', err);
+    res.status(500).json({ error: 'Failed to add task comment' });
+  } finally {
+    client.release();
+  }
+});
+
+router.put('/:taskId/comments/:commentId', async (req, res) => {
+  const comment = String(req.body.comment || '').trim();
+  if (!comment) {
+    return res.status(400).json({ error: 'Comment is required' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE task_comments
+       SET comment = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+         AND task_id = $3
+         AND deleted_at IS NULL
+         AND (user_id = $4 OR EXISTS (
+           SELECT 1
+           FROM tasks t
+           JOIN projects p ON p.id = t.project_id
+           LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $4
+           WHERE t.id = $3 AND (p.created_by = $4 OR pm.role IN ('Owner', 'Admin'))
+         ))
+       RETURNING *`,
+      [comment, req.params.commentId, req.params.taskId, req.userId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Comment not found or not editable' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Update task comment error:', err);
+    res.status(500).json({ error: 'Failed to update task comment' });
+  }
+});
+
+router.delete('/:taskId/comments/:commentId', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE task_comments
+       SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+         AND task_id = $2
+         AND deleted_at IS NULL
+         AND (user_id = $3 OR EXISTS (
+           SELECT 1
+           FROM tasks t
+           JOIN projects p ON p.id = t.project_id
+           LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $3
+           WHERE t.id = $2 AND (p.created_by = $3 OR pm.role IN ('Owner', 'Admin'))
+         ))
+       RETURNING id`,
+      [req.params.commentId, req.params.taskId, req.userId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Comment not found or not removable' });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete task comment error:', err);
+    res.status(500).json({ error: 'Failed to delete task comment' });
+  }
+});
+
+router.get('/:taskId/worklogs', async (req, res) => {
+  try {
+    const task = await getTaskDetailById(pool, req.params.taskId, req.userId);
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    res.json(task.work_logs || []);
+  } catch (err) {
+    console.error('Get task work logs error:', err);
+    res.status(500).json({ error: 'Failed to fetch task work logs' });
+  }
+});
+
+router.post('/:taskId/worklogs', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const task = await getTaskDetailById(client, req.params.taskId, req.userId);
+    if (!task) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    const canLogForOthers = ['Owner', 'Admin', 'ProjectAdmin'].includes(await getWorkspaceRole(client, task.workspace_id, req.userId));
+    const targetUserId = normalizeNumericInput(req.body.user_id) || req.userId;
+    if (targetUserId !== req.userId && !canLogForOthers) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'You can only log your own work' });
+    }
+
+    const payload = normalizeWorkLogInput(req.body || {});
+    const result = await client.query(
+      `INSERT INTO task_work_logs (task_id, user_id, work_date, start_time, end_time, hours, notes)
+       VALUES ($1, $2, COALESCE($3, CURRENT_DATE), $4, $5, $6, $7)
+       RETURNING *`,
+      [req.params.taskId, targetUserId, payload.work_date, payload.start_time, payload.end_time, payload.hours, payload.notes]
+    );
+
+    await syncTaskWorkedHours(client, req.params.taskId);
+    await client.query('COMMIT');
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Add task work log error:', err);
+    res.status(500).json({ error: 'Failed to add work log' });
+  } finally {
+    client.release();
+  }
+});
+
+router.get('/:taskId/reminders', async (req, res) => {
+  try {
+    const task = await getTaskDetailById(pool, req.params.taskId, req.userId);
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    res.json(task.reminders || []);
+  } catch (err) {
+    console.error('Get task reminders error:', err);
+    res.status(500).json({ error: 'Failed to fetch reminders' });
+  }
+});
+
+router.post('/:taskId/reminders', async (req, res) => {
+  const recipientIds = Array.isArray(req.body.recipient_ids) ? req.body.recipient_ids.map(Number).filter(Number.isInteger) : [];
+  const message = String(req.body.message || '').trim();
+  const deliveryChannels = Array.isArray(req.body.delivery_channels) && req.body.delivery_channels.length
+    ? req.body.delivery_channels
+    : ['in_app'];
+
+  if (!recipientIds.length) {
+    return res.status(400).json({ error: 'At least one recipient is required' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const task = await getTaskDetailById(client, req.params.taskId, req.userId);
+    if (!task) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    const workspaceMemberCheck = await client.query(
+      'SELECT user_id FROM workspace_members WHERE workspace_id = $1 AND user_id = ANY($2::int[])',
+      [task.workspace_id, recipientIds]
+    );
+    const validRecipientIds = workspaceMemberCheck.rows.map((row) => row.user_id);
+    if (!validRecipientIds.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'No valid recipients found in workspace' });
+    }
+
+    const values = [];
+    const placeholders = validRecipientIds.map((recipientId, index) => {
+      const base = index * 5;
+      values.push(task.id, req.userId, recipientId, message || null, JSON.stringify(deliveryChannels));
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}::jsonb)`;
+    });
+
+    await client.query(
+      `INSERT INTO task_reminders (task_id, sender_id, recipient_id, message, delivery_channels)
+       VALUES ${placeholders.join(', ')}`,
+      values
+    );
+
+    await client.query(
+      'UPDATE tasks SET last_reminder_sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+      [task.id]
+    );
+
+    await client.query('COMMIT');
+
+    await Promise.all(validRecipientIds.map((recipientId) =>
+      notificationService.createNotification({
+        userId: recipientId,
+        senderId: req.userId,
+        type: notificationService.NOTIFICATION_TYPES.TASK_STATUS_CHANGED,
+        title: 'Task Reminder',
+        message: message || `Reminder for task "${task.name}"`,
+        workspaceId: task.workspace_id,
+        projectId: task.project_id,
+        taskId: task.id,
+        metadata: { reminder: true, delivery_channels: deliveryChannels },
+      })
+    ));
+
+    res.status(201).json({ success: true, recipients: validRecipientIds.length });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Send task reminder error:', err);
+    res.status(500).json({ error: 'Failed to send reminder' });
   } finally {
     client.release();
   }

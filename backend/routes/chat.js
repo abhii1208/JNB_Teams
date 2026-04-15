@@ -105,6 +105,18 @@ function parseMentions(content) {
   return mentions;
 }
 
+function isManagerRole(role) {
+  return ['Owner', 'Admin', 'ProjectAdmin'].includes(role);
+}
+
+async function getWorkspaceRole(workspaceId, userId) {
+  const result = await pool.query(
+    `SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2`,
+    [workspaceId, userId]
+  );
+  return result.rows[0]?.role || null;
+}
+
 // =============================================================================
 // MIDDLEWARE
 // =============================================================================
@@ -174,6 +186,9 @@ router.get('/:workspaceId/threads', validateWorkspaceAccess, async (req, res) =>
         ct.id,
         ct.type,
         ct.name,
+        ct.description,
+        ct.intro_text,
+        ct.visibility,
         ct.created_by,
         ct.created_at,
         ct.updated_at,
@@ -237,6 +252,9 @@ router.get('/:workspaceId/threads/:threadId', validateWorkspaceAccess, validateT
         ct.id,
         ct.type,
         ct.name,
+        ct.description,
+        ct.intro_text,
+        ct.visibility,
         ct.workspace_id,
         ct.created_by,
         ct.created_at,
@@ -253,7 +271,17 @@ router.get('/:workspaceId/threads/:threadId', validateWorkspaceAccess, validateT
           FROM chat_thread_members tm
           JOIN users u ON u.id = tm.user_id
           WHERE tm.thread_id = ct.id
-        ) AS members
+        ) AS members,
+        (
+          SELECT COALESCE(json_agg(json_build_object(
+            'id', cm.id,
+            'content', cm.content,
+            'sender_id', cm.sender_id,
+            'created_at', cm.created_at
+          ) ORDER BY cm.pinned_at DESC), '[]'::json)
+          FROM chat_messages cm
+          WHERE cm.thread_id = ct.id AND cm.pinned_at IS NOT NULL
+        ) AS pinned_messages
       FROM chat_threads ct
       WHERE ct.id = $1`,
       [req.threadId]
@@ -367,7 +395,7 @@ router.post('/:workspaceId/threads/dm', validateWorkspaceAccess, async (req, res
  * Create a new group chat
  */
 router.post('/:workspaceId/threads/group', validateWorkspaceAccess, async (req, res) => {
-  const { name, member_ids = [] } = req.body;
+  const { name, member_ids = [], description = '', intro_text = '' } = req.body;
   
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'Group name is required' });
@@ -391,10 +419,10 @@ router.post('/:workspaceId/threads/group', validateWorkspaceAccess, async (req, 
 
     // Create group thread
     const threadResult = await client.query(
-      `INSERT INTO chat_threads (workspace_id, type, name, created_by)
-       VALUES ($1, 'group', $2, $3)
+      `INSERT INTO chat_threads (workspace_id, type, name, description, intro_text, created_by)
+       VALUES ($1, 'group', $2, $3, $4, $5)
        RETURNING *`,
-      [req.workspaceId, name.trim(), req.userId]
+      [req.workspaceId, name.trim(), description || null, intro_text || null, req.userId]
     );
     const thread = threadResult.rows[0];
 
@@ -444,11 +472,89 @@ router.post('/:workspaceId/threads/group', validateWorkspaceAccess, async (req, 
 });
 
 /**
+ * POST /api/chat/:workspaceId/threads/channel
+ * Create a channel thread scoped to workspace or management visibility
+ */
+router.post('/:workspaceId/threads/channel', validateWorkspaceAccess, async (req, res) => {
+  const { name, description = '', intro_text = '', visibility = 'workspace' } = req.body;
+
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Channel name is required' });
+  }
+
+  if (!['workspace', 'management'].includes(visibility)) {
+    return res.status(400).json({ error: 'Visibility must be workspace or management' });
+  }
+
+  const workspaceRole = await getWorkspaceRole(req.workspaceId, req.userId);
+  if (!isManagerRole(workspaceRole)) {
+    return res.status(403).json({ error: 'Only managers and admins can create channels' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const threadResult = await client.query(
+      `INSERT INTO chat_threads (workspace_id, type, name, description, intro_text, visibility, created_by)
+       VALUES ($1, 'channel', $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [req.workspaceId, name.trim(), description || null, intro_text || null, visibility, req.userId]
+    );
+    const thread = threadResult.rows[0];
+
+    const membersResult = await client.query(
+      visibility === 'management'
+        ? `SELECT user_id FROM workspace_members
+           WHERE workspace_id = $1 AND role IN ('Owner', 'Admin', 'ProjectAdmin')`
+        : `SELECT user_id FROM workspace_members WHERE workspace_id = $1`,
+      [req.workspaceId]
+    );
+
+    const memberIds = [...new Set(membersResult.rows.map((row) => row.user_id))];
+    for (const memberId of memberIds) {
+      await client.query(
+        `INSERT INTO chat_thread_members (thread_id, user_id, role)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (thread_id, user_id) DO NOTHING`,
+        [thread.id, memberId, memberId === req.userId ? 'admin' : 'member']
+      );
+    }
+
+    await client.query('COMMIT');
+
+    const fullThread = await client.query(
+      `SELECT ct.*,
+        (SELECT json_agg(json_build_object(
+          'user_id', u.id,
+          'username', u.username,
+          'first_name', u.first_name,
+          'last_name', u.last_name,
+          'role', tm.role
+        ) ORDER BY tm.joined_at)
+        FROM chat_thread_members tm
+        JOIN users u ON u.id = tm.user_id
+        WHERE tm.thread_id = ct.id) AS members
+      FROM chat_threads ct WHERE ct.id = $1`,
+      [thread.id]
+    );
+
+    res.status(201).json(fullThread.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Create channel thread error:', err);
+    res.status(500).json({ error: 'Failed to create channel' });
+  } finally {
+    client.release();
+  }
+});
+
+/**
  * PATCH /api/chat/:workspaceId/threads/:threadId
  * Update group thread (rename, etc.) - Only admins/creators
  */
 router.patch('/:workspaceId/threads/:threadId', validateWorkspaceAccess, validateThreadMember, async (req, res) => {
-  const { name } = req.body;
+  const { name, description, intro_text } = req.body;
 
   try {
     // Check thread type and permissions
@@ -462,8 +568,8 @@ router.patch('/:workspaceId/threads/:threadId', validateWorkspaceAccess, validat
     }
 
     const thread = threadResult.rows[0];
-    if (thread.type !== 'group') {
-      return res.status(400).json({ error: 'Cannot rename DM threads' });
+    if (thread.type === 'dm') {
+      return res.status(400).json({ error: 'Cannot update DM threads' });
     }
 
     if (!(await isThreadAdmin(req.threadId, req.userId))) {
@@ -471,8 +577,14 @@ router.patch('/:workspaceId/threads/:threadId', validateWorkspaceAccess, validat
     }
 
     const result = await pool.query(
-      `UPDATE chat_threads SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *`,
-      [name?.trim() || thread.name, req.threadId]
+      `UPDATE chat_threads
+       SET name = COALESCE($1, name),
+           description = COALESCE($2, description),
+           intro_text = COALESCE($3, intro_text),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $4
+       RETURNING *`,
+      [name?.trim() || null, description ?? null, intro_text ?? null, req.threadId]
     );
 
     res.json(result.rows[0]);
@@ -509,7 +621,7 @@ router.post('/:workspaceId/threads/:threadId/members', validateWorkspaceAccess, 
       return res.status(404).json({ error: 'Thread not found' });
     }
 
-    if (threadResult.rows[0].type !== 'group') {
+    if (threadResult.rows[0].type === 'dm') {
       return res.status(400).json({ error: 'Cannot add members to DM threads' });
     }
 
@@ -575,7 +687,7 @@ router.delete('/:workspaceId/threads/:threadId/members/:userId', validateWorkspa
       return res.status(404).json({ error: 'Thread not found' });
     }
 
-    if (threadResult.rows[0].type !== 'group') {
+    if (threadResult.rows[0].type === 'dm') {
       return res.status(400).json({ error: 'Cannot remove members from DM threads' });
     }
 
@@ -621,11 +733,20 @@ router.get('/:workspaceId/threads/:threadId/messages', validateWorkspaceAccess, 
         cm.sender_id,
         cm.content,
         cm.mentions,
+        cm.parent_message_id,
+        cm.pinned_at,
         cm.created_at,
+        parent.content AS parent_message_content,
         u.username AS sender_username,
         u.first_name AS sender_first_name,
-        u.last_name AS sender_last_name
+        u.last_name AS sender_last_name,
+        (
+          SELECT COUNT(*)::int
+          FROM chat_messages child
+          WHERE child.parent_message_id = cm.id
+        ) AS reply_count
       FROM chat_messages cm
+      LEFT JOIN chat_messages parent ON parent.id = cm.parent_message_id
       JOIN users u ON u.id = cm.sender_id
       WHERE cm.thread_id = $1
     `;
@@ -691,7 +812,7 @@ router.get('/:workspaceId/threads/:threadId/messages', validateWorkspaceAccess, 
  * Send a new message
  */
 router.post('/:workspaceId/threads/:threadId/messages', validateWorkspaceAccess, validateThreadMember, async (req, res) => {
-  const { content, attachmentIds } = req.body;
+  const { content, attachmentIds, parent_message_id } = req.body;
 
   // Allow message with content, attachments, or both
   if ((!content || !content.trim()) && (!attachmentIds || attachmentIds.length === 0)) {
@@ -707,10 +828,10 @@ router.post('/:workspaceId/threads/:threadId/messages', validateWorkspaceAccess,
     const mentions = content ? parseMentions(content) : [];
 
     const result = await pool.query(
-      `INSERT INTO chat_messages (thread_id, sender_id, content, mentions)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, thread_id, sender_id, content, mentions, created_at`,
-      [req.threadId, req.userId, content ? content.trim() : '', JSON.stringify(mentions)]
+      `INSERT INTO chat_messages (thread_id, sender_id, content, mentions, parent_message_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, thread_id, sender_id, content, mentions, parent_message_id, pinned_at, created_at`,
+      [req.threadId, req.userId, content ? content.trim() : '', JSON.stringify(mentions), parent_message_id || null]
     );
 
     const message = result.rows[0];
@@ -791,7 +912,7 @@ router.post('/:workspaceId/threads/:threadId/messages', validateWorkspaceAccess,
             workspaceId: thread.workspace_id,
           });
         }
-      } else if (thread.type === 'group') {
+      } else if (thread.type === 'group' || thread.type === 'channel') {
         // Group message notification
         await notificationService.notifyChatGroupMessage({
           threadId: req.threadId,
@@ -825,6 +946,56 @@ router.post('/:workspaceId/threads/:threadId/messages', validateWorkspaceAccess,
   } catch (err) {
     console.error('Send message error:', err);
     res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
+router.put('/:workspaceId/threads/:threadId/messages/:messageId/pin', validateWorkspaceAccess, validateThreadMember, async (req, res) => {
+  try {
+    if (!(await isThreadAdmin(req.threadId, req.userId))) {
+      return res.status(403).json({ error: 'Only thread admins can pin messages' });
+    }
+
+    const result = await pool.query(
+      `UPDATE chat_messages
+       SET pinned_at = CURRENT_TIMESTAMP, pinned_by = $1
+       WHERE id = $2 AND thread_id = $3
+       RETURNING id, thread_id, pinned_at`,
+      [req.userId, req.params.messageId, req.threadId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Pin message error:', err);
+    res.status(500).json({ error: 'Failed to pin message' });
+  }
+});
+
+router.delete('/:workspaceId/threads/:threadId/messages/:messageId/pin', validateWorkspaceAccess, validateThreadMember, async (req, res) => {
+  try {
+    if (!(await isThreadAdmin(req.threadId, req.userId))) {
+      return res.status(403).json({ error: 'Only thread admins can unpin messages' });
+    }
+
+    const result = await pool.query(
+      `UPDATE chat_messages
+       SET pinned_at = NULL, pinned_by = NULL
+       WHERE id = $1 AND thread_id = $2
+       RETURNING id, thread_id`,
+      [req.params.messageId, req.threadId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Unpin message error:', err);
+    res.status(500).json({ error: 'Failed to unpin message' });
   }
 });
 

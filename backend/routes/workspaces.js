@@ -134,24 +134,23 @@ router.post('/', async (req, res) => {
 // Update workspace branding
 router.patch('/:workspaceId', checkWorkspaceMember, async (req, res) => {
   if (req.workspaceRole !== 'Owner' && req.workspaceRole !== 'Admin') {
-    return res.status(403).json({ error: 'Only owners and admins can update workspace branding' });
+    return res.status(403).json({ error: 'Only owners and admins can update workspace settings' });
   }
 
   const rawLogoUrl = req.body.logo_url ?? req.body.logoUrl;
-  if (rawLogoUrl === undefined) {
-    return res.status(400).json({ error: 'logo_url is required' });
-  }
-
-  let logoUrl = rawLogoUrl;
-  if (logoUrl === '' || logoUrl === null) {
-    logoUrl = null;
-  } else {
-    logoUrl = String(logoUrl).trim();
-    if (logoUrl.length > 500) {
-      return res.status(400).json({ error: 'logo_url is too long' });
-    }
-    if (logoUrl && !/^https?:\/\//i.test(logoUrl)) {
-      return res.status(400).json({ error: 'logo_url must start with http:// or https://' });
+  let logoUrl = undefined;
+  if (rawLogoUrl !== undefined) {
+    logoUrl = rawLogoUrl;
+    if (logoUrl === '' || logoUrl === null) {
+      logoUrl = null;
+    } else {
+      logoUrl = String(logoUrl).trim();
+      if (logoUrl.length > 500) {
+        return res.status(400).json({ error: 'logo_url is too long' });
+      }
+      if (logoUrl && !/^https?:\/\//i.test(logoUrl)) {
+        return res.status(400).json({ error: 'logo_url must start with http:// or https://' });
+      }
     }
   }
 
@@ -161,12 +160,37 @@ router.patch('/:workspaceId', checkWorkspaceMember, async (req, res) => {
   }
 
   try {
+    const updates = [];
+    const values = [];
+
+    if (logoUrl !== undefined) {
+      values.push(logoUrl);
+      updates.push(`logo_url = $${values.length}`);
+    }
+    if (req.body.birthdays_enabled !== undefined) {
+      values.push(Boolean(req.body.birthdays_enabled));
+      updates.push(`birthdays_enabled = $${values.length}`);
+    }
+    if (req.body.rule_book_enabled !== undefined) {
+      values.push(Boolean(req.body.rule_book_enabled));
+      updates.push(`rule_book_enabled = $${values.length}`);
+    }
+    if (req.body.rule_book_mandatory !== undefined) {
+      values.push(Boolean(req.body.rule_book_mandatory));
+      updates.push(`rule_book_mandatory = $${values.length}`);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No workspace updates were provided' });
+    }
+
+    values.push(workspaceId);
     const result = await pool.query(
       `UPDATE workspaces
-       SET logo_url = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2
-       RETURNING id, name, logo_url, updated_at`,
-      [logoUrl, workspaceId]
+       SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $${values.length}
+       RETURNING id, name, logo_url, birthdays_enabled, rule_book_enabled, rule_book_mandatory, updated_at`,
+      values
     );
 
     if (result.rows.length === 0) {
