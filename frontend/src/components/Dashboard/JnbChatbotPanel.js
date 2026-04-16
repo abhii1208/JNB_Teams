@@ -15,13 +15,99 @@ import {
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import SendIcon from '@mui/icons-material/Send';
-import { askWorkspaceAssistant } from '../../apiClient';
+import { askWorkspaceAssistant, getProjects } from '../../apiClient';
+import api from '../../apiClient';
 
 const buildWelcomeMessage = (workspaceName) => ({
   id: `assistant-${Date.now()}`,
   role: 'assistant',
   content: `Hi, I'm JNB chatbot. Ask me about tasks, deadlines, project status, team summaries, latest finance news, or a daily workspace update for ${workspaceName || 'your workspace'}.`,
 });
+
+const safeDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const formatShortDate = (value) => {
+  const date = safeDate(value);
+  return date ? date.toISOString().slice(0, 10) : 'no date';
+};
+
+const buildLocalFallbackReply = async (workspaceId, workspaceName, message) => {
+  const lower = String(message || '').toLowerCase();
+
+  if (lower.includes('finance') || lower.includes('news')) {
+    return 'Live finance/news updates are not enabled on this server yet. I can still summarize tasks, deadlines, and workspace progress for you.';
+  }
+
+  const projectsResponse = await getProjects(workspaceId, false);
+  const projects = Array.isArray(projectsResponse.data) ? projectsResponse.data.filter((project) => !project.archived) : [];
+
+  const taskBatches = await Promise.all(
+    projects.slice(0, 12).map((project) =>
+      api
+        .get(`/api/tasks/project/${project.id}`)
+        .then((response) => ({
+          project,
+          tasks: Array.isArray(response.data) ? response.data : [],
+        }))
+        .catch(() => ({ project, tasks: [] }))
+    )
+  );
+
+  const tasks = taskBatches.flatMap(({ project, tasks }) =>
+    tasks.map((task) => ({
+      ...task,
+      project_name: project.name,
+    }))
+  );
+
+  if (!tasks.length) {
+    return `I could not find any tasks to summarize for ${workspaceName || 'this workspace'} yet.`;
+  }
+
+  const completed = tasks.filter((task) => ['Closed', 'Completed'].includes(String(task.status || '')) || String(task.stage || '') === 'Completed');
+  const overdue = tasks.filter((task) => {
+    const dueDate = safeDate(task.due_date);
+    if (!dueDate) return false;
+    const isDone = ['Closed', 'Completed'].includes(String(task.status || '')) || String(task.stage || '') === 'Completed';
+    return !isDone && dueDate.getTime() < Date.now();
+  });
+  const dueSoon = tasks.filter((task) => {
+    const dueDate = safeDate(task.due_date);
+    if (!dueDate) return false;
+    const isDone = ['Closed', 'Completed'].includes(String(task.status || '')) || String(task.stage || '') === 'Completed';
+    const diffDays = Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+    return !isDone && diffDays >= 0 && diffDays <= 7;
+  });
+
+  if (lower.includes('deadline') || lower.includes('overdue') || lower.includes('risk')) {
+    if (!overdue.length && !dueSoon.length) {
+      return `There are no immediate deadline risks in ${workspaceName || 'this workspace'} based on the current task list.`;
+    }
+
+    return [
+      `Deadline summary for ${workspaceName || 'this workspace'}:`,
+      overdue.length
+        ? `Overdue: ${overdue.slice(0, 4).map((task) => `${task.name} (${task.project_name}, due ${formatShortDate(task.due_date)})`).join('; ')}.`
+        : 'No overdue tasks detected.',
+      dueSoon.length
+        ? `Due soon: ${dueSoon.slice(0, 4).map((task) => `${task.name} (${task.project_name}, due ${formatShortDate(task.due_date)})`).join('; ')}.`
+        : 'No tasks due in the next 7 days.',
+    ].join(' ');
+  }
+
+  return [
+    `Workspace update for ${workspaceName || 'this workspace'}:`,
+    `${projects.length} active projects and ${tasks.length} tasks are currently in scope.`,
+    `${completed.length} tasks are completed, ${overdue.length} are overdue, and ${dueSoon.length} are due within the next 7 days.`,
+    overdue.length
+      ? `Top overdue items: ${overdue.slice(0, 3).map((task) => `${task.name} (${task.project_name})`).join('; ')}.`
+      : 'No overdue items are currently flagged.',
+  ].join(' ');
+};
 
 function JnbChatbotPanel({ workspace, user, floating = false }) {
   const [messages, setMessages] = React.useState(() => [buildWelcomeMessage(workspace?.name)]);
@@ -81,15 +167,41 @@ function JnbChatbotPanel({ workspace, user, floating = false }) {
       }
     } catch (error) {
       console.error('JNB chatbot failed:', error);
-      setErrorText(error?.response?.data?.error || error?.message || 'Assistant request failed');
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `assistant-${Date.now()}`,
-          role: 'assistant',
-          content: 'I could not respond right now. Please try again in a moment.',
-        },
-      ]);
+      if (error?.response?.status === 404 && workspace?.id) {
+        try {
+          const fallbackReply = await buildLocalFallbackReply(workspace.id, workspace.name, message);
+          setErrorText('Live AI endpoint is not available on this server yet. Showing a workspace-based fallback response.');
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: fallbackReply,
+            },
+          ]);
+        } catch (fallbackError) {
+          console.error('JNB chatbot fallback failed:', fallbackError);
+          setErrorText(error?.response?.data?.error || error?.message || 'Assistant request failed');
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `assistant-${Date.now()}`,
+              role: 'assistant',
+              content: 'I could not respond right now. Please try again in a moment.',
+            },
+          ]);
+        }
+      } else {
+        setErrorText(error?.response?.data?.error || error?.message || 'Assistant request failed');
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: 'I could not respond right now. Please try again in a moment.',
+          },
+        ]);
+      }
     } finally {
       setLoading(false);
     }

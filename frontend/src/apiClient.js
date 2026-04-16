@@ -293,7 +293,12 @@ export const getNewsTopics = (workspaceId) =>
 export const createNewsTopic = (workspaceId, payload) =>
   api.post(`/api/enterprise/workspace/${workspaceId}/news-topics`, payload);
 export const askWorkspaceAssistant = (workspaceId, payload) =>
-  api.post(`/api/ai-assistant/workspace/${workspaceId}/chat`, payload);
+  api.post(`/api/ai-assistant/workspace/${workspaceId}/chat`, payload).catch((error) => {
+    if (error?.response?.status === 404) {
+      return api.post(`/api/enterprise/workspace/${workspaceId}/ai-assistant`, payload);
+    }
+    throw error;
+  });
 export const getEmailRules = (workspaceId) =>
   api.get(`/api/enterprise/workspace/${workspaceId}/email-rules`);
 export const updateEmailRule = (workspaceId, ruleKey, payload) =>

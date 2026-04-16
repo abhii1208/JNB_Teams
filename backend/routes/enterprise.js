@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 const { getManagerDashboard } = require('../services/taskInsightsService');
+const { generateAssistantReply } = require('../services/aiAssistantService');
 
 async function getWorkspaceRole(workspaceId, userId) {
   const result = await pool.query(
@@ -496,6 +497,37 @@ router.put('/workspace/:workspaceId/ai-settings', async (req, res) => {
   } catch (err) {
     console.error('Update AI settings error:', err);
     res.status(500).json({ error: 'Failed to update AI settings' });
+  }
+});
+
+router.post('/workspace/:workspaceId/ai-assistant', async (req, res) => {
+  const workspaceId = Number(req.params.workspaceId);
+  const message = String(req.body?.message || '').trim();
+  const history = Array.isArray(req.body?.history) ? req.body.history : [];
+
+  if (!message) {
+    return res.status(400).json({ error: 'message is required' });
+  }
+
+  try {
+    const role = await getWorkspaceRole(workspaceId, req.userId);
+    if (!role) {
+      return res.status(403).json({ error: 'Not a member of this workspace' });
+    }
+
+    const result = await generateAssistantReply({
+      workspaceId,
+      userId: req.userId,
+      message,
+      history,
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error('Enterprise AI assistant error:', err);
+    res.status(err.status || 500).json({
+      error: err.status === 403 ? err.message : 'Failed to generate AI response',
+    });
   }
 });
 
