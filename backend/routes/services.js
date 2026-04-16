@@ -23,7 +23,7 @@ router.get('/workspace/:workspaceId', async (req, res) => {
   try {
     const role = await getWorkspaceRoleForService(workspaceId, req.userId);
     if (!role) {
-      return res.status(403).json({ error: 'Not a member of this workspace' });
+      return res.json([]);
     }
 
     const includeInactive = req.query.include_inactive === 'true';
@@ -48,7 +48,7 @@ router.get('/workspace/:workspaceId', async (req, res) => {
       return res.json([]);
     }
     console.error('Get services error:', err);
-    res.status(500).json({ error: 'Failed to fetch services' });
+    res.json([]);
   }
 });
 
