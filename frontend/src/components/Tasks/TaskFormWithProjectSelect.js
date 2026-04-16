@@ -93,7 +93,7 @@ function TaskFormWithProjectSelect({
         assignee_id: taskData.assignee?.id || null,
         service_id: taskData.service_id ?? taskData.serviceId ?? null,
         client_id: taskData.clientId ?? taskData.client_id ?? null,
-        collaborators: (taskData.collaborators || []).map(c => c.id),
+        collaborator_ids: (taskData.collaborators || []).map(c => c.id),
         notes: taskData.notes || null,
         priority: taskData.priority || 'Medium',
         stage: taskData.stage || 'Planned',

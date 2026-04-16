@@ -130,11 +130,14 @@ function TopAppBar({
 
   // Notification icons mapping
   const notificationIcons = {
+    task_created: <TaskIcon fontSize="small" />,
     task_assigned: <TaskIcon fontSize="small" />,
+    task_collaborator_added: <PersonAddIcon fontSize="small" />,
     task_unassigned: <TaskIcon fontSize="small" />,
     task_mentioned: <CommentIcon fontSize="small" />,
     task_comment: <CommentIcon fontSize="small" />,
     task_completed: <TaskIcon fontSize="small" />,
+    task_status_changed: <TaskIcon fontSize="small" />,
     chat_message: <ChatIcon fontSize="small" />,
     chat_mentioned: <ChatIcon fontSize="small" />,
     approval_requested: <ApprovalIcon fontSize="small" />,

@@ -16,6 +16,21 @@ const normalizeClientIdInput = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const normalizeUserIdsInput = (value) => {
+  if (value === undefined) return { ids: null };
+  if (value === null) return { ids: [] };
+  const list = Array.isArray(value) ? value : [value];
+  const ids = list
+    .map((item) => {
+      if (typeof item === 'object' && item !== null) {
+        return Number(item.id ?? item.user_id);
+      }
+      return Number(item);
+    })
+    .filter((id) => Number.isInteger(id) && id > 0);
+  return { ids: [...new Set(ids)] };
+};
+
 const inferStatusForStageChange = ({ newStage, currentStatus }) => {
   if (!newStage) return null;
   const status = typeof currentStatus === 'string' ? currentStatus : null;
@@ -90,6 +105,25 @@ const ensureLinkedProjectsAccessible = async (dbClient, {
   }
 };
 
+const ensureProjectMembersAccessible = async (dbClient, {
+  projectId,
+  userIds,
+}) => {
+  if (!userIds || userIds.length === 0) return;
+  const result = await dbClient.query(
+    `SELECT user_id
+     FROM project_members
+     WHERE project_id = $1
+       AND user_id = ANY($2::int[])`,
+    [projectId, userIds]
+  );
+  if (result.rows.length !== userIds.length) {
+    const err = new Error('One or more collaborators are not members of the project');
+    err.status = 400;
+    throw err;
+  }
+};
+
 const syncTaskProjectLinks = async (dbClient, taskId, projectIds, userId) => {
   if (!projectIds || projectIds.length === 0) {
     await dbClient.query('DELETE FROM task_project_links WHERE task_id = $1', [taskId]);
@@ -106,6 +140,25 @@ const syncTaskProjectLinks = async (dbClient, taskId, projectIds, userId) => {
      SELECT $1, unnest($2::int[]), $3
      ON CONFLICT DO NOTHING`,
     [taskId, projectIds, userId]
+  );
+};
+
+const syncTaskCollaborators = async (dbClient, taskId, collaboratorIds) => {
+  if (!collaboratorIds || collaboratorIds.length === 0) {
+    await dbClient.query('DELETE FROM task_collaborators WHERE task_id = $1', [taskId]);
+    return;
+  }
+
+  await dbClient.query(
+    'DELETE FROM task_collaborators WHERE task_id = $1 AND NOT (user_id = ANY($2::int[]))',
+    [taskId, collaboratorIds]
+  );
+
+  await dbClient.query(
+    `INSERT INTO task_collaborators (task_id, user_id)
+     SELECT $1, unnest($2::int[])
+     ON CONFLICT DO NOTHING`,
+    [taskId, collaboratorIds]
   );
 };
 
@@ -1262,6 +1315,9 @@ router.post('/', async (req, res) => {
   const normalizedExternalId = external_id ?? externalId ?? null;
   const normalizedTags = Array.isArray(tags) ? tags : null;
   const requestedClientId = normalizeClientIdInput(client_id ?? clientId);
+  const {
+    ids: collaboratorIds,
+  } = normalizeUserIdsInput(req.body.collaborator_ids ?? req.body.collaborators);
   const rawLinkedProjectIds = req.body.linked_project_ids ?? req.body.linkedProjectIds;
   const {
     ids: linkedProjectIds,
@@ -1338,6 +1394,10 @@ router.post('/', async (req, res) => {
       projectIds: filteredLinkedProjectIds,
     });
     console.log('[Task Create] Linked projects access OK');
+    await ensureProjectMembersAccessible(client, {
+      projectId: project_id,
+      userIds: collaboratorIds,
+    });
 
     console.log('[Task Create] Resolving client ID...');
     const resolvedClientId = requestedClientId
@@ -1390,7 +1450,9 @@ router.post('/', async (req, res) => {
     const task = taskResult.rows[0];
 
     await syncTaskProjectLinks(client, task.id, filteredLinkedProjectIds, req.userId);
+    await syncTaskCollaborators(client, task.id, collaboratorIds);
     task.linked_project_ids = filteredLinkedProjectIds;
+    task.collaborators = collaboratorIds;
     
     await client.query(
       'INSERT INTO activity_logs (user_id, workspace_id, project_id, task_id, type, action, item_name, details) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
@@ -1421,8 +1483,8 @@ router.post('/', async (req, res) => {
     await client.query('COMMIT');
     
     // Send notification AFTER commit so task exists in database
-    if (assignee_id && assignee_id !== req.userId) {
-      try {
+    try {
+      if (assignee_id && assignee_id !== req.userId) {
         await notificationService.notifyTaskAssigned({
           taskId: task.id,
           taskName: name,
@@ -1431,10 +1493,21 @@ router.post('/', async (req, res) => {
           projectId: project_id,
           workspaceId: workspaceId,
         });
-      } catch (notifErr) {
-        console.error('Failed to send task assignment notification:', notifErr);
-        // Don't fail the request for notification errors
       }
+      const followers = await notificationService.getTaskFollowers(task.id, req.userId);
+      if (followers.length > 0) {
+        await notificationService.notifyTaskCreated({
+          taskId: task.id,
+          taskName: name,
+          creatorId: req.userId,
+          projectId: project_id,
+          workspaceId,
+          followers,
+        });
+      }
+    } catch (notifErr) {
+      console.error('Failed to send task creation notifications:', notifErr);
+      // Don't fail the request for notification errors
     }
     
     res.status(201).json(task);
@@ -1508,6 +1581,11 @@ router.put('/:taskId', async (req, res) => {
   const normalizedTags = Array.isArray(tags) ? tags : null;
   const hasClientId = Object.prototype.hasOwnProperty.call(req.body, 'client_id')
     || Object.prototype.hasOwnProperty.call(req.body, 'clientId');
+  const rawCollaboratorIds = req.body.collaborator_ids ?? req.body.collaborators;
+  const {
+    ids: collaboratorIds,
+  } = normalizeUserIdsInput(rawCollaboratorIds);
+  const hasCollaboratorUpdate = rawCollaboratorIds !== undefined;
   const rawLinkedProjectIds = req.body.linked_project_ids ?? req.body.linkedProjectIds;
   const {
     ids: linkedProjectIds,
@@ -1528,6 +1606,14 @@ router.put('/:taskId', async (req, res) => {
       `SELECT t.id, t.project_id, t.assignee_id, t.due_date, t.name as current_name,
         t.status,
         t.stage,
+        COALESCE(
+          (
+            SELECT array_agg(tc.user_id ORDER BY tc.user_id)
+            FROM task_collaborators tc
+            WHERE tc.task_id = t.id
+          ),
+          ARRAY[]::int[]
+        ) AS collaborator_ids,
         p.created_by AS project_owner,
         p.workspace_id,
         p.admins_can_approve,
@@ -1580,6 +1666,13 @@ router.put('/:taskId', async (req, res) => {
     if (hasLinkedProjectUpdate && filteredLinkedProjectIds.length > 0 && !allowMultiProjectLinks) {
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Multi-project linking is disabled for this project' });
+    }
+
+    if (hasCollaboratorUpdate) {
+      await ensureProjectMembersAccessible(client, {
+        projectId: access.project_id,
+        userIds: collaboratorIds,
+      });
     }
 
     if (hasLinkedProjectUpdate) {
@@ -1730,6 +1823,10 @@ router.put('/:taskId', async (req, res) => {
       await syncTaskProjectLinks(client, task.id, filteredLinkedProjectIds, req.userId);
       task.linked_project_ids = filteredLinkedProjectIds;
     }
+    if (hasCollaboratorUpdate) {
+      await syncTaskCollaborators(client, task.id, collaboratorIds);
+      task.collaborator_ids = collaboratorIds;
+    }
     
     const projectResult = await client.query(
       'SELECT workspace_id FROM projects WHERE id = $1',
@@ -1778,9 +1875,14 @@ router.put('/:taskId', async (req, res) => {
       const newAssigneeId = task.assignee_id;
       const oldDueDate = access.due_date;
       const newDueDate = task.due_date;
+      const previousCollaboratorIds = Array.isArray(access.collaborator_ids) ? access.collaborator_ids.map(Number) : [];
+      const currentCollaboratorIds = hasCollaboratorUpdate ? collaboratorIds : previousCollaboratorIds;
+      const addedCollaboratorIds = currentCollaboratorIds.filter((id) => !previousCollaboratorIds.includes(id));
+      const changeFragments = [];
       
       // Notify when assignee changes
       if (assignee_id !== undefined && oldAssigneeId !== newAssigneeId) {
+        changeFragments.push(newAssigneeId ? 'assignee updated' : 'assignee removed');
         // Notify old assignee they were unassigned
         if (oldAssigneeId && oldAssigneeId !== req.userId) {
           await notificationService.notifyTaskUnassigned({
@@ -1808,6 +1910,7 @@ router.put('/:taskId', async (req, res) => {
       
       // Notify assignee when due date changes
       if (due_date !== undefined && String(oldDueDate) !== String(newDueDate) && newAssigneeId && newAssigneeId !== req.userId) {
+        changeFragments.push('due date changed');
         await notificationService.notifyTaskDueDateChanged({
           taskId: task.id,
           taskName: task.name,
@@ -1818,6 +1921,38 @@ router.put('/:taskId', async (req, res) => {
           projectId: task.project_id,
           workspaceId: access.workspace_id,
         });
+      }
+
+      if (name !== undefined && String(access.current_name || '') !== String(task.name || '')) {
+        changeFragments.push('title updated');
+      }
+      if (status !== undefined && String(access.status || '') !== String(task.status || '')) {
+        changeFragments.push(`status set to ${task.status}`);
+      }
+      if (stage !== undefined && String(access.stage || '') !== String(task.stage || '')) {
+        changeFragments.push(`stage moved to ${task.stage}`);
+      }
+      if (service_id !== undefined) {
+        changeFragments.push('service updated');
+      }
+      if (worked_hours !== undefined || start_time !== undefined || end_time !== undefined) {
+        changeFragments.push('work log details updated');
+      }
+      if (hasCollaboratorUpdate && addedCollaboratorIds.length > 0) {
+        changeFragments.push(`collaborators added (${addedCollaboratorIds.length})`);
+      }
+
+      for (const collaboratorId of addedCollaboratorIds) {
+        if (collaboratorId !== req.userId) {
+          await notificationService.notifyTaskCollaboratorAdded({
+            taskId: task.id,
+            taskName: task.name,
+            collaboratorId,
+            adderId: req.userId,
+            projectId: task.project_id,
+            workspaceId: access.workspace_id,
+          });
+        }
       }
       
       // Notify followers when task is marked complete
@@ -1848,6 +1983,23 @@ router.put('/:taskId', async (req, res) => {
               context: 'description',
             });
           }
+        }
+      }
+
+      if (changeFragments.length > 0) {
+        const followers = await notificationService.getTaskFollowers(task.id, req.userId);
+        if (followers.length > 0) {
+          await notificationService.notifyTaskStatusChanged({
+            taskId: task.id,
+            taskName: task.name,
+            changerId: req.userId,
+            projectId: task.project_id,
+            workspaceId: access.workspace_id,
+            followers,
+            title: 'Task Updated',
+            message: changeFragments.join(', '),
+            metadata: { changes: changeFragments },
+          });
         }
       }
     } catch (notifErr) {
@@ -2198,19 +2350,60 @@ router.post('/:taskId/collaborators', async (req, res) => {
     return res.status(400).json({ error: 'user_id is required' });
   }
 
+  const client = await pool.connect();
   try {
-    await pool.query(
+    await client.query('BEGIN');
+
+    const taskResult = await client.query(
+      `SELECT t.id, t.name, t.project_id, p.workspace_id
+       FROM tasks t
+       JOIN projects p ON p.id = t.project_id
+       WHERE t.id = $1 AND t.deleted_at IS NULL`,
+      [req.params.taskId]
+    );
+
+    if (!taskResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    const task = taskResult.rows[0];
+    await ensureProjectMembersAccessible(client, {
+      projectId: task.project_id,
+      userIds: [Number(user_id)],
+    });
+
+    await client.query(
       'INSERT INTO task_collaborators (task_id, user_id) VALUES ($1, $2)',
       [req.params.taskId, user_id]
     );
+
+    await client.query('COMMIT');
+
+    if (Number(user_id) !== Number(req.userId)) {
+      await notificationService.notifyTaskCollaboratorAdded({
+        taskId: task.id,
+        taskName: task.name,
+        collaboratorId: Number(user_id),
+        adderId: req.userId,
+        projectId: task.project_id,
+        workspaceId: task.workspace_id,
+      });
+    }
     
     res.status(201).json({ message: 'Collaborator added successfully' });
   } catch (err) {
+    await client.query('ROLLBACK');
     if (err.code === '23505') {
       return res.status(400).json({ error: 'User is already a collaborator' });
     }
+    if (err.status) {
+      return res.status(err.status).json({ error: err.message });
+    }
     console.error('Add collaborator error:', err);
     res.status(500).json({ error: 'Failed to add collaborator' });
+  } finally {
+    client.release();
   }
 });
 

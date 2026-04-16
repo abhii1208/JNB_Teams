@@ -8,7 +8,9 @@ const { pool } = require('../db');
 // Notification types with their metadata
 const NOTIFICATION_TYPES = {
   // Task notifications
+  TASK_CREATED: 'task_created',
   TASK_ASSIGNED: 'task_assigned',
+  TASK_COLLABORATOR_ADDED: 'task_collaborator_added',
   TASK_UNASSIGNED: 'task_unassigned',
   TASK_DUE_CHANGED: 'task_due_changed',
   TASK_MENTIONED: 'task_mentioned',
@@ -71,7 +73,9 @@ function generateActionUrl({ type, workspaceId, projectId, taskId, chatThreadId,
   
   switch (type) {
     // Task URLs
+    case NOTIFICATION_TYPES.TASK_CREATED:
     case NOTIFICATION_TYPES.TASK_ASSIGNED:
+    case NOTIFICATION_TYPES.TASK_COLLABORATOR_ADDED:
     case NOTIFICATION_TYPES.TASK_UNASSIGNED:
     case NOTIFICATION_TYPES.TASK_DUE_CHANGED:
     case NOTIFICATION_TYPES.TASK_MENTIONED:
@@ -158,7 +162,9 @@ async function getUserPreferences(userId, workspaceId = null) {
     if (result.rows.length === 0) {
       return {
         task_assigned: true,
+        task_created: true,
         task_unassigned: true,
+        task_collaborator_added: true,
         task_due_date_changed: true,
         task_mentioned: true,
         task_attachment: true,
@@ -196,7 +202,9 @@ function shouldNotify(preferences, notificationType) {
   if (!preferences || !preferences.in_app_enabled) return false;
   
   const prefMap = {
+    [NOTIFICATION_TYPES.TASK_CREATED]: 'task_created',
     [NOTIFICATION_TYPES.TASK_ASSIGNED]: 'task_assigned',
+    [NOTIFICATION_TYPES.TASK_COLLABORATOR_ADDED]: 'task_collaborator_added',
     [NOTIFICATION_TYPES.TASK_UNASSIGNED]: 'task_unassigned',
     [NOTIFICATION_TYPES.TASK_DUE_CHANGED]: 'task_due_date_changed',
     [NOTIFICATION_TYPES.TASK_MENTIONED]: 'task_mentioned',
@@ -367,6 +375,25 @@ async function createBulkNotifications(notifications) {
 // ============================================================================
 
 /**
+ * Notify task followers when a task is newly created
+ */
+async function notifyTaskCreated({ taskId, taskName, creatorId, projectId, workspaceId, followers = [] }) {
+  const creator = await getUserName(creatorId);
+  const notifications = followers.map((followerId) => ({
+    userId: followerId,
+    type: NOTIFICATION_TYPES.TASK_CREATED,
+    title: 'New Task Created',
+    message: `${creator} created "${taskName}" and added you to it`,
+    projectId,
+    taskId,
+    workspaceId,
+    senderId: creatorId,
+    metadata: { task_name: taskName, created_by: creator },
+  }));
+  return createBulkNotifications(notifications);
+}
+
+/**
  * Notify when a task is assigned to a user
  */
 async function notifyTaskAssigned({ taskId, taskName, assigneeId, assignerId, projectId, workspaceId }) {
@@ -381,6 +408,24 @@ async function notifyTaskAssigned({ taskId, taskName, assigneeId, assignerId, pr
     workspaceId,
     senderId: assignerId,
     metadata: { task_name: taskName, assigner_id: assignerId },
+  });
+}
+
+/**
+ * Notify when a collaborator is added to a task
+ */
+async function notifyTaskCollaboratorAdded({ taskId, taskName, collaboratorId, adderId, projectId, workspaceId }) {
+  const adder = await getUserName(adderId);
+  return createNotification({
+    userId: collaboratorId,
+    type: NOTIFICATION_TYPES.TASK_COLLABORATOR_ADDED,
+    title: 'Added as Collaborator',
+    message: `${adder} added you as a collaborator on "${taskName}"`,
+    projectId,
+    taskId,
+    workspaceId,
+    senderId: adderId,
+    metadata: { task_name: taskName, added_by: adder },
   });
 }
 
@@ -493,6 +538,41 @@ async function notifyTaskCompleted({ taskId, taskName, completerId, projectId, w
     workspaceId,
     senderId: completerId,
     metadata: { task_name: taskName },
+  }));
+  return createBulkNotifications(notifications);
+}
+
+/**
+ * Notify task followers when important task fields change
+ */
+async function notifyTaskStatusChanged({
+  taskId,
+  taskName,
+  changerId,
+  projectId,
+  workspaceId,
+  followers = [],
+  title,
+  message,
+  metadata = {},
+}) {
+  const changer = await getUserName(changerId);
+  const normalizedTitle = String(title || 'Task Updated').trim() || 'Task Updated';
+  const normalizedMessage = String(message || '').trim();
+  const notifications = followers.map((followerId) => ({
+    userId: followerId,
+    type: NOTIFICATION_TYPES.TASK_STATUS_CHANGED,
+    title: normalizedTitle,
+    message: normalizedMessage || `${changer} updated "${taskName}"`,
+    projectId,
+    taskId,
+    workspaceId,
+    senderId: changerId,
+    metadata: {
+      task_name: taskName,
+      changed_by: changer,
+      ...metadata,
+    },
   }));
   return createBulkNotifications(notifications);
 }
@@ -922,13 +1002,16 @@ module.exports = {
   parseMentionsFromText,
   getUserName,
   // Task notifications
+  notifyTaskCreated,
   notifyTaskAssigned,
+  notifyTaskCollaboratorAdded,
   notifyTaskUnassigned,
   notifyTaskDueDateChanged,
   notifyTaskMentioned,
   notifyTaskAttachment,
   notifyTaskComment,
   notifyTaskCompleted,
+  notifyTaskStatusChanged,
   notifyTaskLiked,
   notifyCommentLiked,
   notifyAttachmentLiked,

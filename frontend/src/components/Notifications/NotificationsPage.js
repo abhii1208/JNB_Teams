@@ -42,13 +42,16 @@ import {
 } from '../../apiClient';
 
 const notificationIcons = {
+  task_created: <TaskIcon />,
   task_assigned: <TaskIcon />,
+  task_collaborator_added: <PersonAddIcon />,
   task_unassigned: <TaskIcon />,
   task_due_changed: <TaskIcon />,
   task_mentioned: <CommentIcon />,
   task_attachment: <TaskIcon />,
   task_comment: <CommentIcon />,
   task_completed: <TaskIcon />,
+  task_status_changed: <TaskIcon />,
   task_liked: <TaskIcon />,
   completion_liked: <TaskIcon />,
   comment_liked: <CommentIcon />,
@@ -75,13 +78,16 @@ const notificationIcons = {
 };
 
 const notificationColors = {
+  task_created: '#0f766e',
   task_assigned: '#0284c7',
+  task_collaborator_added: '#0f766e',
   task_unassigned: '#dc2626',
   task_due_changed: '#ea580c',
   task_mentioned: '#7c3aed',
   task_attachment: '#0284c7',
   task_comment: '#7c3aed',
   task_completed: '#16a34a',
+  task_status_changed: '#0f766e',
   task_liked: '#ec4899',
   completion_liked: '#ec4899',
   comment_liked: '#ec4899',
