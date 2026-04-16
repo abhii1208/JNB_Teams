@@ -3,12 +3,19 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
+    "@capacitor/android": "^8.3.0",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/browser": "^8.0.3",
+    "@capacitor/cli": "^8.3.0",
+    "@capacitor/core": "^8.3.0",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^7.3.5",
     "@mui/material": "^7.3.5",
     "@mui/x-date-pickers": "^8.23.0",
     "axios": "^1.7.7",
+    "capacitor-google-sign-in": "^0.7.0",
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",
     "lodash": "4.17.23",
@@ -19,10 +26,17 @@
     "react-scripts": "5.0.1"
   },
   "scripts": {
+    "prebuild": "node ./scripts/sync-brand-logo.js && node ./scripts/sync-android-icons.js",
     "start": "node ./node_modules/react-scripts/bin/react-scripts.js start",
     "build": "node ./node_modules/react-scripts/bin/react-scripts.js build",
     "test": "node ./node_modules/react-scripts/bin/react-scripts.js test",
-    "eject": "node ./node_modules/react-scripts/bin/react-scripts.js eject"
+    "eject": "node ./node_modules/react-scripts/bin/react-scripts.js eject",
+    "cap:add:android": "cap add android",
+    "cap:assets": "capacitor-assets generate --android",
+    "cap:sync": "cap sync android",
+    "cap:copy": "cap copy android",
+    "cap:open": "cap open android",
+    "android:release": "cd android && gradlew.bat assembleRelease"
   },
   "browserslist": {
     "production": [

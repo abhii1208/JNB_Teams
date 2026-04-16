@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Box, CircularProgress, Typography } from '@mui/material';
+import { Box, CircularProgress, Typography, useMediaQuery } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import Sidebar from './Sidebar';
 import TopAppBar from './TopAppBar';
+import MobileTopBar, { MOBILE_TOPBAR_HEIGHT } from './MobileTopBar';
+import MobileBottomNav, { MOBILE_BOTTOM_NAV_HEIGHT } from './MobileBottomNav';
+import MobileMoreSheet from './MobileMoreSheet';
 import Dashboard from '../Dashboard/Dashboard';
 import ProjectList from '../Projects/ProjectList';
 import ProjectDetail from '../Projects/ProjectDetail';
@@ -17,10 +21,15 @@ import TasksPage from '../Tasks/TasksPage';
 import AdminPage from '../Admin/AdminPage';
 import ClientsPage from '../Clients/ClientsPage';
 import ChatPage from '../Chat/ChatPage';
+import ServicesPage from '../Services/ServicesPage';
+import OperationsPage from '../Operations/OperationsPage';
+import SupportPage from '../Support/SupportPage';
 import { ChecklistPage } from '../Checklist';
-import { getWorkspaces, getUserSettings } from '../../apiClient';
+import { getWorkspaces, getUserSettings, patchUserAppPreferences } from '../../apiClient';
 
-function MainLayout({ userId, onLogout }) {
+function MainLayout({ userId, onLogout, themePreference = 'light', onThemePreferenceChange }) {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [workspaces, setWorkspaces] = useState([]);
   const [currentWorkspace, setCurrentWorkspace] = useState(null);
@@ -28,30 +37,59 @@ function MainLayout({ userId, onLogout }) {
   const [selectedTask, setSelectedTask] = useState(null);
   const [loading, setLoading] = useState(true);
   const [navigationState, setNavigationState] = useState(null);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [user, setUser] = useState(null);
 
-  // Fetch workspaces on mount
+  const buildHistoryState = useCallback((overrides = {}) => ({
+    appView: 'main-layout',
+    userId,
+    page: currentPage,
+    selectedProject,
+    selectedTask,
+    navigationState,
+    ...overrides,
+  }), [userId, currentPage, selectedProject, selectedTask, navigationState]);
+
   useEffect(() => {
-    const fetchWorkspaces = async () => {
+    const fetchInitialData = async () => {
       try {
         setLoading(true);
-        const response = await getWorkspaces();
-        setWorkspaces(response.data);
-        
-        // Load saved workspace or use first one
-        const savedWorkspaceId = localStorage.getItem('currentWorkspaceId');
-        const savedWorkspace = response.data.find(w => w.id === parseInt(savedWorkspaceId));
-        setCurrentWorkspace(savedWorkspace || response.data[0] || null);
+        const [workspacesResult, userResult] = await Promise.allSettled([
+          getWorkspaces(),
+          getUserSettings(),
+        ]);
+
+        const nextWorkspaces = workspacesResult.status === 'fulfilled'
+          ? (workspacesResult.value.data || [])
+          : [];
+        const nextUser = userResult.status === 'fulfilled'
+          ? (userResult.value.data || null)
+          : null;
+
+        if (workspacesResult.status === 'rejected') {
+          console.error('Failed to fetch workspaces:', workspacesResult.reason);
+        }
+
+        if (userResult.status === 'rejected') {
+          console.error('Failed to fetch user settings:', userResult.reason);
+        }
+
+        setWorkspaces(nextWorkspaces);
+        setUser(nextUser);
+
+        const preferredWorkspaceId = Number(nextUser?.last_workspace_id);
+        const preferredWorkspace = nextWorkspaces.find((workspace) => Number(workspace.id) === preferredWorkspaceId);
+        setCurrentWorkspace(preferredWorkspace || nextWorkspaces[0] || null);
       } catch (error) {
-        console.error('Failed to fetch workspaces:', error);
+        console.error('Failed to fetch initial app data:', error);
       } finally {
         setLoading(false);
       }
     };
-    
-    fetchWorkspaces();
-  }, []);
 
-  const [user, setUser] = useState(null);
+    fetchInitialData();
+  }, []);
 
   // Real-time notifications hook
   const {
@@ -63,7 +101,7 @@ function MainLayout({ userId, onLogout }) {
   } = useNotifications(currentWorkspace?.id);
 
   // Handle notification toast click - navigate to relevant page
-  const handleNotificationToastClick = useCallback((notification) => {
+  const handleNotificationToastClick = (notification) => {
     const type = notification.type?.toLowerCase() || '';
     
     if (notification.action_url) {
@@ -78,6 +116,8 @@ function MainLayout({ userId, onLogout }) {
         handleNavigate('projects', { projectId: parseInt(url.split('/projects/')[1]) });
       } else if (url.startsWith('/clients/')) {
         handleNavigate('clients', { clientId: parseInt(url.split('/clients/')[1]) });
+      } else if (url.startsWith('/support/')) {
+        handleNavigate('support', { ticketId: parseInt(url.split('/support/')[1], 10) });
       }
     } else if (type.includes('approval')) {
       handleNavigate('approvals', { projectId: notification.project_id });
@@ -86,46 +126,106 @@ function MainLayout({ userId, onLogout }) {
     } else if (type.includes('chat') || notification.chat_thread_id) {
       handleNavigate('chat', { threadId: notification.chat_thread_id });
     }
-  }, []);
+  };
 
-  // Fetch current user settings
   useEffect(() => {
-    const fetchUser = async () => {
-      try {
-        const res = await getUserSettings();
-        setUser(res.data);
-      } catch (err) {
-        console.error('Failed to fetch user settings:', err);
-      }
+    const handlePopState = (event) => {
+      const state = event.state;
+      if (!state || state.appView !== 'main-layout') return;
+
+      setCurrentPage(state.page || 'dashboard');
+      setSelectedProject(state.selectedProject || null);
+      setSelectedTask(state.selectedTask || null);
+      setNavigationState(state.navigationState || null);
+      setMobileSidebarOpen(false);
+      setMobileMoreOpen(false);
     };
 
-    fetchUser();
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
+  useEffect(() => {
+    if (loading) return;
+    const currentState = window.history.state;
+    if (currentState?.appView === 'main-layout') return;
+    window.history.replaceState(buildHistoryState(), document.title);
+  }, [loading, buildHistoryState]);
+
   const handleNavigate = (page, options = null) => {
+    if (isMobile && page === 'more') {
+      setMobileMoreOpen(true);
+      return;
+    }
+    const nextNavigationState = options ? { page, ...options } : null;
     setCurrentPage(page);
     setSelectedProject(null);
     setSelectedTask(null);
-    setNavigationState(options ? { page, ...options } : null);
+    setNavigationState(nextNavigationState);
+    setMobileSidebarOpen(false);
+    setMobileMoreOpen(false);
+    window.history.pushState(
+      buildHistoryState({
+        page,
+        selectedProject: null,
+        selectedTask: null,
+        navigationState: nextNavigationState,
+      }),
+      document.title
+    );
   };
 
   const handleWorkspaceChange = (workspace) => {
     setCurrentWorkspace(workspace);
-    localStorage.setItem('currentWorkspaceId', workspace.id);
+    setUser((prev) => (prev ? { ...prev, last_workspace_id: workspace.id } : prev));
     // Reset project and task selections when workspace changes
     setSelectedProject(null);
     setSelectedTask(null);
+    setNavigationState(null);
+    setMobileSidebarOpen(false);
+    setMobileMoreOpen(false);
+    window.history.replaceState(
+      buildHistoryState({
+        page: currentPage,
+        selectedProject: null,
+        selectedTask: null,
+        navigationState: null,
+      }),
+      document.title
+    );
+
+    patchUserAppPreferences({ last_workspace_id: workspace.id }).catch((error) => {
+      console.error('Failed to persist workspace preference:', error);
+    });
   };
 
   const handleSelectProject = (project) => {
     setSelectedProject(project);
+    window.history.pushState(
+      buildHistoryState({
+        selectedProject: project,
+        selectedTask: null,
+      }),
+      document.title
+    );
   };
 
   const handleSelectTask = (task) => {
     setSelectedTask(task);
+    window.history.pushState(
+      buildHistoryState({
+        selectedTask: task,
+      }),
+      document.title
+    );
   };
 
   const handleBack = () => {
+    if (window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+
     if (selectedTask) {
       setSelectedTask(null);
     } else if (selectedProject) {
@@ -260,6 +360,54 @@ function MainLayout({ userId, onLogout }) {
           );
         }
         return <ClientsPage workspace={currentWorkspace} />;
+
+      case 'services':
+        if (!currentWorkspace || isPersonalWorkspace) {
+          return (
+            <Box sx={{ p: 6 }}>
+              <Typography variant="h6">Access restricted</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Services are not available for personal workspaces.
+              </Typography>
+            </Box>
+          );
+        }
+        return <ServicesPage workspace={currentWorkspace} />;
+
+      case 'operations':
+        if (!currentWorkspace || isPersonalWorkspace) {
+          return (
+            <Box sx={{ p: 6 }}>
+              <Typography variant="h6">Access restricted</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Operations tools are not available for personal workspaces.
+              </Typography>
+            </Box>
+          );
+        }
+        return <OperationsPage workspace={currentWorkspace} user={user} />;
+
+      case 'support': {
+        if (!currentWorkspace || isPersonalWorkspace) {
+          return (
+            <Box sx={{ p: 6 }}>
+              <Typography variant="h6">Access restricted</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Support is not available for personal workspaces.
+              </Typography>
+            </Box>
+          );
+        }
+        const pageNavigation = navigationState?.page === 'support' ? navigationState : null;
+        return (
+          <SupportPage
+            workspace={currentWorkspace}
+            user={user}
+            navigationState={pageNavigation}
+            onNavigationConsumed={() => setNavigationState(null)}
+          />
+        );
+      }
       
       case 'chat':
         return <ChatPage workspace={currentWorkspace} user={user} />;
@@ -278,7 +426,14 @@ function MainLayout({ userId, onLogout }) {
         return <ChecklistPage workspace={currentWorkspace} user={user} />;
       
       case 'settings':
-        return <SettingsPage user={user} workspace={currentWorkspace} />;
+        return (
+          <SettingsPage
+            user={user}
+            workspace={currentWorkspace}
+            themePreference={themePreference}
+            onThemePreferenceChange={onThemePreferenceChange}
+          />
+        );
       
       default:
         return (
@@ -310,40 +465,109 @@ function MainLayout({ userId, onLogout }) {
   }
 
   return (
-    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
-      <TopAppBar
-        user={user}
-        currentWorkspace={currentWorkspace}
-        workspaces={workspaces}
-        onWorkspaceChange={handleWorkspaceChange}
-        onLogout={onLogout}
-        currentPage={currentPage}
-        selectedProject={selectedProject}
-        onNavigate={handleNavigate}
-        unreadNotificationCount={unreadCount}
-      />
-      <Sidebar
-        currentPage={currentPage}
-        onNavigate={handleNavigate}
-        onLogout={onLogout}
-        user={user}
-        workspace={currentWorkspace}
-      />
+    <Box
+      sx={{
+        display: 'flex',
+        minHeight: '100vh',
+        background: isMobile
+          ? (theme.palette.mode === 'dark'
+            ? 'linear-gradient(180deg, #0b1220 0%, #111827 100%)'
+            : 'linear-gradient(180deg, #f8fbfd 0%, #edf4f8 100%)')
+          : (theme.palette.mode === 'dark' ? '#0f172a' : '#f8fafc'),
+      }}
+    >
+      {isMobile ? (
+        <MobileTopBar
+          user={user}
+          currentPage={currentPage}
+          currentWorkspace={currentWorkspace}
+          workspaces={workspaces}
+          onWorkspaceChange={handleWorkspaceChange}
+          unreadNotificationCount={unreadCount}
+          onNotificationsClick={() => handleNavigate('notifications')}
+        />
+      ) : (
+        <TopAppBar
+          user={user}
+          currentWorkspace={currentWorkspace}
+          workspaces={workspaces}
+          onWorkspaceChange={handleWorkspaceChange}
+          onLogout={onLogout}
+          currentPage={currentPage}
+          selectedProject={selectedProject}
+          onNavigate={handleNavigate}
+          unreadNotificationCount={unreadCount}
+          onToggleSidebar={() => setMobileSidebarOpen((prev) => !prev)}
+          isMobileSidebarOpen={mobileSidebarOpen}
+        />
+      )}
+
+      {!isMobile && (
+        <Sidebar
+          currentPage={currentPage}
+          onNavigate={handleNavigate}
+          onLogout={onLogout}
+          user={user}
+          workspace={currentWorkspace}
+          mobileOpen={mobileSidebarOpen}
+          onMobileClose={() => setMobileSidebarOpen(false)}
+        />
+      )}
+
       <Box
         component="main"
         sx={{
           flexGrow: 1,
+          minWidth: 0,
           marginLeft: 0,
-          marginTop: '64px',
-          height: 'calc(100vh - 64px)',
-          backgroundColor: '#f8fafc',
+          marginTop: isMobile
+            ? `calc(${MOBILE_TOPBAR_HEIGHT}px + var(--safe-area-top, 0px))`
+            : 'calc(64px + var(--safe-area-top, 0px))',
+          height: isMobile
+            ? `calc(100dvh - ${MOBILE_TOPBAR_HEIGHT}px - var(--safe-area-top, 0px))`
+            : 'calc(100vh - 64px - var(--safe-area-top, 0px))',
+          backgroundColor: 'transparent',
           overflow: 'hidden',
         }}
       >
-        <Box sx={{ height: '100%', overflow: 'auto' }}>
+        <Box
+          sx={{
+            height: '100%',
+            overflow: 'auto',
+            px: isMobile ? 1.25 : 0,
+            pt: isMobile ? 1 : 0,
+            pb: isMobile
+              ? `calc(${MOBILE_BOTTOM_NAV_HEIGHT}px + env(safe-area-inset-bottom, 0px) + 28px)`
+              : 0,
+          }}
+        >
           {renderContent()}
         </Box>
       </Box>
+
+      {isMobile && (
+        <>
+          <MobileBottomNav
+            currentPage={currentPage}
+            onNavigate={handleNavigate}
+            canViewChat={!isPersonalWorkspace}
+          />
+          <MobileMoreSheet
+            open={mobileMoreOpen}
+            onClose={() => setMobileMoreOpen(false)}
+            onNavigate={handleNavigate}
+            onLogout={onLogout}
+            currentPage={currentPage}
+            isPersonalWorkspace={isPersonalWorkspace}
+            canViewClients={canViewClients}
+            canViewTeam={canViewTeam}
+            canViewApprovals={canViewApprovals}
+            canViewAdmin={canViewAdmin}
+            canViewSupport={!isPersonalWorkspace}
+            currentWorkspace={currentWorkspace}
+          />
+        </>
+      )}
 
       {/* Real-time notification toast */}
       <NotificationToast

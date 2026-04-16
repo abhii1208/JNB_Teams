@@ -21,21 +21,27 @@ import ChatComposer from './ChatComposer';
 import {
   CreateDmDialog,
   CreateGroupDialog,
+  CreateChannelDialog,
   ManageMembersDialog,
   RenameGroupDialog,
 } from './ChatDialogs';
 import useChatWebSocket from './useChatWebSocket';
 import {
   getChatThreads,
+  getChatThread,
   getChatMessages,
   sendChatMessage,
   createDmThread,
   createGroupThread,
+  createChannelThread,
   updateChatThread,
   addThreadMembers,
   removeThreadMember,
   markThreadRead,
   getChatUnreadCount,
+  sendChatReply,
+  pinChatMessage,
+  unpinChatMessage,
 } from '../../apiClient';
 
 const THREAD_LIST_WIDTH = 320;
@@ -60,6 +66,7 @@ function ChatPage({ workspace, user }) {
   // Dialog states
   const [createDmOpen, setCreateDmOpen] = useState(false);
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
+  const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [manageMembersOpen, setManageMembersOpen] = useState(false);
   const [renameGroupOpen, setRenameGroupOpen] = useState(false);
   
@@ -231,8 +238,8 @@ function ChatPage({ workspace, user }) {
   // Fetch thread details
   const fetchThreadDetails = useCallback(async (threadId) => {
     try {
-      const response = await getChatThreads(workspace.id);
-      const thread = response.data.find(t => t.id === threadId);
+      const response = await getChatThread(workspace.id, threadId);
+      const thread = response.data;
       if (thread) {
         setSelectedThread(thread);
         setThreads(prev => prev.map(t => t.id === threadId ? thread : t));
@@ -323,6 +330,7 @@ function ChatPage({ workspace, user }) {
   const handleSelectThread = (thread) => {
     setSelectedThread(thread);
     setTypingUsers([]);
+    fetchThreadDetails(thread.id);
     if (isMobile) {
       setMobileDrawerOpen(false);
     }
@@ -398,6 +406,22 @@ function ChatPage({ workspace, user }) {
     }
   };
 
+  const handleCreateChannel = async (payload) => {
+    try {
+      const response = await createChannelThread(workspace.id, payload);
+      const thread = response.data;
+      setThreads((prev) => [thread, ...prev]);
+      setSelectedThread(thread);
+      if (isMobile) {
+        setMobileDrawerOpen(false);
+      }
+    } catch (error) {
+      console.error('Failed to create channel:', error);
+      setError('Failed to create channel. Please try again.');
+      throw error;
+    }
+  };
+
   // Update thread (rename)
   const handleRenameGroup = async (name) => {
     if (!selectedThread?.id) return;
@@ -438,6 +462,22 @@ function ChatPage({ workspace, user }) {
     console.log('Mention clicked:', type, id);
   };
 
+  const handleReplyToMessage = async (messageId, content) => {
+    if (!workspace?.id || !selectedThread?.id) return;
+    await sendChatReply(workspace.id, selectedThread.id, content, messageId);
+  };
+
+  const handlePinToggle = async (message) => {
+    if (!workspace?.id || !selectedThread?.id) return;
+    if (message.pinned_at) {
+      await unpinChatMessage(workspace.id, selectedThread.id, message.id);
+    } else {
+      await pinChatMessage(workspace.id, selectedThread.id, message.id);
+    }
+    fetchThreadDetails(selectedThread.id);
+    fetchMessages(selectedThread.id);
+  };
+
   // If personal workspace, show message
   if (isPersonalWorkspace) {
     return (
@@ -473,6 +513,7 @@ function ChatPage({ workspace, user }) {
       onCreateGroup={() => setCreateGroupOpen(true)}
       currentUserId={user?.id}
       loading={loadingThreads}
+      onCreateChannel={() => setCreateChannelOpen(true)}
     />
   );
 
@@ -527,6 +568,8 @@ function ChatPage({ workspace, user }) {
           onManageMembers={() => setManageMembersOpen(true)}
           onRenameGroup={() => setRenameGroupOpen(true)}
           onLeaveThread={handleLeaveThread}
+          onReplyToMessage={handleReplyToMessage}
+          onPinToggle={handlePinToggle}
           isMobile={isMobile}
         />
 
@@ -557,6 +600,12 @@ function ChatPage({ workspace, user }) {
         onCreateGroup={handleCreateGroup}
         workspaceId={workspace?.id}
         currentUserId={user?.id}
+      />
+
+      <CreateChannelDialog
+        open={createChannelOpen}
+        onClose={() => setCreateChannelOpen(false)}
+        onCreateChannel={handleCreateChannel}
       />
 
       <ManageMembersDialog

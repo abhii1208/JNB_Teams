@@ -45,7 +45,7 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
-import { getProjectColumnOptions, getProjectColumnSettings, getProjectMembers } from '../../apiClient';
+import { getProjectColumnOptions, getProjectColumnSettings, getProjectMembers, getServices } from '../../apiClient';
 import { formatShortDate } from '../../utils/date';
 import FileAttachments from '../shared/FileAttachments';
 
@@ -217,6 +217,7 @@ function TaskForm({
     isRecurring: false,
     recurrencePattern: 'weekly',
     clientId: null,
+    serviceId: null,
     linkedProjectIds: [],
     // Custom columns (Feature 1)
     category: '',
@@ -229,6 +230,7 @@ function TaskForm({
   });
 
   const [projectMembers, setProjectMembers] = useState([]);
+  const [services, setServices] = useState([]);
   const [columnSettings, setColumnSettings] = useState(DEFAULT_COLUMN_SETTINGS);
   const [columnOptions, setColumnOptions] = useState({ category: [], section: [] });
   const [toast, setToast] = useState({ open: false, severity: 'success', message: '' });
@@ -383,6 +385,7 @@ function TaskForm({
         isRecurring: false,
         recurrencePattern: 'weekly',
         clientId: task.client_id || task.clientId || null,
+        serviceId: task.service_id || task.serviceId || null,
         linkedProjectIds: Array.isArray(task.linked_project_ids || task.linkedProjectIds)
           ? (task.linked_project_ids || task.linkedProjectIds)
           : [],
@@ -410,6 +413,7 @@ function TaskForm({
         isRecurring: false,
         recurrencePattern: 'weekly',
         clientId: null,
+        serviceId: null,
         linkedProjectIds: [],
         // Custom columns (Feature 1)
         category: '',
@@ -436,6 +440,21 @@ function TaskForm({
     };
     if (open && projectId) fetchMembers();
   }, [projectId, open]);
+
+  useEffect(() => {
+    const fetchServices = async () => {
+      if (!workspaceId || !open) return;
+      try {
+        const response = await getServices(workspaceId);
+        setServices(response.data || []);
+      } catch (err) {
+        console.error('Failed to fetch services:', err);
+        setServices([]);
+      }
+    };
+
+    fetchServices();
+  }, [workspaceId, open]);
 
   useEffect(() => {
     if (!projectId || !open) return;
@@ -601,6 +620,7 @@ function TaskForm({
       createdBy: task?.created_by_name || task?.createdBy || null,
       createdDate: task?.created_at || task?.createdDate || null,
       clientId: formData.clientId || null,
+      service_id: formData.serviceId || null,
       // Custom columns (Feature 1)
       category: formData.category || null,
       section: formData.section || null,
@@ -656,10 +676,12 @@ function TaskForm({
         scroll="body"
         PaperProps={{
           sx: {
-            width: { xs: '74vw', md: '66vw' },
+            width: { xs: 'calc(100vw - 16px)', sm: '88vw', md: '66vw' },
             maxWidth: '1040px',
+            maxHeight: { xs: 'calc(100dvh - 16px)', sm: 'calc(100vh - 32px)' },
             borderRadius: 2.5,
             overflow: 'hidden',
+            m: { xs: 1, sm: 2 },
           },
         }}
       >
@@ -667,14 +689,16 @@ function TaskForm({
           sx={{
             display: 'flex',
             justifyContent: 'space-between',
-            alignItems: 'center',
+            alignItems: { xs: 'flex-start', sm: 'center' },
             py: 1.4,
             px: 2,
             bgcolor: 'rgba(15,118,110,0.05)',
+            gap: 1,
+            flexWrap: 'wrap',
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography component="div" variant="h6" sx={{ fontWeight: 900 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', minWidth: 0, pr: 1 }}>
+            <Typography component="div" variant="h6" sx={{ fontWeight: 900, fontSize: { xs: '1rem', sm: '1.25rem' }, minWidth: 0 }}>
               {isEdit ? 'Edit Task' : 'Create New Task'}
             </Typography>
             <Chip label="UPDATED" size="small" color="success" />
@@ -686,7 +710,7 @@ function TaskForm({
           </IconButton>
         </DialogTitle>
 
-        <DialogContent sx={{ p: 2, bgcolor: 'rgba(148,163,184,0.04)' }}>
+        <DialogContent sx={{ p: { xs: 1.5, sm: 2 }, bgcolor: 'rgba(148,163,184,0.04)' }}>
           {!canEdit && (
             <Alert variant="outlined" severity="info" sx={{ mb: 2 }}>
               This task is <strong>{task?.status || 'restricted'}</strong> and can only be edited by admin/owner.
@@ -873,6 +897,30 @@ function TaskForm({
                       {projectClientOptions.map((client) => (
                         <MenuItem key={client.id} value={client.id}>
                           {getClientLabel(client) || client.name || client.client_name || 'Client'}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                )}
+
+                {services.length > 0 && (
+                  <FormControl
+                    fullWidth
+                    disabled={!canEdit}
+                    size="small"
+                    sx={{ '& .MuiInputLabel-root': { fontWeight: 700 } }}
+                  >
+                    <InputLabel>Service</InputLabel>
+                    <Select
+                      value={formData.serviceId || ''}
+                      label="Service"
+                      onChange={(e) => handleChange('serviceId', e.target.value)}
+                      sx={selectSx}
+                    >
+                      <MenuItem value="">None</MenuItem>
+                      {services.map((service) => (
+                        <MenuItem key={service.id} value={service.id}>
+                          {service.name}
                         </MenuItem>
                       ))}
                     </Select>
@@ -1167,7 +1215,7 @@ function TaskForm({
                 onClose={() => setCollabAnchorEl(null)}
                 anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
                 transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-                PaperProps={{ sx: { width: 440, borderRadius: 2, p: 1.25 } }}
+                PaperProps={{ sx: { width: { xs: 'calc(100vw - 32px)', sm: 440 }, maxWidth: '100%', borderRadius: 2, p: 1.25 } }}
               >
                 <Typography variant="subtitle2" sx={{ fontWeight: 900, mb: 1 }}>
                   Select collaborators
@@ -1303,7 +1351,7 @@ function TaskForm({
                   />
                   <Collapse in={formData.isRecurring}>
                     <Box sx={{ mt: 1 }}>
-                      <FormControl size="small" sx={{ minWidth: 220 }}>
+                      <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 220 } }}>
                         <InputLabel>Repeat</InputLabel>
                         <Select
                           value={formData.recurrencePattern}
@@ -1528,7 +1576,7 @@ function TaskForm({
           </Box>
         </DialogContent>
 
-        <DialogActions sx={{ p: 2, bgcolor: '#fff', borderTop: '1px solid rgba(148,163,184,0.25)' }}>
+        <DialogActions sx={{ p: { xs: 1.5, sm: 2 }, bgcolor: '#fff', borderTop: '1px solid rgba(148,163,184,0.25)', flexWrap: 'wrap', gap: 1, justifyContent: 'flex-end' }}>
           {canDelete && (
             <Button
               onClick={() => {
@@ -1537,20 +1585,20 @@ function TaskForm({
               }}
               color="error"
               variant="outlined"
-              sx={{ textTransform: 'none', mr: 'auto', borderRadius: 2, fontWeight: 900 }}
+              sx={{ textTransform: 'none', mr: { xs: 0, sm: 'auto' }, borderRadius: 2, fontWeight: 900, width: { xs: '100%', sm: 'auto' }, order: { xs: 3, sm: 0 } }}
             >
               Delete Task
             </Button>
           )}
 
-          <Button onClick={onClose} sx={{ textTransform: 'none', borderRadius: 2, fontWeight: 900 }}>
+          <Button onClick={onClose} sx={{ textTransform: 'none', borderRadius: 2, fontWeight: 900, width: { xs: '100%', sm: 'auto' } }}>
             Cancel
           </Button>
 
           <Button
             onClick={handleSubmit}
             variant="contained"
-            sx={{ textTransform: 'none', borderRadius: 2, fontWeight: 900 }}
+            sx={{ textTransform: 'none', borderRadius: 2, fontWeight: 900, width: { xs: '100%', sm: 'auto' } }}
             disabled={!formData.name.trim() || !canEdit}
           >
             {isEdit ? 'Save Changes' : 'Create Task'}

@@ -33,7 +33,9 @@ import {
   ListItem,
   ListItemButton,
   ListItemIcon,
+  useMediaQuery,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import SearchIcon from '@mui/icons-material/Search';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import ViewListIcon from '@mui/icons-material/ViewList';
@@ -61,12 +63,15 @@ import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
 
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 import InsertLinkIcon from '@mui/icons-material/InsertLink';
 
 import TasksTableView from './TasksTableView';
 import TasksCalendarView from './TasksCalendarView';
 import TasksBoardView from './TasksBoardView';
 import TaskFormWithProjectSelect from './TaskFormWithProjectSelect';
+import TaskDetailsDrawer from './TaskDetailsDrawer';
+import BulkTaskUploadDialog from './BulkTaskUploadDialog';
 import EditColumnsDialog, { DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_ORDER } from './EditColumnsDialog';
 import ShareLinkDialog from '../ShareLinks/ShareLinkDialog';
 import ShareLinksManagerDialog from '../ShareLinks/ShareLinksManagerDialog';
@@ -189,8 +194,10 @@ const formatDateInput = (date) => {
 };
 
 function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   // View state
-  const [viewType, setViewType] = useState('table');
+  const [viewType, setViewType] = useState(isMobile ? 'board' : 'table');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   
@@ -242,12 +249,19 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
   
   // Calendar settings
   const [calendarViewMode, setCalendarViewMode] = useState('month');
-  const [calendarDateMode, setCalendarDateMode] = useState('due_date');
+  const [calendarDateMode, setCalendarDateMode] = useState('due');
   const [calendarDensity, setCalendarDensity] = useState('comfortable');
   
   // Preferences tracking
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const preferencesDebounceRef = useRef(null);
+
+  useEffect(() => {
+    setViewType((current) => {
+      if (isMobile && current === 'table') return 'board';
+      return current;
+    });
+  }, [isMobile]);
 
   useEffect(() => {
     if (!preferencesLoaded) return;
@@ -300,10 +314,12 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
   const [selectedTasks, setSelectedTasks] = useState([]);
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
+  const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [selectedProject, setSelectedProject] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [showShareLinkDialog, setShowShareLinkDialog] = useState(false);
   const [showLinksManager, setShowLinksManager] = useState(false);
+  const [showBulkUploadDialog, setShowBulkUploadDialog] = useState(false);
   
   // Menu anchors
   const [filterAnchor, setFilterAnchor] = useState(null);
@@ -744,6 +760,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
       const params = {
         start_date: startOfMonth.toISOString().split('T')[0],
         end_date: endOfMonth.toISOString().split('T')[0],
+        include_completed: filters.hideCompleted ? 'false' : 'true',
       };
       if (filters.projects.length > 0) params.projects = filters.projects.join(',');
       if (filters.assignee && filters.assignee !== 'all') params.assignee = filters.assignee;
@@ -772,7 +789,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
     } catch (err) {
       console.error('Failed to fetch calendar tasks:', err);
     }
-  }, [workspace?.id, viewType, calendarDate, filters.projects, filters.assignee, user?.id]);
+  }, [workspace?.id, viewType, calendarDate, filters.projects, filters.assignee, filters.hideCompleted, user?.id]);
 
   // Load tasks when params change
   useEffect(() => {
@@ -1122,8 +1139,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
 
   // Task actions
   const handleTaskClick = (task) => {
-    setEditingTask(task);
-    setShowTaskForm(true);
+    setSelectedTaskId(task.id);
   };
 
   const handleTaskEdit = (task) => {
@@ -1134,6 +1150,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
   const handleTaskSaved = () => {
     setShowTaskForm(false);
     setEditingTask(null);
+    setSelectedTaskId(null);
     if (viewType === 'calendar') {
       fetchCalendarTasks();
     } else {
@@ -1576,7 +1593,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
         sx={{ alignItems: 'flex-start', flexDirection: 'column', gap: 1, px: 2, py: 1.5 }}
       >
         <Typography variant="body2">Set Due Date</Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', width: '100%' }}>
           <TextField
             type="date"
             size="small"
@@ -1584,7 +1601,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
             value={bulkDueDate}
             onChange={(e) => setBulkDueDate(e.target.value)}
             InputLabelProps={{ shrink: true }}
-            sx={{ minWidth: 170 }}
+            sx={{ minWidth: { xs: '100%', sm: 170 }, flex: 1 }}
           />
           <Button size="small" variant="outlined" onClick={applyBulkDueDate} disabled={!bulkDueDate}>
             Apply
@@ -1597,7 +1614,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
         sx={{ alignItems: 'flex-start', flexDirection: 'column', gap: 1, px: 2, py: 1.5 }}
       >
         <Typography variant="body2">Set Target Date</Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', width: '100%' }}>
           <TextField
             type="date"
             size="small"
@@ -1605,7 +1622,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
             value={bulkTargetDate}
             onChange={(e) => setBulkTargetDate(e.target.value)}
             InputLabelProps={{ shrink: true }}
-            sx={{ minWidth: 170 }}
+            sx={{ minWidth: { xs: '100%', sm: 170 }, flex: 1 }}
           />
           <Button size="small" variant="outlined" onClick={applyBulkTargetDate} disabled={!bulkTargetDate}>
             Apply
@@ -1618,8 +1635,8 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
         sx={{ alignItems: 'flex-start', flexDirection: 'column', gap: 1, px: 2, py: 1.5 }}
       >
         <Typography variant="body2">Set Assignee</Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <FormControl size="small" sx={{ minWidth: 200 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', width: '100%' }}>
+          <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 200 }, flex: 1 }}>
             <Select
               value={bulkAssigneeId}
               onChange={(e) => setBulkAssigneeId(e.target.value)}
@@ -1728,30 +1745,47 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
   );
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
       {/* Header */}
-      <Box sx={{ p: 3, pb: 0 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Box>
-            <Typography variant="h5" fontWeight={600}>Tasks</Typography>
-            <Typography variant="body2" color="text.secondary">
-              {total} tasks across {projects.length} projects
-            </Typography>
+      <Box sx={{ p: { xs: 1.25, sm: 3 }, pb: 0 }}>
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2.1, sm: 2.5 },
+            mb: 2,
+            borderRadius: { xs: 4, sm: 3 },
+            border: '1px solid rgba(148, 163, 184, 0.14)',
+            background: 'linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(240,249,255,0.95) 100%)',
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: { xs: 'stretch', sm: 'center' }, justifyContent: 'space-between', gap: 2, flexDirection: { xs: 'column', sm: 'row' } }}>
+            <Box>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.12em', color: '#0f766e', mb: 0.75 }}>
+                TASK SPACE
+              </Typography>
+              <Typography variant="h5" fontWeight={700} sx={{ fontSize: { xs: '1.55rem', sm: '2rem' } }}>
+                Tasks
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {total} tasks across {projects.length} projects
+              </Typography>
+            </Box>
+            <Box sx={{ display: 'flex', gap: 1, width: { xs: '100%', sm: 'auto' } }}>
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => setShowTaskForm(true)}
+                sx={{ bgcolor: '#0f766e', '&:hover': { bgcolor: '#115e59' }, borderRadius: 3 }}
+                fullWidth={isMobile}
+              >
+                New Task
+              </Button>
+            </Box>
           </Box>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={() => setShowTaskForm(true)}
-              sx={{ bgcolor: '#0f766e', '&:hover': { bgcolor: '#115e59' } }}
-            >
-              New Task
-            </Button>
-          </Box>
-        </Box>
+        </Paper>
 
         {/* Toolbar */}
-        <Paper sx={{ p: 1.5, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+        <Paper sx={{ p: { xs: 1.25, sm: 1.5 }, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', borderRadius: 3, border: '1px solid rgba(148, 163, 184, 0.14)' }}>
           {/* Search */}
           <TextField
             placeholder="Search tasks..."
@@ -1772,10 +1806,16 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
                 </InputAdornment>
               ),
             }}
-            sx={{ width: 220 }}
+            sx={{
+              width: { xs: '100%', sm: 220 },
+              flexGrow: { xs: 1, sm: 0 },
+              '& .MuiOutlinedInput-root': {
+                borderRadius: 3,
+              },
+            }}
           />
 
-          <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+          <Divider orientation="vertical" flexItem sx={{ mx: 0.5, display: { xs: 'none', sm: 'block' } }} />
 
           {/* View Type Toggle */}
           <ToggleButtonGroup
@@ -1783,15 +1823,22 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
             exclusive
             onChange={(e, val) => val && setViewType(val)}
             size="small"
+            sx={{
+              backgroundColor: { xs: '#f8fafc', sm: 'transparent' },
+              borderRadius: 3,
+              '& .MuiToggleButton-root': {
+                px: { xs: 1.2, sm: 1.5 },
+              },
+            }}
           >
-            {VIEW_TYPES.map(v => (
+            {VIEW_TYPES.filter((v) => !isMobile || v.id !== 'table').map(v => (
               <ToggleButton key={v.id} value={v.id}>
                 <Tooltip title={v.label}>{v.icon}</Tooltip>
               </ToggleButton>
             ))}
           </ToggleButtonGroup>
 
-          <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+          <Divider orientation="vertical" flexItem sx={{ mx: 0.5, display: { xs: 'none', sm: 'block' } }} />
 
           {/* Filters Button */}
           {viewType !== 'table' && (
@@ -1825,6 +1872,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
             size="small"
             startIcon={<GroupWorkIcon />}
             onClick={(e) => setGroupAnchor(e.currentTarget)}
+            sx={{ borderRadius: 3 }}
           >
             Group: {GROUP_BY_OPTIONS.find(o => o.id === effectiveGroupBy)?.label || 'None'}
           </Button>
@@ -1842,13 +1890,14 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
             </Tooltip>
           )}
 
-          <Box sx={{ flex: 1 }} />
+          <Box sx={{ flex: 1, minWidth: 0 }} />
 
           {/* Saved Views */}
           <Button
             size="small"
             startIcon={activeView ? <BookmarkIcon /> : <BookmarkBorderIcon />}
             onClick={(e) => setSavedViewsAnchor(e.currentTarget)}
+            sx={{ borderRadius: 3 }}
           >
             {activeView ? activeView.name : 'Views'}
           </Button>
@@ -1868,8 +1917,18 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
           {/* Export */}
           <Button
             size="small"
+            startIcon={<UploadFileIcon />}
+            onClick={() => setShowBulkUploadDialog(true)}
+            sx={{ borderRadius: 3 }}
+          >
+            Bulk Upload
+          </Button>
+
+          <Button
+            size="small"
             startIcon={<FileDownloadIcon />}
             onClick={handleExport}
+            sx={{ borderRadius: 3 }}
           >
             Export
           </Button>
@@ -1932,7 +1991,7 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
       </Box>
 
       {/* Main Content */}
-      <Box sx={{ flex: 1, overflow: 'hidden', p: 3, pt: 2 }}>
+      <Box sx={{ flex: 1, overflow: 'hidden', p: { xs: 1.25, sm: 3 }, pt: 2, minWidth: 0 }}>
         {loading && !tasks.length ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
             <CircularProgress />
@@ -2040,7 +2099,36 @@ function TasksPage({ workspace, user, navigationState, onNavigationConsumed }) {
         workspaceId={workspace?.id}
       />
 
+      <BulkTaskUploadDialog
+        open={showBulkUploadDialog}
+        onClose={() => setShowBulkUploadDialog(false)}
+        workspaceId={workspace?.id}
+        onImported={(count) => {
+          setSnackbar({ open: true, message: `${count} tasks imported successfully`, severity: 'success' });
+          fetchTasks();
+        }}
+      />
+
       {/* Task Form Dialog - Need to select project first for new tasks */}
+      <TaskDetailsDrawer
+        open={Boolean(selectedTaskId)}
+        taskId={selectedTaskId}
+        onClose={() => setSelectedTaskId(null)}
+        onEdit={(task) => {
+          setSelectedTaskId(null);
+          setEditingTask(task);
+          setShowTaskForm(true);
+        }}
+        workspaceMembers={workspaceMembers}
+        onUpdated={() => {
+          if (viewType === 'calendar') {
+            fetchCalendarTasks();
+          } else {
+            fetchTasks();
+          }
+        }}
+      />
+
       {showTaskForm && (
         <TaskFormWithProjectSelect
           open={showTaskForm}

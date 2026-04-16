@@ -40,6 +40,11 @@ const NOTIFICATION_TYPES = {
   CLIENT_ADDED: 'client_added',
   CLIENT_CHANGED: 'client_changed',
   CHECKLIST_UPDATED: 'checklist_updated',
+
+  // Support notifications
+  SUPPORT_TICKET_CREATED: 'support_ticket_created',
+  SUPPORT_TICKET_RESPONSE: 'support_ticket_response',
+  SUPPORT_TICKET_STATUS_CHANGED: 'support_ticket_status_changed',
   
   // Approval notifications
   APPROVAL_REQUESTED: 'approval_requested',
@@ -61,7 +66,7 @@ function setWebSocketBroadcast(broadcastFn) {
 /**
  * Generate dynamic action URL based on notification type and context
  */
-function generateActionUrl({ type, workspaceId, projectId, taskId, chatThreadId, clientId, approvalId }) {
+function generateActionUrl({ type, workspaceId, projectId, taskId, chatThreadId, clientId, approvalId, supportTicketId }) {
   const base = ''; // Frontend routes are relative
   
   switch (type) {
@@ -117,6 +122,14 @@ function generateActionUrl({ type, workspaceId, projectId, taskId, chatThreadId,
 
     case NOTIFICATION_TYPES.CHECKLIST_UPDATED:
       return `/checklist`;
+
+    case NOTIFICATION_TYPES.SUPPORT_TICKET_CREATED:
+    case NOTIFICATION_TYPES.SUPPORT_TICKET_RESPONSE:
+    case NOTIFICATION_TYPES.SUPPORT_TICKET_STATUS_CHANGED:
+      if (supportTicketId) {
+        return `/support/${supportTicketId}`;
+      }
+      return `/support`;
     
     // Approval URLs
     case NOTIFICATION_TYPES.APPROVAL_REQUESTED:
@@ -203,6 +216,9 @@ function shouldNotify(preferences, notificationType) {
     [NOTIFICATION_TYPES.APPROVAL_REQUESTED]: 'approval_requested',
     [NOTIFICATION_TYPES.APPROVAL_APPROVED]: 'approval_approved',
     [NOTIFICATION_TYPES.APPROVAL_REJECTED]: 'approval_rejected',
+    [NOTIFICATION_TYPES.SUPPORT_TICKET_CREATED]: 'support_ticket_created',
+    [NOTIFICATION_TYPES.SUPPORT_TICKET_RESPONSE]: 'support_ticket_response',
+    [NOTIFICATION_TYPES.SUPPORT_TICKET_STATUS_CHANGED]: 'support_ticket_status_changed',
   };
   
   const prefKey = prefMap[notificationType];
@@ -223,6 +239,7 @@ async function createNotification({
   chatThreadId = null,
   chatMessageId = null,
   clientId = null,
+  supportTicketId = null,
   senderId = null,
   metadata = {},
   broadcast = true,
@@ -247,14 +264,15 @@ async function createNotification({
       taskId,
       chatThreadId,
       clientId,
+      supportTicketId,
     });
 
     // Insert notification
     const result = await pool.query(
       `INSERT INTO notifications 
        (user_id, type, title, message, workspace_id, project_id, task_id, 
-        chat_thread_id, chat_message_id, client_id, sender_id, action_url, action_type, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        chat_thread_id, chat_message_id, client_id, support_ticket_id, sender_id, action_url, action_type, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING *`,
       [
         userId,
@@ -267,6 +285,7 @@ async function createNotification({
         chatThreadId,
         chatMessageId,
         clientId,
+        supportTicketId,
         senderId,
         actionUrl,
         type,

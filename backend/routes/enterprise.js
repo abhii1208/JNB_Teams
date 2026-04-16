@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
+const { getManagerDashboard } = require('../services/taskInsightsService');
 
 async function getWorkspaceRole(workspaceId, userId) {
   const result = await pool.query(
@@ -87,6 +88,66 @@ router.get('/workspace/:workspaceId/manager-hours', async (req, res) => {
   } catch (err) {
     console.error('Get manager work chart error:', err);
     res.status(500).json({ error: 'Failed to fetch work chart data' });
+  }
+});
+
+router.get('/workspace/:workspaceId/worklogs', async (req, res) => {
+  const workspaceId = Number(req.params.workspaceId);
+  try {
+    const role = await getWorkspaceRole(workspaceId, req.userId);
+    if (!role) {
+      return res.status(403).json({ error: 'Not a member of this workspace' });
+    }
+
+    const result = await pool.query(
+      `SELECT
+         twl.id,
+         twl.task_id,
+         t.name AS task_name,
+         t.description AS task_description,
+         p.name AS project_name,
+         twl.user_id,
+         COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.last_name), ''), u.username, u.email) AS user_name,
+         twl.work_date,
+         twl.start_time,
+         twl.end_time,
+         COALESCE(twl.hours, 0)::numeric(10,2) AS hours,
+         twl.notes,
+         twl.created_at
+       FROM task_work_logs twl
+       JOIN tasks t ON t.id = twl.task_id
+       JOIN projects p ON p.id = t.project_id
+       JOIN users u ON u.id = twl.user_id
+       WHERE p.workspace_id = $1
+       ORDER BY twl.work_date DESC, twl.created_at DESC`,
+      [workspaceId]
+    );
+
+    res.json({ logs: result.rows });
+  } catch (err) {
+    console.error('Get workspace worklogs error:', err);
+    res.status(500).json({ error: 'Failed to fetch workspace worklogs' });
+  }
+});
+
+router.get('/workspace/:workspaceId/manager-dashboard', async (req, res) => {
+  const workspaceId = Number(req.params.workspaceId);
+  try {
+    const role = await getWorkspaceRole(workspaceId, req.userId);
+    if (!isManagerRole(role)) {
+      return res.status(403).json({ error: 'Only managers and admins can view manager dashboard analytics' });
+    }
+
+    const data = await getManagerDashboard(
+      workspaceId,
+      req.query.date_from || null,
+      req.query.date_to || null
+    );
+
+    res.json(data);
+  } catch (err) {
+    console.error('Get manager dashboard error:', err);
+    res.status(500).json({ error: 'Failed to fetch manager dashboard analytics' });
   }
 });
 

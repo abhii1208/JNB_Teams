@@ -91,6 +91,7 @@ function TaskFormWithProjectSelect({
         description: taskData.description,
         project_id: internalProject?.id,
         assignee_id: taskData.assignee?.id || null,
+        service_id: taskData.service_id ?? taskData.serviceId ?? null,
         client_id: taskData.clientId ?? taskData.client_id ?? null,
         collaborators: (taskData.collaborators || []).map(c => c.id),
         notes: taskData.notes || null,
@@ -148,18 +149,25 @@ function TaskFormWithProjectSelect({
         enableMultiProjectLinks={Boolean(
           internalProject?.enable_multi_project_links ?? internalProject?.enableMultiProjectLinks
         )}
+        workspaceId={workspace?.id}
       />
     );
   }
 
   // Show project selection dialog
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="sm"
+      fullWidth
+      PaperProps={{ sx: { width: { xs: 'calc(100vw - 16px)', sm: '100%' }, m: { xs: 1, sm: 2 } } }}
+    >
       <DialogTitle>
         {isEdit ? 'Edit Task' : 'Create New Task'}
       </DialogTitle>
-      <DialogContent>
-        <Box sx={{ py: 2 }}>
+      <DialogContent sx={{ px: { xs: 2, sm: 3 } }}>
+        <Box sx={{ py: { xs: 1.5, sm: 2 } }}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Select a project to create the task in:
           </Typography>
@@ -173,9 +181,9 @@ function TaskFormWithProjectSelect({
             >
               {projects.map(project => (
                 <MenuItem key={project.id} value={project.id}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
                     <FolderIcon fontSize="small" color="action" />
-                    <Typography variant="body2">{project.name}</Typography>
+                    <Typography variant="body2" sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</Typography>
                     {project.stage && (
                       <Chip label={project.stage} size="small" sx={{ ml: 'auto' }} />
                     )}
@@ -192,13 +200,13 @@ function TaskFormWithProjectSelect({
           )}
         </Box>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
+      <DialogActions sx={{ p: { xs: 2, sm: 3 }, pt: 0, flexWrap: 'wrap', gap: 1 }}>
+        <Button onClick={onClose} sx={{ width: { xs: '100%', sm: 'auto' } }}>Cancel</Button>
         <Button 
           onClick={handleProceed} 
           variant="contained"
           disabled={!internalProject}
-          sx={{ bgcolor: '#0f766e', '&:hover': { bgcolor: '#115e59' } }}
+          sx={{ bgcolor: '#0f766e', '&:hover': { bgcolor: '#115e59' }, width: { xs: '100%', sm: 'auto' } }}
         >
           Continue
         </Button>

@@ -151,8 +151,14 @@ export default function ShareLinkDialog({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="md"
+      fullWidth
+      PaperProps={{ sx: { width: { xs: 'calc(100vw - 16px)', sm: '100%' }, m: { xs: 1, sm: 2 }, maxHeight: { xs: 'calc(100dvh - 16px)', sm: 'calc(100vh - 32px)' } } }}
+    >
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', pr: 6 }}>
         <InsertLinkIcon color="primary" />
         Generate Share Link
         <Chip
@@ -161,7 +167,7 @@ export default function ShareLinkDialog({
           sx={{ ml: 'auto' }}
         />
       </DialogTitle>
-      <DialogContent>
+      <DialogContent sx={{ px: { xs: 2, sm: 3 } }}>
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {error}
@@ -188,7 +194,7 @@ export default function ShareLinkDialog({
               <Typography variant="subtitle2" gutterBottom>
                 Public Link
               </Typography>
-              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
                 <TextField
                   value={createdLink.url || ''}
                   fullWidth
@@ -208,10 +214,10 @@ export default function ShareLinkDialog({
                 <Typography variant="subtitle2" gutterBottom>
                   Password
                 </Typography>
-                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                  <TextField
-                    value={password}
-                    fullWidth
+              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+                <TextField
+                  value={password}
+                  fullWidth
                     size="small"
                     InputProps={{ readOnly: true }}
                   />
@@ -250,7 +256,7 @@ export default function ShareLinkDialog({
             <Box
               sx={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                gridTemplateColumns: { xs: '1fr', sm: 'repeat(auto-fit, minmax(200px, 1fr))' },
                 gap: 1,
                 mb: 2,
               }}
@@ -290,7 +296,7 @@ export default function ShareLinkDialog({
               exclusive
               onChange={(event, value) => value && setProtection(value)}
               size="small"
-              sx={{ mb: 2 }}
+              sx={{ mb: 2, width: { xs: '100%', sm: 'auto' } }}
             >
               <ToggleButton value="open">Open</ToggleButton>
               <ToggleButton value="password">Password</ToggleButton>
@@ -325,7 +331,7 @@ export default function ShareLinkDialog({
                 value={expiresAt}
                 onChange={(event) => setExpiresAt(event.target.value)}
                 size="small"
-                sx={{ minWidth: 240 }}
+                sx={{ minWidth: { xs: '100%', sm: 240 }, flex: { xs: '1 1 100%', sm: '0 0 auto' } }}
               />
               <Button size="small" onClick={() => setExpiresAt(buildExpiry(1))}>
                 1 day
@@ -346,12 +352,12 @@ export default function ShareLinkDialog({
           </>
         )}
       </DialogContent>
-      <DialogActions sx={{ px: 3, py: 2 }}>
-        <Button onClick={onClose} color="inherit">
+      <DialogActions sx={{ px: { xs: 2, sm: 3 }, py: 2, flexWrap: 'wrap', gap: 1 }}>
+        <Button onClick={onClose} color="inherit" sx={{ width: { xs: '100%', sm: 'auto' } }}>
           {createdLink ? 'Close' : 'Cancel'}
         </Button>
         {!createdLink && (
-          <Button onClick={handleSubmit} variant="contained" disabled={!canSubmit}>
+          <Button onClick={handleSubmit} variant="contained" disabled={!canSubmit} sx={{ width: { xs: '100%', sm: 'auto' } }}>
             {loading ? 'Creating...' : 'Generate Link'}
           </Button>
         )}

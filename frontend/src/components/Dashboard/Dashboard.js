@@ -1,15 +1,21 @@
 import React from 'react';
 import {
   Box,
+  Button,
   Grid,
   Paper,
   Typography,
   Card,
   CardContent,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   LinearProgress,
   Avatar,
   Chip,
   Switch,
+  Stack,
 } from '@mui/material';
 import FolderIcon from '@mui/icons-material/Folder';
 import TaskAltIcon from '@mui/icons-material/TaskAlt';
@@ -17,8 +23,9 @@ import PendingActionsIcon from '@mui/icons-material/PendingActions';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import AssignmentLateIcon from '@mui/icons-material/AssignmentLate';
-import { getProjects, getApprovalCount } from '../../apiClient';
+import { acceptRuleBook, getApprovalCount, getCorporateEvents, getCurrentRuleBook, getNewsTopics, getProjects, getTodaysBirthdays, listWorkspaceAnnouncements } from '../../apiClient';
 import api from '../../apiClient';
+import JnbChatbotPanel from './JnbChatbotPanel';
 import { 
   isTodayIST, 
   isTomorrowIST, 
@@ -34,12 +41,6 @@ const stageColors = {
   Completed: { bg: '#d1fae5', text: '#065f46' },
   Dropped: { bg: '#fee2e2', text: '#991b1b' },
   'On-hold': { bg: '#f3e8ff', text: '#6b21a8' },
-};
-
-const startOfDay = (d) => {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
 };
 
 const safeDate = (v) => {
@@ -70,6 +71,14 @@ function Dashboard({ user, workspace, onNavigate }) {
   const [pendingApprovals, setPendingApprovals] = React.useState(0);
   const [allTasks, setAllTasks] = React.useState([]);
   const [topProjects, setTopProjects] = React.useState([]);
+  const [todaysBirthdays, setTodaysBirthdays] = React.useState([]);
+  const [upcomingEvents, setUpcomingEvents] = React.useState([]);
+  const [newsTopics, setNewsTopics] = React.useState([]);
+  const [announcements, setAnnouncements] = React.useState([]);
+  const [ruleBook, setRuleBook] = React.useState(null);
+  const [ruleBookTimer, setRuleBookTimer] = React.useState(120);
+  const [ruleBookScrolled, setRuleBookScrolled] = React.useState(false);
+  const [ruleBookDialogOpen, setRuleBookDialogOpen] = React.useState(false);
 
   // Fixed sizes
   const SCORECARD_HEIGHT = 190; // increase this to make cards taller
@@ -140,6 +149,40 @@ function Dashboard({ user, workspace, onNavigate }) {
         const approvalsResponse = await getApprovalCount(workspace.id);
         setPendingApprovals(approvalsResponse?.data?.count || 0);
 
+        const [birthdaysResponse, ruleBookResponse, eventsResponse, newsTopicsResponse, announcementsResponse] = await Promise.allSettled([
+          getTodaysBirthdays(workspace.id),
+          getCurrentRuleBook(workspace.id),
+          getCorporateEvents(workspace.id),
+          getNewsTopics(workspace.id),
+          listWorkspaceAnnouncements(workspace.id),
+        ]);
+
+        if (birthdaysResponse.status === 'fulfilled') {
+          setTodaysBirthdays(birthdaysResponse.value.data || []);
+        }
+
+        if (ruleBookResponse.status === 'fulfilled') {
+          const currentRuleBook = ruleBookResponse.value.data || null;
+          setRuleBook(currentRuleBook);
+          setRuleBookTimer(currentRuleBook?.timer_seconds || 120);
+        }
+
+        if (eventsResponse.status === 'fulfilled') {
+          const nextEvents = (eventsResponse.value.data || [])
+            .filter((event) => event?.event_start)
+            .sort((a, b) => new Date(a.event_start) - new Date(b.event_start))
+            .slice(0, 3);
+          setUpcomingEvents(nextEvents);
+        }
+
+        if (newsTopicsResponse.status === 'fulfilled') {
+          setNewsTopics((newsTopicsResponse.value.data || []).filter((topic) => topic.is_active !== false).slice(0, 6));
+        }
+
+        if (announcementsResponse.status === 'fulfilled') {
+          setAnnouncements((announcementsResponse.value.data?.announcements || []).slice(0, 3));
+        }
+
         // Top projects by task count
         const projectTaskCounts = activeProjects.map((p) => ({
           ...p,
@@ -158,6 +201,14 @@ function Dashboard({ user, workspace, onNavigate }) {
 
     fetchDashboardData();
   }, [workspace]);
+
+  React.useEffect(() => {
+    if (!ruleBook || ruleBook.accepted_at || ruleBookTimer <= 0) return undefined;
+    const interval = window.setInterval(() => {
+      setRuleBookTimer((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [ruleBook, ruleBookTimer]);
 
   // Stats for scorecards (toggle applies here)
   const stats = React.useMemo(() => {
@@ -308,6 +359,33 @@ function Dashboard({ user, workspace, onNavigate }) {
     onNavigate(stat.navigateTo);
   };
 
+  const quickActionCards = [
+    {
+      title: 'Create Project',
+      subtitle: 'Set up a new workspace stream',
+      tone: '#166534',
+      background: '#f0fdf4',
+      border: '#86efac',
+      onClick: () => onNavigate('projects'),
+    },
+    {
+      title: 'Add Task',
+      subtitle: 'Capture and assign work quickly',
+      tone: '#1d4ed8',
+      background: '#eff6ff',
+      border: '#93c5fd',
+      onClick: () => onNavigate('tasks'),
+    },
+    {
+      title: 'Review Approvals',
+      subtitle: 'Clear pending decisions for the team',
+      tone: '#92400e',
+      background: '#fef3c7',
+      border: '#fcd34d',
+      onClick: () => onNavigate('approvals'),
+    },
+  ];
+
   const renderTaskRow = (task) => {
     const labelPrefix = dateMode === 'due' ? 'Due' : 'Target';
     const dateValue = getModeDate(task, dateMode);
@@ -380,24 +458,58 @@ function Dashboard({ user, workspace, onNavigate }) {
   };
 
   return (
-    <Box sx={{ p: 4, backgroundColor: '#f8fafc', minHeight: '100vh' }}>
+    <Box sx={{ p: { xs: 0.5, sm: 3, lg: 4 }, backgroundColor: 'transparent', minHeight: '100%' }}>
       {/* Header + Toggle on opposite side */}
+      <Paper
+        sx={{
+          mb: { xs: 2, sm: 4 },
+          p: { xs: 2.25, sm: 3 },
+          borderRadius: { xs: 4, sm: 3 },
+          border: '1px solid rgba(148, 163, 184, 0.12)',
+          background: 'linear-gradient(135deg, #0f766e 0%, #0891b2 100%)',
+          color: '#ffffff',
+          boxShadow: '0 20px 44px rgba(15, 23, 42, 0.12)',
+        }}
+      >
       <Box
         sx={{
-          mb: 4,
           display: 'flex',
-          alignItems: 'flex-start',
+          alignItems: { xs: 'stretch', sm: 'flex-start' },
           justifyContent: 'space-between',
           gap: 2,
+          flexDirection: { xs: 'column', sm: 'row' },
         }}
       >
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 700, mb: 1, color: '#0f172a' }}>
-            Welcome back, {user?.first_name} {user?.last_name}! 👋
+          <Typography sx={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.12em', opacity: 0.82, mb: 0.8 }}>
+            TODAY&apos;S OVERVIEW
           </Typography>
-          <Typography variant="body1" color="text.secondary">
-            Here's what's happening with your projects today.
+          <Typography variant="h4" sx={{ fontWeight: 700, mb: 0.75, color: '#ffffff', fontSize: { xs: '1.45rem', sm: '2.125rem' }, lineHeight: { xs: 1.16, sm: 1.2 }, maxWidth: { xs: '14ch', sm: 'none' } }}>
+            Welcome back, {user?.first_name} {user?.last_name}!
           </Typography>
+          <Typography variant="body1" sx={{ fontSize: { xs: '0.9rem', sm: '1rem' }, maxWidth: { xs: 240, sm: 'none' }, lineHeight: 1.45, color: 'rgba(255,255,255,0.88)' }}>
+            Here&apos;s what&apos;s happening with your projects today.
+          </Typography>
+          <Stack direction="row" spacing={1} sx={{ mt: 1.75, flexWrap: 'wrap', rowGap: 1 }}>
+            <Chip
+              label={`${activeProjectsCount || 0} active projects`}
+              size="small"
+              sx={{
+                backgroundColor: 'rgba(255,255,255,0.16)',
+                color: '#fff',
+                border: '1px solid rgba(255,255,255,0.14)',
+              }}
+            />
+            <Chip
+              label={`${pendingApprovals || 0} pending approvals`}
+              size="small"
+              sx={{
+                backgroundColor: 'rgba(255,255,255,0.12)',
+                color: '#fff',
+                border: '1px solid rgba(255,255,255,0.14)',
+              }}
+            />
+          </Stack>
         </Box>
 
         {/* Toggle */}
@@ -405,15 +517,17 @@ function Dashboard({ user, workspace, onNavigate }) {
           sx={{
             display: 'flex',
             alignItems: 'center',
+            justifyContent: { xs: 'space-between', sm: 'flex-start' },
             gap: 1,
             mt: 0.5,
             p: 1,
             borderRadius: 2,
-            border: '1px solid rgba(148, 163, 184, 0.25)',
-            backgroundColor: '#ffffff',
+            border: '1px solid rgba(255,255,255,0.16)',
+            backgroundColor: 'rgba(255,255,255,0.08)',
+            width: { xs: '100%', sm: 'auto' },
           }}
         >
-          <Typography variant="caption" sx={{ fontWeight: 800, opacity: dateMode === 'due' ? 1 : 0.45 }}>
+          <Typography variant="caption" sx={{ fontWeight: 800, opacity: dateMode === 'due' ? 1 : 0.45, color: '#ffffff' }}>
             Due
           </Typography>
           <Switch
@@ -421,20 +535,21 @@ function Dashboard({ user, workspace, onNavigate }) {
             onChange={(e) => setDateMode(e.target.checked ? 'target' : 'due')}
             sx={iphoneSwitchSx}
           />
-          <Typography variant="caption" sx={{ fontWeight: 800, opacity: dateMode === 'target' ? 1 : 0.45 }}>
+          <Typography variant="caption" sx={{ fontWeight: 800, opacity: dateMode === 'target' ? 1 : 0.45, color: '#ffffff' }}>
             Target
           </Typography>
         </Box>
       </Box>
 
       {/* ✅ Scorecards: 7 in one line on desktop + equal widths */}
+      </Paper>
       <Box
         sx={{
-          mb: 4,
+          mb: 3.5,
           display: 'grid',
-          gap: 3,
+          gap: { xs: 1.25, sm: 3 },
           gridTemplateColumns: {
-            xs: 'repeat(1, 1fr)',
+            xs: 'repeat(2, minmax(0, 1fr))',
             sm: 'repeat(2, 1fr)',
             md: 'repeat(7, 1fr)', // ✅ one line for 7 cards
           },
@@ -446,10 +561,10 @@ function Dashboard({ user, workspace, onNavigate }) {
             elevation={0}
             onClick={() => handleStatCardClick(stat)}
             sx={{
-              height: SCORECARD_HEIGHT, // ✅ fixed same size
+              height: { xs: 156, md: SCORECARD_HEIGHT },
               minWidth: 0, // ✅ prevents weird width expansion
               border: '1px solid rgba(148, 163, 184, 0.15)',
-              borderRadius: 3,
+              borderRadius: { xs: 3.5, sm: 3 },
               transition: 'all 0.3s ease',
               cursor: 'pointer',
               background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
@@ -462,7 +577,7 @@ function Dashboard({ user, workspace, onNavigate }) {
           >
             <CardContent
               sx={{
-                p: 3,
+                p: { xs: 2, sm: 3 },
                 height: '100%',
                 display: 'flex',
                 flexDirection: 'column',
@@ -472,8 +587,8 @@ function Dashboard({ user, workspace, onNavigate }) {
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <Box
                   sx={{
-                    width: 56,
-                    height: 56,
+                    width: { xs: 44, sm: 56 },
+                    height: { xs: 44, sm: 56 },
                     borderRadius: 2.5,
                     backgroundColor: stat.bgColor,
                     display: 'flex',
@@ -488,13 +603,13 @@ function Dashboard({ user, workspace, onNavigate }) {
               </Box>
 
               <Box sx={{ minWidth: 0 }}>
-                <Typography variant="h3" sx={{ fontWeight: 700, mb: 0.5, color: '#0f172a' }}>
+                <Typography variant="h3" sx={{ fontWeight: 700, mb: 0.5, color: '#0f172a', fontSize: { xs: '1.7rem', sm: '3rem' } }}>
                   {stat.value}
                 </Typography>
                 <Typography
                   variant="body2"
                   color="text.secondary"
-                  sx={{ fontWeight: 500, lineHeight: 1.2 }}
+                  sx={{ fontWeight: 600, lineHeight: 1.25, fontSize: { xs: '0.76rem', sm: '0.875rem' } }}
                 >
                   {stat.title}
                 </Typography>
@@ -505,19 +620,137 @@ function Dashboard({ user, workspace, onNavigate }) {
       </Box>
 
       {/* Upcoming Tasks (shows ALL dated tasks, sorted old -> new) */}
+      {todaysBirthdays.length > 0 && (
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2, sm: 2.5 },
+            mb: 3,
+            borderRadius: 3,
+            border: '1px solid rgba(251, 191, 36, 0.28)',
+            background: 'linear-gradient(135deg, #fff7ed 0%, #fffbeb 100%)',
+          }}
+        >
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
+            Birthday Reminder
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {todaysBirthdays.map((person) => person.user_name).join(', ')} {todaysBirthdays.length === 1 ? 'has' : 'have'} a birthday today.
+          </Typography>
+        </Paper>
+      )}
+
+      {upcomingEvents.length > 0 && (
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2, sm: 2.5 },
+            mb: 3,
+            borderRadius: 3,
+            border: '1px solid rgba(14, 165, 233, 0.22)',
+            background: 'linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)',
+          }}
+        >
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
+            Corporate Events
+          </Typography>
+          <Stack spacing={1}>
+            {upcomingEvents.map((event) => (
+              <Box key={event.id} sx={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
+                <Box>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {event.title}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {event.location || event.category || 'Internal event'}
+                  </Typography>
+                </Box>
+                <Typography variant="caption" color="text.secondary">
+                  {formatDateIST(event.event_start, 'MMM d, yyyy h:mm a')}
+                </Typography>
+              </Box>
+            ))}
+          </Stack>
+        </Paper>
+      )}
+
+      {newsTopics.length > 0 && (
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2, sm: 2.5 },
+            mb: 3,
+            borderRadius: 3,
+            border: '1px solid rgba(15, 118, 110, 0.18)',
+            background: 'linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%)',
+          }}
+        >
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
+            News Watchlist
+          </Typography>
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            {newsTopics.map((topic) => (
+              <Chip
+                key={topic.id}
+                label={`${topic.topic}${topic.category ? ` • ${topic.category}` : ''}`}
+                size="small"
+                sx={{ backgroundColor: 'rgba(15, 118, 110, 0.08)', color: '#0f766e', fontWeight: 600 }}
+              />
+            ))}
+          </Stack>
+        </Paper>
+      )}
+
+      {announcements.length > 0 && (
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2, sm: 2.5 },
+            mb: 3,
+            borderRadius: 3,
+            border: '1px solid rgba(99, 102, 241, 0.18)',
+            background: 'linear-gradient(135deg, #eef2ff 0%, #f8fafc 100%)',
+          }}
+        >
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
+            Announcements
+          </Typography>
+          <Stack spacing={1.25}>
+            {announcements.map((announcement) => (
+              <Box key={announcement.id}>
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  {announcement.title}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {announcement.category || 'Update'}{announcement.creator_name ? ` • ${announcement.creator_name}` : ''}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {announcement.description}
+                </Typography>
+              </Box>
+            ))}
+          </Stack>
+        </Paper>
+      )}
+
+      {!workspace?.is_personal && workspace?.name !== 'Personal' ? (
+        <JnbChatbotPanel workspace={workspace} user={user} />
+      ) : null}
+
       <Paper
         elevation={0}
         sx={{
-          p: 3,
+          p: { xs: 2, sm: 3 },
           border: '1px solid rgba(148, 163, 184, 0.15)',
           borderRadius: 3,
-          height: FIXED_TASK_BOX_HEIGHT,
+          height: { xs: 'auto', md: FIXED_TASK_BOX_HEIGHT },
+          minHeight: { xs: 320, md: FIXED_TASK_BOX_HEIGHT },
           display: 'flex',
           flexDirection: 'column',
           mb: 3,
         }}
       >
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, gap: 1, flexWrap: 'wrap' }}>
           <Typography variant="h6" sx={{ fontWeight: 600 }}>
             Upcoming Tasks ({dateMode === 'due' ? 'Due Date' : 'Target Date'})
           </Typography>
@@ -525,7 +758,7 @@ function Dashboard({ user, workspace, onNavigate }) {
           <Chip
             label="View all"
             size="small"
-            onClick={() => onNavigate('projects')}
+            onClick={() => onNavigate('tasks')}
             sx={{
               cursor: 'pointer',
               '&:hover': { backgroundColor: 'rgba(15, 118, 110, 0.1)' },
@@ -651,70 +884,39 @@ function Dashboard({ user, workspace, onNavigate }) {
                   mb: 3,
                 }}
               >
-                <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
+                <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.75 }}>
                   Quick Actions
                 </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Jump straight into the actions your team uses most.
+                </Typography>
 
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                  <Box
-                    sx={{
-                      p: 2,
-                      borderRadius: 2,
-                      backgroundColor: '#f0fdf4',
-                      border: '1px solid #86efac',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      '&:hover': {
-                        backgroundColor: '#dcfce7',
-                        transform: 'translateX(4px)',
-                      },
-                    }}
-                    onClick={() => onNavigate('projects')}
-                  >
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#166534' }}>
-                      📁 Create New Project
-                    </Typography>
-                  </Box>
-
-                  <Box
-                    sx={{
-                      p: 2,
-                      borderRadius: 2,
-                      backgroundColor: '#eff6ff',
-                      border: '1px solid #93c5fd',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      '&:hover': {
-                        backgroundColor: '#dbeafe',
-                        transform: 'translateX(4px)',
-                      },
-                    }}
-                    onClick={() => onNavigate('projects')}
-                  >
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#1e40af' }}>
-                      ✅ Add New Task
-                    </Typography>
-                  </Box>
-
-                  <Box
-                    sx={{
-                      p: 2,
-                      borderRadius: 2,
-                      backgroundColor: '#fef3c7',
-                      border: '1px solid #fcd34d',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      '&:hover': {
-                        backgroundColor: '#fde68a',
-                        transform: 'translateX(4px)',
-                      },
-                    }}
-                    onClick={() => onNavigate('approvals')}
-                  >
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#92400e' }}>
-                      ⏰ Pending Approvals
-                    </Typography>
-                  </Box>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+                  {quickActionCards.map((action) => (
+                    <Box
+                      key={action.title}
+                      sx={{
+                        p: 2,
+                        borderRadius: 2.5,
+                        backgroundColor: action.background,
+                        border: `1px solid ${action.border}`,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        '&:hover': {
+                          transform: 'translateX(4px)',
+                          boxShadow: '0 10px 24px rgba(15, 23, 42, 0.08)',
+                        },
+                      }}
+                      onClick={action.onClick}
+                    >
+                      <Typography variant="body2" sx={{ fontWeight: 700, color: action.tone }}>
+                        {action.title}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: action.tone, opacity: 0.8 }}>
+                        {action.subtitle}
+                      </Typography>
+                    </Box>
+                  ))}
                 </Box>
               </Paper>
             </Grid>
@@ -764,12 +966,86 @@ function Dashboard({ user, workspace, onNavigate }) {
                       License: {user?.license_type || 'Free'}
                     </Typography>
                   </Box>
+
+                  {ruleBook ? (
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={() => setRuleBookDialogOpen(true)}
+                      sx={{
+                        mt: 1,
+                        alignSelf: 'flex-start',
+                        color: '#fff',
+                        borderColor: 'rgba(255,255,255,0.28)',
+                        '&:hover': { borderColor: 'rgba(255,255,255,0.45)' },
+                      }}
+                    >
+                      View Rule Book
+                    </Button>
+                  ) : null}
                 </Box>
               </Paper>
             </Grid>
           </Grid>
         </Grid>
       </Grid>
+
+      <Dialog
+        open={Boolean(ruleBook && ((ruleBook.mandatory && !ruleBook.accepted_at) || ruleBookDialogOpen))}
+        maxWidth="md"
+        fullWidth
+        onClose={() => {
+          if (!(ruleBook?.mandatory && !ruleBook?.accepted_at)) {
+            setRuleBookDialogOpen(false);
+          }
+        }}
+      >
+        <DialogTitle>Rule Book Acknowledgement</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            Please review the current policy before continuing. Acceptance is enabled after the 2 minute timer and full scroll.
+          </Typography>
+          <Box
+            onScroll={(event) => {
+              const target = event.currentTarget;
+              if (target.scrollTop + target.clientHeight >= target.scrollHeight - 8) {
+                setRuleBookScrolled(true);
+              }
+            }}
+            sx={{
+              maxHeight: 360,
+              overflowY: 'auto',
+              p: 2,
+              borderRadius: 2,
+              border: '1px solid rgba(148,163,184,0.2)',
+              whiteSpace: 'pre-wrap',
+              backgroundColor: '#fff',
+            }}
+          >
+            {ruleBook?.content || 'No rule book content available.'}
+          </Box>
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block' }}>
+            Timer remaining: {ruleBookTimer}s • Scroll completed: {ruleBookScrolled ? 'Yes' : 'No'}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          {!(ruleBook?.mandatory && !ruleBook?.accepted_at) ? (
+            <Button onClick={() => setRuleBookDialogOpen(false)}>Close</Button>
+          ) : null}
+          <Button
+            variant="contained"
+            disabled={Boolean(ruleBook?.accepted_at) || ruleBookTimer > 0 || !ruleBookScrolled}
+            onClick={async () => {
+              await acceptRuleBook(ruleBook.id, { scroll_completed: true, timer_completed: true });
+              const refreshed = await getCurrentRuleBook(workspace.id);
+              setRuleBook(refreshed.data || null);
+              setRuleBookDialogOpen(false);
+            }}
+          >
+            {ruleBook?.accepted_at ? 'Accepted' : 'Accept'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

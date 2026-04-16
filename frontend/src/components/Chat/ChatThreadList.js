@@ -28,6 +28,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
 import PersonIcon from '@mui/icons-material/Person';
 import GroupIcon from '@mui/icons-material/Group';
+import CampaignIcon from '@mui/icons-material/Campaign';
 import { formatInTimeZone } from 'date-fns-tz';
 
 function getInitials(firstName, lastName, username) {
@@ -48,6 +49,7 @@ function getDisplayName(member) {
 
 function ThreadListItem({ thread, currentUserId, isSelected, onClick }) {
   const isDm = thread.type === 'dm';
+  const isChannel = thread.type === 'channel';
   
   // For DMs, get the other user
   const otherMember = useMemo(() => {
@@ -59,8 +61,8 @@ function ThreadListItem({ thread, currentUserId, isSelected, onClick }) {
     if (isDm && otherMember) {
       return getDisplayName(otherMember);
     }
-    return thread.name || 'Group Chat';
-  }, [isDm, otherMember, thread.name]);
+    return thread.name || (isChannel ? 'Channel' : 'Group Chat');
+  }, [isDm, isChannel, otherMember, thread.name]);
 
   const lastMessagePreview = useMemo(() => {
     if (!thread.last_message) return 'No messages yet';
@@ -182,6 +184,7 @@ function ChatThreadList({
   onSelectThread,
   onCreateDm,
   onCreateGroup,
+  onCreateChannel,
   currentUserId,
   loading,
 }) {
@@ -213,6 +216,10 @@ function ChatThreadList({
     filteredThreads.filter(t => t.type === 'group'), 
     [filteredThreads]
   );
+  const channelThreads = useMemo(() =>
+    filteredThreads.filter(t => t.type === 'channel'),
+    [filteredThreads]
+  );
 
   const handleCreateClick = (event) => {
     setMenuAnchor(event.currentTarget);
@@ -230,6 +237,11 @@ function ChatThreadList({
   const handleCreateGroup = () => {
     handleMenuClose();
     onCreateGroup();
+  };
+
+  const handleCreateChannel = () => {
+    handleMenuClose();
+    onCreateChannel?.();
   };
 
   if (loading) {
@@ -320,13 +332,33 @@ function ChatThreadList({
             {/* Group Chats */}
             {groupThreads.length > 0 && (
               <>
-                {dmThreads.length > 0 && <Divider sx={{ my: 1 }} />}
+                {(dmThreads.length > 0 || channelThreads.length > 0) && <Divider sx={{ my: 1 }} />}
                 <ListItem sx={{ py: 0.5, px: 2 }}>
                   <Typography variant="caption" color="text.secondary" fontWeight={600}>
                     GROUP CHATS
                   </Typography>
                 </ListItem>
                 {groupThreads.map(thread => (
+                  <ThreadListItem
+                    key={thread.id}
+                    thread={thread}
+                    currentUserId={currentUserId}
+                    isSelected={selectedThreadId === thread.id}
+                    onClick={() => onSelectThread(thread)}
+                  />
+                ))}
+              </>
+            )}
+
+            {channelThreads.length > 0 && (
+              <>
+                {(dmThreads.length > 0 || groupThreads.length > 0) && <Divider sx={{ my: 1 }} />}
+                <ListItem sx={{ py: 0.5, px: 2 }}>
+                  <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                    CHANNELS
+                  </Typography>
+                </ListItem>
+                {channelThreads.map(thread => (
                   <ThreadListItem
                     key={thread.id}
                     thread={thread}
@@ -360,6 +392,12 @@ function ChatThreadList({
             <GroupIcon fontSize="small" />
           </ListItemIcon>
           <ListItemText>New Group Chat</ListItemText>
+        </MenuItem>
+        <MenuItem onClick={handleCreateChannel}>
+          <ListItemIcon>
+            <CampaignIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>New Channel</ListItemText>
         </MenuItem>
       </Menu>
     </Box>

@@ -41,7 +41,6 @@ import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import ImageIcon from '@mui/icons-material/Image';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import DownloadIcon from '@mui/icons-material/Download';
-import { format } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
 import { downloadAttachment } from '../../apiClient';
 
@@ -267,7 +266,7 @@ function MessageContent({ content, onMentionClick }) {
   );
 }
 
-function MessageBubble({ message, isOwn, isFirstInGroup, showAvatar, onMentionClick }) {
+function MessageBubble({ message, isOwn, isFirstInGroup, showAvatar, onMentionClick, onReply, onPinToggle, canPin }) {
   return (
     <Box
       sx={{
@@ -319,11 +318,26 @@ function MessageBubble({ message, isOwn, isFirstInGroup, showAvatar, onMentionCl
             borderTopRightRadius: isOwn && !showAvatar ? 4 : undefined,
           }}
         >
+          {message.parent_message_content ? (
+            <Paper variant="outlined" sx={{ p: 0.75, mb: 0.75, borderRadius: 2 }}>
+              <Typography variant="caption" color="text.secondary" noWrap>
+                Replying to: {message.parent_message_content}
+              </Typography>
+            </Paper>
+          ) : null}
           {message.content && (
             <MessageContent content={message.content} onMentionClick={onMentionClick} />
           )}
           {/* Display attachments if any */}
           <MessageAttachments attachments={message.attachments} isOwn={isOwn} />
+          <Box sx={{ display: 'flex', gap: 0.5, mt: 0.75, justifyContent: isOwn ? 'flex-end' : 'flex-start' }}>
+            <Button size="small" onClick={() => onReply?.(message)} sx={{ minWidth: 0, px: 0.75 }}>Reply</Button>
+            {canPin ? (
+              <Button size="small" onClick={() => onPinToggle?.(message)} sx={{ minWidth: 0, px: 0.75 }}>
+                {message.pinned_at ? 'Unpin' : 'Pin'}
+              </Button>
+            ) : null}
+          </Box>
         </Paper>
 
         {/* Timestamp */}
@@ -396,7 +410,7 @@ function TypingIndicator({ typingUsers }) {
 function ThreadInfoModal({ open, onClose, thread }) {
   if (!thread) return null;
 
-  const isGroup = thread.thread_type === 'group';
+  const isGroup = thread.type === 'group' || thread.type === 'channel';
   const createdDate = new Date(thread.created_at);
 
   return (
@@ -498,6 +512,8 @@ function ChatMessagePane({
   onManageMembers,
   onRenameGroup,
   onLeaveThread,
+  onReplyToMessage,
+  onPinToggle,
   isMobile,
 }) {
   const messagesEndRef = useRef(null);
@@ -662,7 +678,7 @@ function ChatMessagePane({
             {threadDisplayName}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            {isGroup ? `${thread.members?.length || 0} members` : 'Direct message'}
+            {thread.type === 'channel' ? `Channel • ${thread.visibility || 'workspace'}` : isGroup ? `${thread.members?.length || 0} members` : 'Direct message'}
           </Typography>
         </Box>
 
@@ -721,6 +737,28 @@ function ChatMessagePane({
           </Box>
         ) : (
           <>
+            {(thread.intro_text || thread.description) ? (
+              <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2, mb: 2, bgcolor: 'grey.50' }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                  {thread.type === 'channel' ? 'Channel Introduction' : 'Conversation Intro'}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {thread.intro_text || thread.description}
+                </Typography>
+              </Paper>
+            ) : null}
+
+            {(thread.pinned_messages || []).length > 0 ? (
+              <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 2, mb: 2 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Pinned Messages</Typography>
+                {(thread.pinned_messages || []).slice(0, 3).map((item) => (
+                  <Typography key={item.id} variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                    • {item.content}
+                  </Typography>
+                ))}
+              </Paper>
+            ) : null}
+
             {groupedMessages.map((item) => {
               if (item.type === 'date') {
                 return <DateSeparator key={item.key} date={item.date} />;
@@ -733,6 +771,14 @@ function ChatMessagePane({
                   isFirstInGroup={item.isFirstInGroup}
                   showAvatar={item.showAvatar}
                   onMentionClick={onMentionClick}
+                  onReply={(message) => {
+                    const replyText = window.prompt(`Reply to "${message.content || 'message'}"`);
+                    if (replyText?.trim()) {
+                      onReplyToMessage?.(message.id, replyText.trim());
+                    }
+                  }}
+                  onPinToggle={onPinToggle}
+                  canPin={isAdmin}
                 />
               );
             })}

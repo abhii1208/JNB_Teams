@@ -46,8 +46,6 @@ import InsertLinkIcon from '@mui/icons-material/InsertLink';
 import ClearIcon from '@mui/icons-material/Clear';
 
 import {
-  formatDistanceToNow,
-  format,
   isValid,
   differenceInCalendarDays,
 } from 'date-fns';
@@ -1652,8 +1650,8 @@ function TasksTableView({
   return (
     <Paper sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Top toolbar (density + sorting info) */}
-      <Box sx={{ px: 2, py: 1.25, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
+      <Box sx={{ px: { xs: 1.25, sm: 2 }, py: 1.25, display: 'flex', alignItems: { xs: 'flex-start', sm: 'center' }, justifyContent: 'space-between', gap: 1.5, flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0, flexWrap: 'wrap' }}>
           <Typography sx={{ fontWeight: 800 }} noWrap>
             Tasks
           </Typography>
@@ -1663,7 +1661,7 @@ function TasksTableView({
           </Typography>
         </Box>
 
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap', width: { xs: '100%', sm: 'auto' }, justifyContent: { xs: 'space-between', sm: 'flex-end' } }}>
           {hasActiveFilters && (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Typography variant="caption" color="text.secondary" noWrap>
@@ -1704,7 +1702,7 @@ function TasksTableView({
             // fixed layout helps resizing + sticky columns
             tableLayout: 'fixed',
             width: 'max-content',
-            minWidth: 1100,
+            minWidth: { xs: 900, md: 1100 },
             '& th, & td': { ...NOWRAP_SX },
             '& th *': { whiteSpace: 'nowrap !important' },
             '& td *': { whiteSpace: 'nowrap !important' },
@@ -1903,8 +1901,8 @@ function TasksTableView({
         </Popover>
       </TableContainer>
 
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', px: { xs: 1, sm: 0 } }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
           <Tooltip title={hasSelection ? `${selectedCount} selected` : 'No tasks selected'}>
             <span>
               <IconButton size="small" disabled={!hasSelection}>
@@ -1950,7 +1948,7 @@ function TasksTableView({
         </Box>
         <TablePagination
           component="div"
-          sx={{ flex: 1 }}
+          sx={{ flex: 1, minWidth: 0 }}
           count={total}
           page={page - 1}
           onPageChange={(e, newPage) => onPageChange(newPage + 1)}

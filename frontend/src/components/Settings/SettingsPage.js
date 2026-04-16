@@ -24,10 +24,10 @@ import NotificationsIcon from '@mui/icons-material/Notifications';
 import SecurityIcon from '@mui/icons-material/Security';
 import PaletteIcon from '@mui/icons-material/Palette';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
-import { getUserSettings, updateUserProfile, changePassword, getWorkspaces, updateWorkspace } from '../../apiClient';
+import { getUserSettings, updateUserProfile, changePassword, getWorkspaces, patchUserAppPreferences, updateWorkspace, getCurrentRuleBook, updateCurrentRuleBook, getCorporateEvents, createCorporateEvent } from '../../apiClient';
 import { formatDateIST } from '../../utils/dateUtils';
 
-function SettingsPage({ user, workspace }) {
+function SettingsPage({ user, workspace, themePreference = 'light', onThemePreferenceChange }) {
   const [activeTab, setActiveTab] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -39,11 +39,30 @@ function SettingsPage({ user, workspace }) {
     username: '',
     userId: '',
     licenseType: '',
-    createdAt: ''
+    createdAt: '',
+    dateOfBirth: '',
   });
   const [workspaceMemberships, setWorkspaceMemberships] = useState([]);
   const [workspaceLogoUrl, setWorkspaceLogoUrl] = useState('');
   const [workspaceSaving, setWorkspaceSaving] = useState(false);
+  const [workspaceControls, setWorkspaceControls] = useState({
+    birthdaysEnabled: true,
+    ruleBookEnabled: false,
+    ruleBookMandatory: false,
+  });
+  const [ruleBookForm, setRuleBookForm] = useState({
+    title: '',
+    content: '',
+    timer_seconds: 120,
+  });
+  const [events, setEvents] = useState([]);
+  const [eventForm, setEventForm] = useState({
+    title: '',
+    event_start: '',
+    event_end: '',
+    category: '',
+    location: '',
+  });
 
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
@@ -68,10 +87,20 @@ function SettingsPage({ user, workspace }) {
           username: userData.data.username || '',
           userId: userData.data.id || '',
           licenseType: userData.data.license_type || 'free',
-          createdAt: userData.data.created_at || ''
+          createdAt: userData.data.created_at || '',
+          dateOfBirth: userData.data.date_of_birth || ''
         });
         
         setWorkspaceMemberships(workspacesData.data || []);
+        if (['light', 'dark', 'auto'].includes(userData.data?.app_theme)) {
+          onThemePreferenceChange?.(userData.data.app_theme);
+        }
+        setPreferences((prev) => ({
+          ...prev,
+          theme: userData.data?.app_theme || prev.theme,
+          compactView: Boolean(userData.data?.app_compact_view),
+          showCompletedTasks: Boolean(userData.data?.app_show_completed_tasks),
+        }));
         setError(null);
       } catch (err) {
         console.error('Error fetching user settings:', err);
@@ -82,12 +111,44 @@ function SettingsPage({ user, workspace }) {
     };
 
     fetchSettings();
-  }, []);
+  }, [onThemePreferenceChange]);
 
   useEffect(() => {
     if (!workspace) return;
     setWorkspaceLogoUrl(workspace.logo_url || workspace.logoUrl || '');
+    setWorkspaceControls({
+      birthdaysEnabled: workspace.birthdays_enabled !== false,
+      ruleBookEnabled: Boolean(workspace.rule_book_enabled),
+      ruleBookMandatory: Boolean(workspace.rule_book_mandatory),
+    });
   }, [workspace]);
+
+  const canEditWorkspace = workspace?.role === 'Owner' || workspace?.role === 'Admin';
+
+  useEffect(() => {
+    if (!workspace?.id || !canEditWorkspace) return;
+    const loadWorkspaceAdminData = async () => {
+      try {
+        const [ruleBookRes, eventsRes] = await Promise.allSettled([
+          getCurrentRuleBook(workspace.id),
+          getCorporateEvents(workspace.id),
+        ]);
+        if (ruleBookRes.status === 'fulfilled' && ruleBookRes.value.data) {
+          setRuleBookForm({
+            title: ruleBookRes.value.data.title || 'Workspace Rule Book',
+            content: ruleBookRes.value.data.content || '',
+            timer_seconds: ruleBookRes.value.data.timer_seconds || 120,
+          });
+        }
+        if (eventsRes.status === 'fulfilled') {
+          setEvents(eventsRes.value.data || []);
+        }
+      } catch (err) {
+        console.error('Failed to load workspace admin settings', err);
+      }
+    };
+    loadWorkspaceAdminData();
+  }, [workspace?.id, canEditWorkspace]);
 
   const [notifications, setNotifications] = useState({
     taskAssigned: true,
@@ -100,10 +161,14 @@ function SettingsPage({ user, workspace }) {
   });
 
   const [preferences, setPreferences] = useState({
-    theme: 'light',
+    theme: themePreference,
     compactView: false,
     showCompletedTasks: false,
   });
+
+  useEffect(() => {
+    setPreferences((prev) => ({ ...prev, theme: themePreference }));
+  }, [themePreference]);
 
   const handleSaveProfile = async () => {
     try {
@@ -111,6 +176,7 @@ function SettingsPage({ user, workspace }) {
       await updateUserProfile({
         first_name: profile.firstName,
         last_name: profile.lastName,
+        date_of_birth: profile.dateOfBirth || null,
       });
       setSuccess('Profile updated successfully');
       setError(null);
@@ -155,8 +221,6 @@ function SettingsPage({ user, workspace }) {
     }
   };
 
-  const canEditWorkspace = workspace?.role === 'Owner' || workspace?.role === 'Admin';
-
   const handleSaveWorkspaceBranding = async () => {
     if (!workspace?.id) return;
     if (!canEditWorkspace) {
@@ -167,9 +231,19 @@ function SettingsPage({ user, workspace }) {
     setWorkspaceSaving(true);
     try {
       const trimmed = workspaceLogoUrl.trim();
-      const payload = { logo_url: trimmed || null };
+      const payload = {
+        logo_url: trimmed || null,
+        birthdays_enabled: workspaceControls.birthdaysEnabled,
+        rule_book_enabled: workspaceControls.ruleBookEnabled,
+        rule_book_mandatory: workspaceControls.ruleBookMandatory,
+      };
       const res = await updateWorkspace(workspace.id, payload);
       setWorkspaceLogoUrl(res.data.logo_url || '');
+      setWorkspaceControls({
+        birthdaysEnabled: res.data.birthdays_enabled !== false,
+        ruleBookEnabled: Boolean(res.data.rule_book_enabled),
+        ruleBookMandatory: Boolean(res.data.rule_book_mandatory),
+      });
       setSuccess('Workspace branding updated successfully');
       setError(null);
       setTimeout(() => setSuccess(null), 3000);
@@ -179,6 +253,56 @@ function SettingsPage({ user, workspace }) {
       setSuccess(null);
     } finally {
       setWorkspaceSaving(false);
+    }
+  };
+
+  const handleSaveRuleBook = async () => {
+    if (!workspace?.id || !canEditWorkspace) return;
+    try {
+      await updateCurrentRuleBook(workspace.id, ruleBookForm);
+      setSuccess('Rule book saved successfully');
+      setError(null);
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to save rule book');
+      setSuccess(null);
+    }
+  };
+
+  const handleAddCorporateEvent = async () => {
+    if (!workspace?.id || !canEditWorkspace || !eventForm.title || !eventForm.event_start) return;
+    try {
+      await createCorporateEvent(workspace.id, eventForm);
+      const response = await getCorporateEvents(workspace.id);
+      setEvents(response.data || []);
+      setEventForm({ title: '', event_start: '', event_end: '', category: '', location: '' });
+      setSuccess('Corporate event added');
+      setError(null);
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to add corporate event');
+      setSuccess(null);
+    }
+  };
+
+  const handleSavePreferences = async () => {
+    try {
+      setLoading(true);
+      await patchUserAppPreferences({
+        app_theme: preferences.theme,
+        app_compact_view: preferences.compactView,
+        app_show_completed_tasks: preferences.showCompletedTasks,
+      });
+      onThemePreferenceChange?.(preferences.theme);
+      setSuccess('Preferences saved successfully');
+      setError(null);
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      console.error('Error saving preferences:', err);
+      setError(err.response?.data?.error || 'Failed to save preferences');
+      setSuccess(null);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -519,7 +643,11 @@ function SettingsPage({ user, workspace }) {
                 <Select
                   value={preferences.theme}
                   label="Theme"
-                  onChange={(e) => setPreferences({ ...preferences, theme: e.target.value })}
+                  onChange={(e) => {
+                    const nextTheme = e.target.value;
+                    setPreferences({ ...preferences, theme: nextTheme });
+                    onThemePreferenceChange?.(nextTheme);
+                  }}
                 >
                   <MenuItem value="light">Light</MenuItem>
                   <MenuItem value="dark">Dark</MenuItem>
@@ -571,11 +699,23 @@ function SettingsPage({ user, workspace }) {
                 sx={{ mb: 3, alignItems: 'flex-start' }}
               />
 
+              <TextField
+                fullWidth
+                label="Date of Birth"
+                type="date"
+                value={profile.dateOfBirth}
+                onChange={(e) => setProfile({ ...profile, dateOfBirth: e.target.value })}
+                InputLabelProps={{ shrink: true }}
+                sx={{ mb: 3 }}
+              />
+
               <Button
                 variant="contained"
                 sx={{ textTransform: 'none', px: 4 }}
+                onClick={handleSavePreferences}
+                disabled={loading}
               >
-                Save Preferences
+                {loading ? 'Saving...' : 'Save Preferences'}
               </Button>
             </Box>
           )}
@@ -702,6 +842,92 @@ function SettingsPage({ user, workspace }) {
                       </Button>
                     </CardContent>
                   </Card>
+
+                  <Card elevation={0} sx={{ mb: 3, border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2 }}>
+                    <CardContent>
+                      <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
+                        Workspace Controls
+                      </Typography>
+                      <FormControlLabel
+                        control={<Switch checked={workspaceControls.birthdaysEnabled} onChange={(e) => setWorkspaceControls((prev) => ({ ...prev, birthdaysEnabled: e.target.checked }))} />}
+                        label="Enable birthday reminders"
+                        sx={{ display: 'flex', mb: 1 }}
+                      />
+                      <FormControlLabel
+                        control={<Switch checked={workspaceControls.ruleBookEnabled} onChange={(e) => setWorkspaceControls((prev) => ({ ...prev, ruleBookEnabled: e.target.checked }))} />}
+                        label="Enable rule book"
+                        sx={{ display: 'flex', mb: 1 }}
+                      />
+                      <FormControlLabel
+                        control={<Switch checked={workspaceControls.ruleBookMandatory} onChange={(e) => setWorkspaceControls((prev) => ({ ...prev, ruleBookMandatory: e.target.checked }))} />}
+                        label="Require rule book acceptance"
+                        sx={{ display: 'flex', mb: 2 }}
+                      />
+                    </CardContent>
+                  </Card>
+
+                  {canEditWorkspace && (
+                    <Card elevation={0} sx={{ mb: 3, border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2 }}>
+                      <CardContent>
+                        <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
+                          Rule Book
+                        </Typography>
+                        <TextField
+                          fullWidth
+                          label="Rule Book Title"
+                          value={ruleBookForm.title}
+                          onChange={(e) => setRuleBookForm((prev) => ({ ...prev, title: e.target.value }))}
+                          sx={{ mb: 2 }}
+                        />
+                        <TextField
+                          fullWidth
+                          multiline
+                          minRows={6}
+                          label="Rule Book Content"
+                          value={ruleBookForm.content}
+                          onChange={(e) => setRuleBookForm((prev) => ({ ...prev, content: e.target.value }))}
+                          sx={{ mb: 2 }}
+                        />
+                        <TextField
+                          fullWidth
+                          type="number"
+                          label="Acceptance Timer (seconds)"
+                          value={ruleBookForm.timer_seconds}
+                          onChange={(e) => setRuleBookForm((prev) => ({ ...prev, timer_seconds: e.target.value }))}
+                          sx={{ mb: 2 }}
+                        />
+                        <Button variant="contained" onClick={handleSaveRuleBook} sx={{ textTransform: 'none' }}>
+                          Save Rule Book
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {canEditWorkspace && (
+                    <Card elevation={0} sx={{ mb: 3, border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2 }}>
+                      <CardContent>
+                        <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
+                          Corporate Events
+                        </Typography>
+                        <TextField fullWidth label="Event Title" value={eventForm.title} onChange={(e) => setEventForm((prev) => ({ ...prev, title: e.target.value }))} sx={{ mb: 2 }} />
+                        <TextField fullWidth type="datetime-local" label="Start Time" value={eventForm.event_start} onChange={(e) => setEventForm((prev) => ({ ...prev, event_start: e.target.value }))} InputLabelProps={{ shrink: true }} sx={{ mb: 2 }} />
+                        <TextField fullWidth type="datetime-local" label="End Time" value={eventForm.event_end} onChange={(e) => setEventForm((prev) => ({ ...prev, event_end: e.target.value }))} InputLabelProps={{ shrink: true }} sx={{ mb: 2 }} />
+                        <TextField fullWidth label="Category" value={eventForm.category} onChange={(e) => setEventForm((prev) => ({ ...prev, category: e.target.value }))} sx={{ mb: 2 }} />
+                        <TextField fullWidth label="Location" value={eventForm.location} onChange={(e) => setEventForm((prev) => ({ ...prev, location: e.target.value }))} sx={{ mb: 2 }} />
+                        <Button variant="contained" onClick={handleAddCorporateEvent} sx={{ textTransform: 'none', mb: 2 }}>
+                          Add Corporate Event
+                        </Button>
+                        {events.map((event) => (
+                          <Box key={event.id} sx={{ py: 1, borderTop: '1px solid rgba(148, 163, 184, 0.16)' }}>
+                            <Typography variant="body2" sx={{ fontWeight: 600 }}>{event.title}</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {event.event_start} {event.location ? `• ${event.location}` : ''}
+                            </Typography>
+                          </Box>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  )}
 
                   <Divider sx={{ my: 4 }} />
                 </>

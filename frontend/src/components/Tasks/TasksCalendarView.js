@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Paper,
@@ -54,7 +54,7 @@ import {
   isValid,
   startOfDay,
 } from 'date-fns';
-import { getTodayIST, formatDateIST, isPastIST, isTodayIST } from '../../utils/dateUtils';
+import { getTodayIST } from '../../utils/dateUtils';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WEEKDAYS_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -132,34 +132,43 @@ const getDateKey = (dateValue) => {
   return null;
 };
 
-function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndicators, onTaskUpdate }) {
-  const [dateMode, setDateMode] = useState(() => {
-    return localStorage.getItem('calendarDateMode') || 'due';
-  });
-  const [calendarView, setCalendarView] = useState('month');
+function TasksCalendarView({
+  tasks,
+  date,
+  onDateChange,
+  onTaskClick,
+  getTaskIndicators,
+  onTaskUpdate,
+  viewMode = 'month',
+  onViewModeChange,
+  dateMode = 'due',
+  onDateModeChange,
+  density = 'comfortable',
+  onDensityChange,
+}) {
+  const [calendarView, setCalendarView] = useState(viewMode);
   const [selectedDate, setSelectedDate] = useState(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [density, setDensity] = useState(() => {
-    return localStorage.getItem('calendarDensity') || 'comfortable';
-  });
   const [filterAnchor, setFilterAnchor] = useState(null);
   // Empty default - show all tasks (users can filter if needed)
   const [statusFilter, setStatusFilter] = useState([]);
   const [priorityFilter, setPriorityFilter] = useState([]);
   const [draggedTask, setDraggedTask] = useState(null);
+
+  useEffect(() => {
+    setCalendarView(viewMode);
+  }, [viewMode]);
   
   // Handle date mode change
   const handleDateModeChange = (event, newMode) => {
     if (newMode !== null) {
-      setDateMode(newMode);
-      localStorage.setItem('calendarDateMode', newMode);
+      onDateModeChange?.(newMode);
     }
   };
 
   // Handle density change
   const handleDensityChange = (newDensity) => {
-    setDensity(newDensity);
-    localStorage.setItem('calendarDensity', newDensity);
+    onDensityChange?.(newDensity);
   };
 
   const monthStart = startOfMonth(date);
@@ -687,7 +696,11 @@ function TasksCalendarView({ tasks, date, onDateChange, onTaskClick, getTaskIndi
             <ToggleButtonGroup
               value={calendarView}
               exclusive
-              onChange={(e, val) => val && setCalendarView(val)}
+              onChange={(e, val) => {
+                if (!val) return;
+                setCalendarView(val);
+                onViewModeChange?.(val);
+              }}
               size="small"
             >
               <ToggleButton value="day">

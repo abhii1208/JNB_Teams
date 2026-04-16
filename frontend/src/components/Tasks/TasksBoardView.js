@@ -19,7 +19,7 @@ import FolderIcon from '@mui/icons-material/Folder';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 
-import { format, isValid } from 'date-fns';
+import { isValid } from 'date-fns';
 import { parseDateInput } from '../../utils/date';
 import { formatDateIST, isTodayIST } from '../../utils/dateUtils';
 

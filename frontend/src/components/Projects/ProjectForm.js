@@ -335,10 +335,10 @@ function ProjectForm({ open, onClose, onSave, project, workspace, user }) {
       onClose={handleClose}
       maxWidth="md"
       fullWidth
-      PaperProps={{ sx: { borderRadius: 3 } }}
+      PaperProps={{ sx: { borderRadius: 3, width: { xs: 'calc(100vw - 16px)', sm: '100%' }, m: { xs: 1, sm: 2 }, maxHeight: { xs: 'calc(100dvh - 16px)', sm: 'calc(100vh - 32px)' } } }}
     >
-      <DialogTitle sx={{ p: 3, pb: 2 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <DialogTitle sx={{ p: { xs: 2, sm: 3 }, pb: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'center' }, gap: 1 }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>
             {project ? 'Edit Project' : 'Create New Project'}
           </Typography>
@@ -348,8 +348,8 @@ function ProjectForm({ open, onClose, onSave, project, workspace, user }) {
         </Box>
       </DialogTitle>
 
-      <DialogContent sx={{ p: 3, pt: 2.5 }}>
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <DialogContent sx={{ p: { xs: 2, sm: 3 }, pt: 2.5 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: { xs: 2, sm: 3 } }}>
           {/* Project Name (fixed label clipping by using external label) */}
           <Box>
             <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
@@ -435,7 +435,7 @@ function ProjectForm({ open, onClose, onSave, project, workspace, user }) {
             <FormHelperText>
               Select one or more clients. Inactive clients cannot be newly linked.
             </FormHelperText>
-            <Box sx={{ mt: 1, display: 'flex', gap: 1, alignItems: 'center' }}>
+            <Box sx={{ mt: 1, display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
               <Button
                 size="small"
                 onClick={() => {
@@ -574,7 +574,7 @@ function ProjectForm({ open, onClose, onSave, project, workspace, user }) {
               Preview
             </Typography>
 
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
               <Box
                 sx={{
                   width: 48,
@@ -591,11 +591,11 @@ function ProjectForm({ open, onClose, onSave, project, workspace, user }) {
                 {selectedIcon?.icon}
               </Box>
 
-              <Box>
-                <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {name || 'Project Name'}
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {description || 'Project description will appear here'}
                 </Typography>
               </Box>
@@ -620,10 +620,10 @@ function ProjectForm({ open, onClose, onSave, project, workspace, user }) {
         </Box>
       </DialogContent>
 
-      <DialogActions sx={{ p: 3, pt: 2 }}>
+      <DialogActions sx={{ p: { xs: 2, sm: 3 }, pt: 2, flexWrap: 'wrap', gap: 1 }}>
         <Button
           onClick={handleClose}
-          sx={{ textTransform: 'none', borderRadius: 2, px: 3 }}
+          sx={{ textTransform: 'none', borderRadius: 2, px: 3, width: { xs: '100%', sm: 'auto' } }}
         >
           Cancel
         </Button>
@@ -632,7 +632,7 @@ function ProjectForm({ open, onClose, onSave, project, workspace, user }) {
           onClick={handleSubmit}
           variant="contained"
           disabled={!name.trim()}
-          sx={{ textTransform: 'none', borderRadius: 2, px: 3 }}
+          sx={{ textTransform: 'none', borderRadius: 2, px: 3, width: { xs: '100%', sm: 'auto' } }}
         >
           {project ? 'Save Changes' : 'Create Project'}
         </Button>
@@ -644,7 +644,7 @@ function ProjectForm({ open, onClose, onSave, project, workspace, user }) {
         onClose={() => setClientQuickOpen(false)}
         maxWidth="sm"
         fullWidth
-        PaperProps={{ sx: { borderRadius: 3 } }}
+        PaperProps={{ sx: { borderRadius: 3, width: { xs: 'calc(100vw - 16px)', sm: '100%' }, m: { xs: 1, sm: 2 } } }}
       >
         <DialogTitle sx={{ fontWeight: 600 }}>Quick Add Client</DialogTitle>
         <DialogContent sx={{ pt: 2 }}>
@@ -701,13 +701,13 @@ function ProjectForm({ open, onClose, onSave, project, workspace, user }) {
             />
           </Box>
         </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
+        <DialogActions sx={{ p: { xs: 2, sm: 3 }, flexWrap: 'wrap', gap: 1 }}>
           <Button
             onClick={() => {
               setClientQuickOpen(false);
               resetQuickClient();
             }}
-            sx={{ textTransform: 'none' }}
+            sx={{ textTransform: 'none', width: { xs: '100%', sm: 'auto' } }}
           >
             Cancel
           </Button>
@@ -715,7 +715,7 @@ function ProjectForm({ open, onClose, onSave, project, workspace, user }) {
             variant="contained"
             onClick={handleCreateQuickClient}
             disabled={!quickClientName.trim()}
-            sx={{ textTransform: 'none', px: 3 }}
+            sx={{ textTransform: 'none', px: 3, width: { xs: '100%', sm: 'auto' } }}
           >
             Create Client
           </Button>
@@ -728,7 +728,7 @@ function ProjectForm({ open, onClose, onSave, project, workspace, user }) {
         onClose={() => setIconPickerOpen(false)}
         maxWidth="sm"
         fullWidth
-        PaperProps={{ sx: { borderRadius: 3 } }}
+        PaperProps={{ sx: { borderRadius: 3, width: { xs: 'calc(100vw - 16px)', sm: '100%' }, m: { xs: 1, sm: 2 } } }}
       >
         <DialogTitle>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

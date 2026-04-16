@@ -47,7 +47,6 @@ import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import SearchIcon from '@mui/icons-material/Search';
 import CloseIcon from '@mui/icons-material/Close';
-import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import SettingsIcon from '@mui/icons-material/Settings';
 import TaskIcon from '@mui/icons-material/Assignment';
 import FolderIcon from '@mui/icons-material/Folder';
@@ -59,14 +58,22 @@ import ChatIcon from '@mui/icons-material/Chat';
 import ApprovalIcon from '@mui/icons-material/ThumbUpAlt';
 import WarningIcon from '@mui/icons-material/Warning';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
+import MenuIcon from '@mui/icons-material/Menu';
 
-import { createWorkspace, globalSearch, getRecentItems, getNotifications, markAllNotificationsAsRead, getActivity } from '../../apiClient';
+import {
+  createWorkspace,
+  globalSearch,
+  getRecentItems,
+  getNotifications,
+  markAllNotificationsAsRead,
+  getActivity,
+  patchUserAppPreferences,
+} from '../../apiClient';
 import debounce from 'lodash/debounce';
 
 const APPBAR_HEIGHT = 64;
 const CSS_APPBAR_OFFSET_VAR = '--appbar-offset';
 
-const LS_PRESENCE = 'teamflow.presence';
 const ACTIVE_ACCENT = '#22d3ee';
 
 function TopAppBar({
@@ -79,6 +86,8 @@ function TopAppBar({
   selectedProject,
   onNavigate,
   unreadNotificationCount = 0,
+  onToggleSidebar,
+  isMobileSidebarOpen = false,
 
   // Optional enhancements (safe defaults)
   hasNewNotifications = false, // show dot even if count is 0
@@ -262,20 +271,27 @@ function TopAppBar({
     []
   );
 
-  const [presence, setPresence] = useState(() => {
-    try {
-      const stored = localStorage.getItem(LS_PRESENCE);
-      if (stored) return stored;
-    } catch {}
-    return 'online';
-  });
+  const [presence, setPresence] = useState(user?.app_presence_status || 'online');
   const [presenceAnchorEl, setPresenceAnchorEl] = useState(null);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(LS_PRESENCE, presence);
-    } catch {}
-  }, [presence]);
+    if (user?.app_presence_status) {
+      setPresence(user.app_presence_status);
+    }
+  }, [user?.app_presence_status]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    if ((user?.app_presence_status || 'online') === presence) return;
+
+    const timeoutId = window.setTimeout(() => {
+      patchUserAppPreferences({ app_presence_status: presence }).catch((error) => {
+        console.error('Failed to persist presence status:', error);
+      });
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [presence, user?.app_presence_status, user?.id]);
 
   const presenceMeta = presenceOptions.find((p) => p.id === presence) || presenceOptions[0];
 
@@ -516,16 +532,24 @@ function TopAppBar({
           position="fixed"
           elevation={0}
           sx={{
-            height: APPBAR_HEIGHT,
+            height: `calc(${APPBAR_HEIGHT}px + var(--safe-area-top, 0px))`,
+            pt: 'var(--safe-area-top, 0px)',
             bgcolor: alpha('#ffffff', 0.90),
             backdropFilter: 'blur(14px)',
             borderBottom: `1px solid ${alpha('#0f172a', 0.08)}`,
             zIndex: (t) => t.zIndex.drawer + 1,
           }}
         >
-          <Toolbar sx={{ minHeight: APPBAR_HEIGHT, px: 2.2, gap: 1.6 }}>
+          <Toolbar sx={{ minHeight: APPBAR_HEIGHT, px: { xs: 1, sm: 2.2 }, gap: { xs: 0.75, sm: 1.6 } }}>
             {/* LEFT: Brand */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.0, minWidth: isSmDown ? 46 : 220 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.0, minWidth: isSmDown ? 0 : 220, flexShrink: 0 }}>
+              {isMdDown && (
+                <Tooltip title={isMobileSidebarOpen ? 'Close menu' : 'Open menu'} arrow>
+                  <IconButton onClick={onToggleSidebar} sx={iconBtnSx}>
+                    <MenuIcon />
+                  </IconButton>
+                </Tooltip>
+              )}
               <Box
                 sx={{
                   width: 34,
@@ -607,8 +631,8 @@ function TopAppBar({
                     elevation={0}
                     sx={{
                       ml: 'auto',
-                      width: 200,
-                      maxWidth: '20vw',
+                      width: { sm: 160, lg: 200 },
+                      maxWidth: '24vw',
                       display: 'flex',
                       alignItems: 'center',
                       gap: 1,
@@ -651,9 +675,9 @@ function TopAppBar({
             </Box>
 
             {/* RIGHT: Create + Presence + Workspace + Activity + Notifications + Profile */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1 }, flexShrink: 0 }}>
               {/* Create (desktop) */}
-              {!isSmDown && (
+              {!isMdDown && (
                 <ButtonGroup
                   variant="contained"
                   sx={{
@@ -689,7 +713,7 @@ function TopAppBar({
               )}
 
               {/* Presence */}
-              {!isSmDown && (
+              {!isMdDown && (
                 <>
                   <Tooltip title="Status" arrow>
                     <Chip
@@ -765,11 +789,7 @@ function TopAppBar({
 
               {/* Workspace */}
               <Tooltip title="Switch workspace" arrow>
-                {isSmDown ? (
-                  <IconButton onClick={handleProfileClick} sx={iconBtnSx}>
-                    <WorkspacesIcon />
-                  </IconButton>
-                ) : (
+                {isMdDown ? null : (
                   <Chip
                     onClick={handleProfileClick}
                     icon={<WorkspacesIcon sx={{ fontSize: 18 }} />}
@@ -800,11 +820,13 @@ function TopAppBar({
               </Tooltip>
 
               {/* Activity */}
-              <Tooltip title="Activity" arrow>
-                <IconButton onClick={handleActivityOpen} sx={iconBtnSx}>
-                  <TimelineIcon />
-                </IconButton>
-              </Tooltip>
+              {!isSmDown && (
+                <Tooltip title="Activity" arrow>
+                  <IconButton onClick={handleActivityOpen} sx={iconBtnSx}>
+                    <TimelineIcon />
+                  </IconButton>
+                </Tooltip>
+              )}
 
               {/* Notifications Drawer */}
               <Tooltip title="Notifications" arrow>

@@ -1,0 +1,12 @@
+{
+  "name": "team-workspace",
+  "private": true,
+  "scripts": {
+    "frontend:install": "npm install --prefix frontend",
+    "frontend:build": "npm run build --prefix frontend",
+    "backend:install": "npm install --prefix backend",
+    "cap:sync": "npm run cap:sync --prefix frontend",
+    "cap:open": "npm run cap:open --prefix frontend",
+    "android:setup": "npm install --prefix frontend && npm run build --prefix frontend && npm run cap:sync --prefix frontend"
+  }
+}

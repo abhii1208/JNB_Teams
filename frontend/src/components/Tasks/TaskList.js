@@ -199,7 +199,7 @@ function TaskList({ onSelectTask, workspace }) {
 
   useEffect(() => {
     const fetchTasks = async () => {
-      const wsId = workspace?.id || Number(localStorage.getItem('currentWorkspaceId'));
+      const wsId = workspace?.id;
       if (!wsId) return;
       setLoading(true);
       setError(null);

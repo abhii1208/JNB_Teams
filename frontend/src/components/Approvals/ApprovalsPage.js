@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   Card,
-  CardContent,
   Chip,
   Tab,
   Tabs,
@@ -24,7 +23,9 @@ import {
   TextField,
   Menu,
   MenuItem,
+  useMediaQuery,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import CheckIcon from '@mui/icons-material/Check';
 import CloseIcon from '@mui/icons-material/Close';
 import InfoIcon from '@mui/icons-material/InfoOutlined';
@@ -47,6 +48,8 @@ const typeColors = {
 };
 
 function ApprovalsPage({ user, workspace }) {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [activeTab, setActiveTab] = useState(0);
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [selectedApproval, setSelectedApproval] = useState(null);
@@ -193,11 +196,14 @@ function ApprovalsPage({ user, workspace }) {
   const statusOptions = Array.from(new Set(tabFilteredApprovals.map((approval) => approval.status))).filter(Boolean);
 
   return (
-    <Box sx={{ p: 4 }}>
+    <Box sx={{ p: { xs: 2, sm: 3 }, minWidth: 0 }}>
       {/* Header */}
-      <Box sx={{ mb: 4 }}>
-        <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="h5" sx={{ fontWeight: 700, mb: 0.75 }}>
           Approvals
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Review pending approvals and track completed decisions
         </Typography>
       </Box>
 
@@ -205,8 +211,10 @@ function ApprovalsPage({ user, workspace }) {
       <Tabs
         value={activeTab}
         onChange={(e, newValue) => setActiveTab(newValue)}
+        variant={isMobile ? 'scrollable' : 'standard'}
+        scrollButtons={isMobile ? 'auto' : false}
         sx={{
-          mb: 3,
+          mb: 2,
           '& .MuiTab-root': {
             textTransform: 'none',
             fontWeight: 600,
@@ -221,8 +229,8 @@ function ApprovalsPage({ user, workspace }) {
       </Tabs>
 
       {/* Approvals Table */}
-      <Card elevation={0} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2 }}>
-        <TableContainer>
+      <Card elevation={0} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 3 }}>
+        <TableContainer sx={{ overflowX: 'auto' }}>
           <Table>
             <TableHead>
               <TableRow>
@@ -563,7 +571,7 @@ function ApprovalsPage({ user, workspace }) {
             </Box>
           )}
         </DialogContent>
-        <DialogActions sx={{ p: 3, pt: 2 }}>
+        <DialogActions sx={{ p: { xs: 2, sm: 3 }, pt: 2, flexWrap: 'wrap', gap: 1 }}>
           <Button
             onClick={() => setDetailsDialogOpen(false)}
             sx={{ textTransform: 'none', borderRadius: 2 }}
@@ -601,7 +609,7 @@ function ApprovalsPage({ user, workspace }) {
             }}
           />
         </DialogContent>
-        <DialogActions sx={{ p: 3, pt: 2 }}>
+        <DialogActions sx={{ p: { xs: 2, sm: 3 }, pt: 2, flexWrap: 'wrap', gap: 1 }}>
           <Button
             onClick={() => setRejectDialogOpen(false)}
             sx={{ textTransform: 'none', borderRadius: 2 }}

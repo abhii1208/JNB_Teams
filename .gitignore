@@ -4,3 +4,14 @@
 *.log
 .env
 .env.*
+!.env.example
+!**/.env.example
+!**/.env.production.example
+!**/.env.android.example
+frontend/android/keystore.properties
+frontend/android/app/upload-keystore.jks
+frontend/android/local.properties
+frontend/android/.gradle/
+frontend/android/.idea/
+.idea/
+merge-analysis/

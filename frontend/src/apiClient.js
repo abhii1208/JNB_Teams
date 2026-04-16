@@ -1,18 +1,32 @@
 import axios from 'axios';
 
-export const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:5000';
+const DEFAULT_API_BASE = 'https://jnb-teams.onrender.com';
+const rawApiBase = process.env.REACT_APP_API_BASE || process.env.REACT_APP_API_URL || DEFAULT_API_BASE;
+
+export const API_BASE = rawApiBase.replace(/\/+$/, '');
+const DEFAULT_TIMEOUT_MS = 60000;
+const HEALTH_CACHE_MS = 60000;
+let healthWarmPromise = null;
+let lastHealthyAt = 0;
+let authExpiryHandled = false;
 
 const api = axios.create({
   baseURL: API_BASE,
-  timeout: 10000,
+  timeout: DEFAULT_TIMEOUT_MS,
   headers: { 'Content-Type': 'application/json' },
 });
 
 const publicApi = axios.create({
   baseURL: API_BASE,
-  timeout: 10000,
+  timeout: DEFAULT_TIMEOUT_MS,
   headers: { 'Content-Type': 'application/json' },
 });
+
+export const clearStoredAuth = () => {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('authToken');
+  localStorage.removeItem('rememberedUserId');
+};
 
 const getStoredToken = () => {
   if (typeof window === 'undefined') return null;
@@ -31,16 +45,47 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('authToken');
-      localStorage.removeItem('rememberedUserId');
-      window.location.href = '/';
+    if (typeof window !== 'undefined' && error?.response?.status === 401) {
+      clearStoredAuth();
+      if (!authExpiryHandled) {
+        authExpiryHandled = true;
+        window.dispatchEvent(new CustomEvent('app-auth-expired', {
+          detail: {
+            message: error?.response?.data?.error || 'Your session expired. Please sign in again.',
+          },
+        }));
+        window.setTimeout(() => {
+          authExpiryHandled = false;
+        }, 1000);
+      }
     }
     return Promise.reject(error);
   }
 );
 
 export default api;
+
+export const pingApiHealth = () => publicApi.get('/api/health', { timeout: 45000 });
+export const ensureApiReady = async () => {
+  const now = Date.now();
+
+  if (lastHealthyAt && now - lastHealthyAt < HEALTH_CACHE_MS) {
+    return true;
+  }
+
+  if (!healthWarmPromise) {
+    healthWarmPromise = pingApiHealth()
+      .then(() => {
+        lastHealthyAt = Date.now();
+        return true;
+      })
+      .finally(() => {
+        healthWarmPromise = null;
+      });
+  }
+
+  return healthWarmPromise;
+};
 
 // Workspaces API
 export const getWorkspaces = () => api.get('/api/workspaces');
@@ -93,6 +138,17 @@ export const archiveTask = (taskId) => api.put(`/api/tasks/${taskId}/archive`, {
 export const unarchiveTask = (taskId) => api.put(`/api/tasks/${taskId}/archive`, { archive: false });
 export const addTaskCollaborator = (taskId, userId) => 
   api.post(`/api/tasks/${taskId}/collaborators`, { user_id: userId });
+export const getTaskDetails = (taskId) => api.get(`/api/tasks/${taskId}/details`);
+export const getTaskComments = (taskId) => api.get(`/api/tasks/${taskId}/comments`);
+export const addTaskComment = (taskId, comment) => api.post(`/api/tasks/${taskId}/comments`, { comment });
+export const updateTaskComment = (taskId, commentId, comment) =>
+  api.put(`/api/tasks/${taskId}/comments/${commentId}`, { comment });
+export const deleteTaskComment = (taskId, commentId) =>
+  api.delete(`/api/tasks/${taskId}/comments/${commentId}`);
+export const getTaskWorkLogs = (taskId) => api.get(`/api/tasks/${taskId}/worklogs`);
+export const addTaskWorkLog = (taskId, payload) => api.post(`/api/tasks/${taskId}/worklogs`, payload);
+export const getTaskReminders = (taskId) => api.get(`/api/tasks/${taskId}/reminders`);
+export const sendTaskReminder = (taskId, payload) => api.post(`/api/tasks/${taskId}/reminders`, payload);
 
 // Approvals API
 export const getApprovals = (filters = {}) => api.get('/api/approvals', { params: filters });
@@ -143,6 +199,7 @@ export const deleteNotification = (notificationId) =>
 // User Settings API
 export const getUserSettings = () => api.get('/api/user/settings');
 export const updateUserProfile = (profileData) => api.put('/api/user/profile', profileData);
+export const patchUserAppPreferences = (preferences) => api.patch('/api/user/preferences', preferences);
 export const changePassword = (currentPassword, newPassword) => 
   api.put('/api/user/password', { current_password: currentPassword, new_password: newPassword });
 
@@ -157,6 +214,106 @@ export const bulkUpdateTasks = (taskIds, updates) =>
 // Workspace Projects (for TasksPage project filter)
 export const getWorkspaceProjects = (workspaceId) => 
   api.get(`/api/projects/workspace/${workspaceId}`);
+export const getTaskBulkTemplate = (workspaceId) =>
+  api.get(`/api/task-bulk/workspace/${workspaceId}/template`, { responseType: 'blob' });
+export const previewTaskBulkUpload = (workspaceId, formData) =>
+  api.post(`/api/task-bulk/workspace/${workspaceId}/preview`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+export const importTaskBulkUpload = (workspaceId, rows) =>
+  api.post(`/api/task-bulk/workspace/${workspaceId}/import`, { rows });
+
+// Services API
+export const getServices = (workspaceId, params = {}) =>
+  api.get(`/api/services/workspace/${workspaceId}`, { params });
+export const createService = (workspaceId, payload) =>
+  api.post(`/api/services/workspace/${workspaceId}`, payload);
+export const getService = (serviceId) =>
+  api.get(`/api/services/${serviceId}`);
+export const updateService = (serviceId, payload) =>
+  api.put(`/api/services/${serviceId}`, payload);
+export const deleteService = (serviceId) =>
+  api.delete(`/api/services/${serviceId}`);
+
+// Support tickets API
+export const listSupportTickets = (workspaceId) =>
+  api.get(`/api/support/workspace/${workspaceId}/tickets`);
+export const createSupportTicket = (workspaceId, payload) =>
+  api.post(`/api/support/workspace/${workspaceId}/tickets`, payload);
+export const getSupportTicket = (ticketId) =>
+  api.get(`/api/support/${ticketId}`);
+export const updateSupportTicket = (ticketId, payload) =>
+  api.put(`/api/support/${ticketId}`, payload);
+export const deleteSupportTicket = (ticketId) =>
+  api.delete(`/api/support/${ticketId}`);
+export const getSupportTicketComments = (ticketId) =>
+  api.get(`/api/support/${ticketId}/comments`);
+export const addSupportTicketComment = (ticketId, comment) =>
+  api.post(`/api/support/${ticketId}/comments`, { comment });
+
+// Enterprise modules API
+export const getWorkspacePerformance = (workspaceId) =>
+  api.get(`/api/enterprise/workspace/${workspaceId}/performance`);
+export const getManagerHoursChart = (workspaceId) =>
+  api.get(`/api/enterprise/workspace/${workspaceId}/manager-hours`);
+export const getWorkspaceTimeLogs = (workspaceId) =>
+  api.get(`/api/enterprise/workspace/${workspaceId}/worklogs`);
+export const getManagerDashboard = (workspaceId, params = {}) =>
+  api.get(`/api/enterprise/workspace/${workspaceId}/manager-dashboard`, { params });
+export const getHelpQueries = (workspaceId) =>
+  api.get(`/api/enterprise/workspace/${workspaceId}/help-queries`);
+export const createHelpQuery = (workspaceId, payload) =>
+  api.post(`/api/enterprise/workspace/${workspaceId}/help-queries`, payload);
+export const getHelpQueryMessages = (queryId) =>
+  api.get(`/api/enterprise/help-queries/${queryId}/messages`);
+export const addHelpQueryMessage = (queryId, message) =>
+  api.post(`/api/enterprise/help-queries/${queryId}/messages`, { message });
+export const getCorporateEvents = (workspaceId) =>
+  api.get(`/api/enterprise/workspace/${workspaceId}/events`);
+export const createCorporateEvent = (workspaceId, payload) =>
+  api.post(`/api/enterprise/workspace/${workspaceId}/events`, payload);
+export const getTodaysBirthdays = (workspaceId) =>
+  api.get(`/api/enterprise/workspace/${workspaceId}/birthdays`);
+export const getCurrentRuleBook = (workspaceId) =>
+  api.get(`/api/enterprise/workspace/${workspaceId}/rule-book/current`);
+export const updateCurrentRuleBook = (workspaceId, payload) =>
+  api.put(`/api/enterprise/workspace/${workspaceId}/rule-book/current`, payload);
+export const acceptRuleBook = (ruleBookId, payload) =>
+  api.post(`/api/enterprise/rule-book/${ruleBookId}/accept`, payload);
+export const getRatings = (workspaceId) =>
+  api.get(`/api/enterprise/workspace/${workspaceId}/ratings`);
+export const createRating = (workspaceId, payload) =>
+  api.post(`/api/enterprise/workspace/${workspaceId}/ratings`, payload);
+export const getAiSettings = (workspaceId) =>
+  api.get(`/api/enterprise/workspace/${workspaceId}/ai-settings`);
+export const updateAiSettings = (workspaceId, payload) =>
+  api.put(`/api/enterprise/workspace/${workspaceId}/ai-settings`, payload);
+export const getNewsTopics = (workspaceId) =>
+  api.get(`/api/enterprise/workspace/${workspaceId}/news-topics`);
+export const createNewsTopic = (workspaceId, payload) =>
+  api.post(`/api/enterprise/workspace/${workspaceId}/news-topics`, payload);
+export const askWorkspaceAssistant = (workspaceId, payload) =>
+  api.post(`/api/ai-assistant/workspace/${workspaceId}/chat`, payload);
+export const getEmailRules = (workspaceId) =>
+  api.get(`/api/enterprise/workspace/${workspaceId}/email-rules`);
+export const updateEmailRule = (workspaceId, ruleKey, payload) =>
+  api.put(`/api/enterprise/workspace/${workspaceId}/email-rules/${ruleKey}`, payload);
+export const getLeaveRequests = (workspaceId) =>
+  api.get(`/api/enterprise/workspace/${workspaceId}/leave-requests`);
+export const createLeaveRequest = (workspaceId, payload) =>
+  api.post(`/api/enterprise/workspace/${workspaceId}/leave-requests`, payload);
+export const getLeaveApprovalStages = (leaveRequestId) =>
+  api.get(`/api/enterprise/leave-requests/${leaveRequestId}/stages`);
+export const updateLeaveApprovalStage = (leaveRequestId, stageId, payload) =>
+  api.post(`/api/enterprise/leave-requests/${leaveRequestId}/stages/${stageId}/action`, payload);
+export const listWorkspaceAnnouncements = (workspaceId) =>
+  api.get(`/api/announcements/workspace/${workspaceId}`);
+export const createWorkspaceAnnouncement = (workspaceId, payload) =>
+  api.post(`/api/announcements/workspace/${workspaceId}`, payload);
+export const getWorkspaceAnnouncement = (announcementId) =>
+  api.get(`/api/announcements/${announcementId}`);
+export const updateWorkspaceAnnouncement = (announcementId, payload) =>
+  api.put(`/api/announcements/${announcementId}`, payload);
 
 // Saved Views API
 export const getSavedViews = (workspaceId) => 
@@ -245,6 +402,8 @@ export const createDmThread = (workspaceId, userId) =>
   api.post(`/api/chat/${workspaceId}/threads/dm`, { user_id: userId });
 export const createGroupThread = (workspaceId, name, memberIds) =>
   api.post(`/api/chat/${workspaceId}/threads/group`, { name, member_ids: memberIds });
+export const createChannelThread = (workspaceId, payload) =>
+  api.post(`/api/chat/${workspaceId}/threads/channel`, payload);
 export const updateChatThread = (workspaceId, threadId, data) =>
   api.patch(`/api/chat/${workspaceId}/threads/${threadId}`, data);
 
@@ -259,6 +418,16 @@ export const getChatMessages = (workspaceId, threadId, params = {}) =>
   api.get(`/api/chat/${workspaceId}/threads/${threadId}/messages`, { params });
 export const sendChatMessage = (workspaceId, threadId, content, attachmentIds = []) =>
   api.post(`/api/chat/${workspaceId}/threads/${threadId}/messages`, { content, attachmentIds });
+export const sendChatReply = (workspaceId, threadId, content, parentMessageId, attachmentIds = []) =>
+  api.post(`/api/chat/${workspaceId}/threads/${threadId}/messages`, {
+    content,
+    attachmentIds,
+    parent_message_id: parentMessageId,
+  });
+export const pinChatMessage = (workspaceId, threadId, messageId) =>
+  api.put(`/api/chat/${workspaceId}/threads/${threadId}/messages/${messageId}/pin`);
+export const unpinChatMessage = (workspaceId, threadId, messageId) =>
+  api.delete(`/api/chat/${workspaceId}/threads/${threadId}/messages/${messageId}/pin`);
 
 // Read Tracking
 export const markThreadRead = (workspaceId, threadId, messageId = null) =>

@@ -35,6 +35,9 @@ const searchRouter = require('./routes/search');
 const servicesRouter = require('./routes/services');
 const enterpriseRouter = require('./routes/enterprise');
 const taskBulkUploadRouter = require('./routes/taskBulkUpload');
+const supportRouter = require('./routes/support');
+const aiAssistantRouter = require('./routes/aiAssistant');
+const announcementsRouter = require('./routes/announcements');
 
 // Import WebSocket
 const { initializeChatWebSocket, chatBroadcast } = require('./chatWebSocket');
@@ -568,6 +571,9 @@ app.use('/api/search', authenticateToken, searchRouter);
 app.use('/api/services', authenticateToken, servicesRouter);
 app.use('/api/enterprise', authenticateToken, enterpriseRouter);
 app.use('/api/task-bulk', authenticateToken, taskBulkUploadRouter);
+app.use('/api/support', authenticateToken, supportRouter);
+app.use('/api/ai-assistant', authenticateToken, aiAssistantRouter);
+app.use('/api/announcements', authenticateToken, announcementsRouter);
 app.use('/public/share', publicShareRouter);
 
 // Serve test page

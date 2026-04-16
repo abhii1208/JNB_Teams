@@ -21,6 +21,7 @@ import {
   Box,
   InputAdornment,
   Chip,
+  MenuItem,
   CircularProgress,
   Alert,
 } from '@mui/material';
@@ -377,6 +378,63 @@ export function CreateGroupDialog({ open, onClose, onCreateGroup, workspaceId, c
   );
 }
 
+export function CreateChannelDialog({ open, onClose, onCreateChannel }) {
+  const [form, setForm] = useState({ name: '', description: '', intro_text: '', visibility: 'workspace' });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleClose = () => {
+    setForm({ name: '', description: '', intro_text: '', visibility: 'workspace' });
+    setError(null);
+    onClose();
+  };
+
+  const handleCreate = async () => {
+    if (!form.name.trim()) {
+      setError('Channel name is required');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      await onCreateChannel({
+        name: form.name.trim(),
+        description: form.description.trim(),
+        intro_text: form.intro_text.trim(),
+        visibility: form.visibility,
+      });
+      handleClose();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to create channel');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+      <DialogTitle>New Channel</DialogTitle>
+      <DialogContent dividers>
+        {error ? <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert> : null}
+        <TextField fullWidth label="Channel Name" value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} sx={{ mb: 2 }} />
+        <TextField fullWidth label="Description" value={form.description} onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))} multiline minRows={2} sx={{ mb: 2 }} />
+        <TextField fullWidth label="Channel Intro" value={form.intro_text} onChange={(e) => setForm((prev) => ({ ...prev, intro_text: e.target.value }))} multiline minRows={3} sx={{ mb: 2 }} />
+        <TextField select fullWidth label="Visibility" value={form.visibility} onChange={(e) => setForm((prev) => ({ ...prev, visibility: e.target.value }))}>
+          <MenuItem value="workspace">Workspace Members</MenuItem>
+          <MenuItem value="management">Management Only</MenuItem>
+        </TextField>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={handleClose} disabled={loading}>Cancel</Button>
+        <Button variant="contained" onClick={handleCreate} disabled={loading || !form.name.trim()}>
+          {loading ? <CircularProgress size={20} /> : 'Create Channel'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 /**
  * Manage Members Dialog - Add/remove members from a group
  */
@@ -655,6 +713,7 @@ export function RenameGroupDialog({ open, onClose, thread, onRename }) {
 const ChatDialogs = {
   CreateDmDialog,
   CreateGroupDialog,
+  CreateChannelDialog,
   ManageMembersDialog,
   RenameGroupDialog,
 };

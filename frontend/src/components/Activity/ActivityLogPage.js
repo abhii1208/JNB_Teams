@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
+  Alert,
   Box,
   Card,
   Chip,
@@ -40,6 +41,14 @@ const actionColors = {
   'Removed': '#991b1b',
 };
 
+const fallbackTypeMeta = {
+  bg: '#e5e7eb',
+  text: '#374151',
+  icon: <CheckCircleIcon fontSize="small" />,
+};
+
+const fallbackActionColor = '#475569';
+
 function ActivityLogPage({ workspace }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('All');
@@ -47,6 +56,7 @@ function ActivityLogPage({ workspace }) {
   const [page, setPage] = useState(1);
   const [activities, setActivities] = useState([]);
   const [totalPages, setTotalPages] = useState(1);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     const fetchActivities = async () => {
@@ -61,8 +71,16 @@ function ActivityLogPage({ workspace }) {
         const response = await getActivity(filters);
         setActivities(response.data.activities || []);
         setTotalPages(response.data.pages || 1);
+        setError('');
       } catch (error) {
         console.error('Failed to fetch activities:', error);
+        setActivities([]);
+        setTotalPages(1);
+        setError(
+          error?.response?.status === 401
+            ? 'Your session expired. Please sign in again.'
+            : (error?.response?.data?.error || 'Failed to load activity log')
+        );
       }
     };
     
@@ -114,6 +132,12 @@ function ActivityLogPage({ workspace }) {
           Track all activities across projects and tasks
         </Typography>
       </Box>
+
+      {error ? (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {error}
+        </Alert>
+      ) : null}
 
       {/* Filters */}
       <Card elevation={0} sx={{ p: 3, mb: 3, border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 2 }}>
@@ -195,38 +219,48 @@ function ActivityLogPage({ workspace }) {
                 </TableRow>
               ) : (
                 paginatedActivities.map((activity) => (
-                  <TableRow key={activity.id} hover>
+                  <TableRow key={activity.id || `${activity.type || 'activity'}-${activity.created_at || Math.random()}`} hover>
                     <TableCell>
+                      {(() => {
+                        const typeMeta = typeColors[activity.type] || fallbackTypeMeta;
+                        return (
                       <Chip
-                        icon={typeColors[activity.type].icon}
-                        label={activity.type}
+                        icon={typeMeta.icon}
+                        label={activity.type || 'Activity'}
                         size="small"
                         sx={{
-                          backgroundColor: typeColors[activity.type].bg,
-                          color: typeColors[activity.type].text,
+                          backgroundColor: typeMeta.bg,
+                          color: typeMeta.text,
                           fontWeight: 500,
                         }}
                       />
+                        );
+                      })()}
                     </TableCell>
                     <TableCell>
+                      {(() => {
+                        const actionColor = actionColors[activity.action] || fallbackActionColor;
+                        return (
                       <Chip
-                        label={activity.action}
+                        label={activity.action || 'Updated'}
                         size="small"
                         sx={{
-                          backgroundColor: `${actionColors[activity.action]}15`,
-                          color: actionColors[activity.action],
+                          backgroundColor: `${actionColor}15`,
+                          color: actionColor,
                           fontWeight: 500,
                         }}
                       />
+                        );
+                      })()}
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        {activity.item_name}
+                        {activity.item_name || activity.entity_name || 'Untitled item'}
                       </Typography>
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" color="text.secondary">
-                        {activity.project_id}
+                        {activity.project_name || activity.project_id || '-'}
                       </Typography>
                     </TableCell>
                     <TableCell>
@@ -241,7 +275,7 @@ function ActivityLogPage({ workspace }) {
                         >
                           {activity.user_name?.charAt(0) || 'U'}
                         </Avatar>
-                        <Typography variant="body2">{activity.user_name}</Typography>
+                        <Typography variant="body2">{activity.user_name || 'Unknown user'}</Typography>
                       </Box>
                     </TableCell>
                     <TableCell>
@@ -251,7 +285,7 @@ function ActivityLogPage({ workspace }) {
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" color="text.secondary">
-                        {activity.details}
+                        {activity.details || '-'}
                       </Typography>
                     </TableCell>
                   </TableRow>

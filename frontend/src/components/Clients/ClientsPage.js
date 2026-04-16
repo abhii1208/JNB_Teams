@@ -26,7 +26,9 @@ import {
   TableRow,
   TextField,
   Typography,
+  useMediaQuery,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
@@ -53,6 +55,8 @@ function parseTagsInput(value) {
 }
 
 function ClientsPage({ workspace }) {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -264,13 +268,22 @@ function ClientsPage({ workspace }) {
   };
 
   return (
-    <Box sx={{ p: 4 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
+    <Box sx={{ p: { xs: 2, sm: 3 }, minWidth: 0 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: { xs: 'stretch', sm: 'center' },
+          flexDirection: { xs: 'column', sm: 'row' },
+          gap: 2,
+          mb: 3,
+        }}
+      >
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
+          <Typography variant="h5" sx={{ fontWeight: 700, mb: 0.75 }}>
             Clients
           </Typography>
-          <Typography variant="body1" color="text.secondary">
+          <Typography variant="body2" color="text.secondary">
             Manage client master data across projects
           </Typography>
         </Box>
@@ -279,14 +292,36 @@ function ClientsPage({ workspace }) {
             variant="contained"
             startIcon={<AddIcon />}
             onClick={() => handleOpenForm()}
-            sx={{ px: 3, py: 1.5, borderRadius: 2, textTransform: 'none', fontWeight: 600 }}
+            fullWidth={isMobile}
+            sx={{
+              px: 3,
+              py: 1.25,
+              borderRadius: 2,
+              textTransform: 'none',
+              fontWeight: 600,
+              bgcolor: '#0f766e',
+              '&:hover': { bgcolor: '#115e59' },
+            }}
           >
             Add Client
           </Button>
         )}
       </Box>
 
-      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap', mb: 3 }}>
+      <Paper
+        elevation={0}
+        sx={{
+          p: 1.5,
+          display: 'flex',
+          gap: 1.5,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          mb: 2,
+          border: '1px solid rgba(148, 163, 184, 0.2)',
+          borderRadius: 3,
+          minWidth: 0,
+        }}
+      >
         <TextField
           fullWidth
           placeholder="Search clients..."
@@ -300,7 +335,8 @@ function ClientsPage({ workspace }) {
             ),
           }}
           sx={{
-            maxWidth: 420,
+            width: { xs: '100%', sm: 360 },
+            flexGrow: { xs: 1, sm: 0 },
             '& .MuiOutlinedInput-root': {
               borderRadius: 2,
               backgroundColor: '#fff',
@@ -312,14 +348,14 @@ function ClientsPage({ workspace }) {
           startIcon={<FileDownloadIcon />}
           onClick={handleExportClients}
           disabled={loading || filteredClients.length === 0}
-          sx={{ textTransform: 'none', borderRadius: 2, height: 40 }}
+          sx={{ textTransform: 'none', borderRadius: 2, height: 40, ml: { sm: 'auto' }, width: { xs: '100%', sm: 'auto' } }}
         >
           Export
         </Button>
-      </Box>
+      </Paper>
 
       <Paper elevation={0} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 3 }}>
-        <Box sx={{ p: 3, borderBottom: '1px solid rgba(148, 163, 184, 0.2)' }}>
+        <Box sx={{ p: { xs: 2, sm: 3 }, borderBottom: '1px solid rgba(148, 163, 184, 0.2)' }}>
           <Typography variant="h6">Client List ({filteredClients.length})</Typography>
         </Box>
 
@@ -328,7 +364,7 @@ function ClientsPage({ workspace }) {
             <CircularProgress />
           </Box>
         ) : (
-          <TableContainer>
+          <TableContainer sx={{ overflowX: 'auto' }}>
             <Table>
               <TableHead>
                 <TableRow>
@@ -415,7 +451,7 @@ function ClientsPage({ workspace }) {
         <DialogTitle sx={{ fontWeight: 600 }}>
           {editingClient ? 'Edit Client' : 'Add New Client'}
         </DialogTitle>
-        <DialogContent sx={{ pt: 2 }}>
+        <DialogContent sx={{ pt: 2, px: { xs: 2, sm: 3 } }}>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
             <Box>
               <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'text.secondary', mb: 1 }}>
@@ -565,7 +601,7 @@ function ClientsPage({ workspace }) {
             )}
           </Box>
         </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
+        <DialogActions sx={{ p: { xs: 2, sm: 3 }, flexWrap: 'wrap', gap: 1 }}>
           <Button onClick={handleCloseForm} sx={{ textTransform: 'none' }}>
             Cancel
           </Button>
@@ -582,7 +618,7 @@ function ClientsPage({ workspace }) {
 
       <Dialog open={detailOpen} onClose={() => setDetailOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle sx={{ fontWeight: 600 }}>Client Details</DialogTitle>
-        <DialogContent>
+        <DialogContent sx={{ px: { xs: 2, sm: 3 } }}>
           {detailLoading ? (
             <Box sx={{ py: 6, display: 'flex', justifyContent: 'center' }}>
               <CircularProgress />
@@ -724,7 +760,7 @@ function ClientsPage({ workspace }) {
             <Typography color="text.secondary">No details available</Typography>
           )}
         </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
+        <DialogActions sx={{ p: { xs: 2, sm: 3 }, flexWrap: 'wrap', gap: 1 }}>
           <Button onClick={() => setDetailOpen(false)} sx={{ textTransform: 'none' }}>
             Close
           </Button>

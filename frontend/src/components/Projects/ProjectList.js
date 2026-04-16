@@ -35,9 +35,6 @@ import {
   DialogActions,
   List,
   ListItem,
-  ListItemAvatar,
-  ListItemText,
-  ListItemSecondaryAction,
   Divider,
   Alert,
   Snackbar,
@@ -47,7 +44,9 @@ import {
   FormControlLabel,
   Badge,
   Collapse,
+  useMediaQuery,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import FolderIcon from '@mui/icons-material/Folder';
@@ -86,12 +85,8 @@ import EditIcon from '@mui/icons-material/Edit';
 import GroupAddIcon from '@mui/icons-material/GroupAdd';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
-import DeleteIcon from '@mui/icons-material/Delete';
 import CheckIcon from '@mui/icons-material/Check';
 import CloseIcon from '@mui/icons-material/Close';
-import SaveIcon from '@mui/icons-material/Save';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ProjectForm from './ProjectForm';
 import { 
   getProjects, 
@@ -104,12 +99,12 @@ import {
   getWorkspaceMembers,
   getProjectMembers,
   addProjectMember,
-  updateProjectMember,
-  removeProjectMember,
   transferProjectOwnership,
 } from '../../apiClient';
 
 function ProjectList({ onSelectProject, workspace, user }) {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -125,7 +120,6 @@ function ProjectList({ onSelectProject, workspace, user }) {
 
   // === Bulk Edit State ===
   const [selectedProjects, setSelectedProjects] = useState(new Set());
-  const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [bulkAddMembersOpen, setBulkAddMembersOpen] = useState(false);
   const [transferOwnershipOpen, setTransferOwnershipOpen] = useState(false);
   const [workspaceMembers, setWorkspaceMembers] = useState([]);
@@ -616,37 +610,60 @@ function ProjectList({ onSelectProject, workspace, user }) {
   }
 
   return (
-    <Box sx={{ p: 4 }}>
+    <Box sx={{ p: { xs: 1, sm: 3, lg: 4 } }}>
       {/* Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
-            Projects
-          </Typography>
-          <Typography variant="body1" color="text.secondary">
-            Manage your projects and track progress
-          </Typography>
+      <Paper
+        elevation={0}
+        sx={{
+          p: { xs: 2.25, sm: 3 },
+          mb: 2,
+          borderRadius: { xs: 4, sm: 3 },
+          border: '1px solid rgba(148, 163, 184, 0.14)',
+          background: 'linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(240,249,255,0.95) 100%)',
+        }}
+      >
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: { xs: 'stretch', sm: 'center' }, gap: 2, flexDirection: { xs: 'column', sm: 'row' } }}>
+          <Box>
+            <Typography sx={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.12em', color: '#0f766e', mb: 0.8 }}>
+              PROJECT HUB
+            </Typography>
+            <Typography variant="h4" sx={{ fontWeight: 700, mb: 0.75, fontSize: { xs: '1.65rem', sm: '2.125rem' } }}>
+              Projects
+            </Typography>
+            <Typography variant="body1" color="text.secondary">
+              Manage your pipeline, team ownership, and progress in one place.
+            </Typography>
+          </Box>
+          {['Owner', 'Admin', 'ProjectAdmin'].includes(workspace?.role) && (
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => handleOpenProjectForm()}
+              sx={{
+                px: 3,
+                py: 1.5,
+                borderRadius: 3,
+                fontWeight: 700,
+              }}
+              fullWidth={isMobile}
+            >
+              Create Project
+            </Button>
+          )}
         </Box>
-        {['Owner', 'Admin', 'ProjectAdmin'].includes(workspace?.role) && (
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => handleOpenProjectForm()}
-            sx={{
-              px: 3,
-              py: 1.5,
-              borderRadius: 2,
-              textTransform: 'none',
-              fontWeight: 600,
-            }}
-          >
-            Create Project
-          </Button>
-        )}
-      </Box>
+      </Paper>
 
       {/* Search & Filter */}
-      <Box sx={{ display: 'flex', gap: 2, mb: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+      <Paper
+        elevation={0}
+        sx={{
+          p: { xs: 1.5, sm: 2 },
+          mb: 3,
+          borderRadius: 3,
+          border: '1px solid rgba(148, 163, 184, 0.14)',
+        }}
+      >
+      <Box sx={{ display: 'flex', gap: 1.25, alignItems: 'center', flexWrap: 'wrap' }}>
         <TextField
           fullWidth
           placeholder="Search projects..."
@@ -660,20 +677,21 @@ function ProjectList({ onSelectProject, workspace, user }) {
             ),
           }}
           sx={{
-            maxWidth: 400,
+            width: { xs: '100%', sm: 'auto' },
+            maxWidth: { xs: '100%', sm: 400 },
             '& .MuiOutlinedInput-root': {
-              borderRadius: 2,
-            backgroundColor: '#fff',
-          },
-        }}
-      />
-        <FormControl sx={{ minWidth: 200 }}>
+              borderRadius: 3,
+              backgroundColor: '#fff',
+            },
+          }}
+        />
+        <FormControl sx={{ minWidth: { xs: '100%', sm: 200 } }}>
           <InputLabel>Client</InputLabel>
           <Select
             label="Client"
             value={clientFilter}
             onChange={(e) => setClientFilter(e.target.value)}
-            sx={{ borderRadius: 2, backgroundColor: '#fff' }}
+            sx={{ borderRadius: 3, backgroundColor: '#fff' }}
           >
             <MenuItem value="all">All Clients</MenuItem>
             {clientOptions.map((client) => (
@@ -687,7 +705,7 @@ function ProjectList({ onSelectProject, workspace, user }) {
           variant="outlined"
           startIcon={<FilterListIcon />}
           onClick={(e) => setFilterAnchorEl(e.currentTarget)}
-          sx={{ borderRadius: 2, textTransform: 'none' }}
+          sx={{ borderRadius: 3 }}
         >
           Filter
         </Button>
@@ -695,7 +713,7 @@ function ProjectList({ onSelectProject, workspace, user }) {
           variant={showArchived ? 'contained' : 'outlined'}
           startIcon={showArchived ? <UnarchiveIcon /> : <ArchiveIcon />}
           onClick={() => setShowArchived(!showArchived)}
-          sx={{ borderRadius: 2, textTransform: 'none' }}
+          sx={{ borderRadius: 3 }}
         >
           {showArchived ? 'Show Active' : 'Show Archived'}
         </Button>
@@ -706,7 +724,7 @@ function ProjectList({ onSelectProject, workspace, user }) {
           exclusive
           onChange={(e, newMode) => newMode && setViewMode(newMode)}
           size="small"
-          sx={{ ml: 'auto' }}
+          sx={{ ml: { xs: 0, md: 'auto' } }}
         >
           <ToggleButton value="card" sx={{ px: 1.5 }}>
             <Tooltip title="Card View">
@@ -721,15 +739,16 @@ function ProjectList({ onSelectProject, workspace, user }) {
         </ToggleButtonGroup>
 
         {/* Export Button */}
-        <Button
-          variant="outlined"
-          startIcon={<FileDownloadIcon />}
-          onClick={handleExport}
-          sx={{ borderRadius: 2, textTransform: 'none' }}
-        >
-          Export
-        </Button>
+          <Button
+            variant="outlined"
+            startIcon={<FileDownloadIcon />}
+            onClick={handleExport}
+            sx={{ borderRadius: 3 }}
+          >
+            Export
+          </Button>
       </Box>
+      </Paper>
 
       {/* Projects Table View */}
       {viewMode === 'table' && (
@@ -811,8 +830,8 @@ function ProjectList({ onSelectProject, workspace, user }) {
             </Paper>
           </Collapse>
 
-          <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 3, mb: 3 }}>
-            <Table>
+          <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: 3, mb: 3, overflowX: 'auto' }}>
+            <Table sx={{ minWidth: 980 }}>
               <TableHead>
                 <TableRow sx={{ bgcolor: '#f8fafc' }}>
                   <TableCell padding="checkbox" sx={{ width: 48 }}>
@@ -842,7 +861,6 @@ function ProjectList({ onSelectProject, workspace, user }) {
                   const progress = project.taskCount > 0 ? Math.round((project.completedTasks / project.taskCount) * 100) : 0;
                   const primaryClient = project.primary_client || (project.clients || [])[0];
                   const isEditable = canEditProject(project);
-                  const isOwner = isProjectOwner(project);
                   const isInlineEditing = inlineEditingProject === project.id;
                   const isSelected = selectedProjects.has(project.id);
                   
@@ -1055,7 +1073,7 @@ function ProjectList({ onSelectProject, workspace, user }) {
       <Box
         sx={{
           display: 'grid',
-          gap: 3,
+          gap: { xs: 1.5, sm: 3 },
           gridTemplateColumns: {
             xs: '1fr',
             sm: 'repeat(2, minmax(0, 1fr))',
@@ -1073,7 +1091,7 @@ function ProjectList({ onSelectProject, workspace, user }) {
               border: '1px solid rgba(148, 163, 184, 0.2)',
               borderRadius: 3,
               cursor: 'pointer',
-              height: 360,
+              height: { xs: 'auto', sm: 360 },
               minWidth: 0,
               transition: 'all 0.2s ease',
               '&:hover': {
@@ -1083,7 +1101,7 @@ function ProjectList({ onSelectProject, workspace, user }) {
               },
             }}
           >
-              <CardContent sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
+              <CardContent sx={{ p: { xs: 1.75, sm: 2 }, height: '100%', display: 'flex', flexDirection: 'column' }}>
                 {/* Header */}
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
                   <Box

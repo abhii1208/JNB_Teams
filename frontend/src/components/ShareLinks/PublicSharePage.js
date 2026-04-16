@@ -68,7 +68,6 @@ import {
 import { getPublicShareMeta, getPublicShareTasks, unlockPublicShare } from '../../apiClient';
 import { SHARE_FIELD_LABELS } from './shareLinkFields';
 import { 
-  formatShortDateIST, 
   isTodayIST, 
   isTomorrowIST, 
   isPastIST, 

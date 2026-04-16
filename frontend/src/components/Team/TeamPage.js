@@ -118,14 +118,6 @@ function TeamPage({ user, workspace }) {
     return true;
   };
 
-  // Helper function to check if role change is allowed
-  const canChangeToRole = (member, targetRole) => {
-    if (!member || !canManageMember(member)) return false;
-    // Only owner can assign Owner role
-    if (targetRole === 'Owner' && !isOwner) return false;
-    return true;
-  };
-
   const handleMenuOpen = (event, member) => {
     event.stopPropagation();
     setAnchorEl(event.currentTarget);

@@ -66,7 +66,7 @@ import TaskForm from '../Tasks/TaskForm';
 import CustomColumnSettings from './CustomColumnSettings';
 import ProjectSettings from './ProjectSettings';
 import { differenceInCalendarDays, isValid } from 'date-fns';
-import { getTasks, createTask, updateTask, deleteTask, updateProject, getProjectMembers, getWorkspaceMembers, getWorkspaceProjects, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator, getProjectColumnSettings, transferProjectOwnership, getProjectApprovers, addProjectApprover, removeProjectApprover, getEscalationSettings, updateEscalationSettings } from '../../apiClient';
+import { getTasks, createTask, updateTask, deleteTask, updateProject, getProjectMembers, getWorkspaceMembers, getWorkspaceProjects, addProjectMember, updateProjectMember, removeProjectMember, addTaskCollaborator, getProjectColumnSettings, transferProjectOwnership } from '../../apiClient';
 import { formatShortDate } from '../../utils/date';
 import { formatDateIST } from '../../utils/dateUtils';
 import { downloadCsv, sanitizeFilename } from '../../utils/csv';
@@ -262,20 +262,6 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   const [transferTargetMember, setTransferTargetMember] = useState('');
   const [transferring, setTransferring] = useState(false);
   
-  // Multiple Approvers state
-  const [projectApprovers, setProjectApprovers] = useState([]);
-  const [newApproverMember, setNewApproverMember] = useState('');
-  const [loadingApprovers, setLoadingApprovers] = useState(false);
-  
-  // Escalation Settings state
-  const [escalationSettings, setEscalationSettings] = useState({
-    escalation_enabled: true,
-    escalation_hours: 24,
-    escalation_levels: 2,
-    notify_requester_on_escalation: true,
-  });
-  const [savingEscalation, setSavingEscalation] = useState(false);
-
   const normalizeProjectSettings = (source) => {
     if (!source) return null;
     const onlyOwnerApproves = source.only_owner_approves ?? false;
@@ -415,45 +401,6 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
     };
   }, [workspace?.id]);
 
-  // Fetch multiple approvers for the project
-  useEffect(() => {
-    const fetchApprovers = async () => {
-      if (!project?.id) return;
-      setLoadingApprovers(true);
-      try {
-        const res = await getProjectApprovers(project.id);
-        setProjectApprovers(res.data || []);
-      } catch (err) {
-        console.error('Failed to fetch project approvers:', err);
-        setProjectApprovers([]);
-      } finally {
-        setLoadingApprovers(false);
-      }
-    };
-
-    fetchApprovers();
-  }, [project?.id]);
-
-  // Fetch escalation settings for the project
-  useEffect(() => {
-    const fetchEscalation = async () => {
-      if (!project?.id) return;
-      try {
-        const res = await getEscalationSettings(project.id);
-        setEscalationSettings(res.data || {
-          escalation_enabled: true,
-          escalation_hours: 24,
-          escalation_levels: 2,
-          notify_requester_on_escalation: true,
-        });
-      } catch (err) {
-        console.error('Failed to fetch escalation settings:', err);
-      }
-    };
-
-    fetchEscalation();
-  }, [project?.id]);
-
   const availableWorkspaceMembers = workspaceMembers.filter((wm) => !members.some((m) => m.id === wm.id));
 
   const showToast = (severity, message) => {
@@ -521,59 +468,6 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
       showToast('error', 'Failed to transfer ownership. Please try again.');
     } finally {
       setTransferring(false);
-    }
-  };
-
-  // Handle adding a new approver
-  const handleAddApprover = async () => {
-    if (!newApproverMember || !project?.id) return;
-    
-    try {
-      const userId = parseInt(newApproverMember, 10);
-      await addProjectApprover(project.id, userId, projectApprovers.length + 1);
-      
-      // Refresh approvers list
-      const res = await getProjectApprovers(project.id);
-      setProjectApprovers(res.data || []);
-      setNewApproverMember('');
-      showToast('success', 'Approver added successfully');
-    } catch (err) {
-      console.error('Failed to add approver:', err);
-      showToast('error', 'Failed to add approver. Please try again.');
-    }
-  };
-
-  // Handle removing an approver
-  const handleRemoveApprover = async (userId) => {
-    if (!project?.id) return;
-    
-    try {
-      await removeProjectApprover(project.id, userId);
-      
-      // Refresh approvers list
-      const res = await getProjectApprovers(project.id);
-      setProjectApprovers(res.data || []);
-      showToast('success', 'Approver removed successfully');
-    } catch (err) {
-      console.error('Failed to remove approver:', err);
-      showToast('error', 'Failed to remove approver. Please try again.');
-    }
-  };
-
-  // Handle saving escalation settings
-  const handleSaveEscalationSettings = async () => {
-    if (!project?.id || savingEscalation) return;
-    
-    setSavingEscalation(true);
-    try {
-      const res = await updateEscalationSettings(project.id, escalationSettings);
-      setEscalationSettings(res.data || escalationSettings);
-      showToast('success', 'Escalation settings saved successfully');
-    } catch (err) {
-      console.error('Failed to save escalation settings:', err);
-      showToast('error', 'Failed to save escalation settings. Please try again.');
-    } finally {
-      setSavingEscalation(false);
     }
   };
 
@@ -934,6 +828,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           name: taskData.name,
           description: taskData.description,
           assignee_id: taskData.assignee?.id || taskData.assignee_id || null,
+          service_id: taskData.service_id ?? taskData.serviceId ?? null,
           client_id: taskData.clientId ?? taskData.client_id ?? null,
           stage: taskData.stage,
           status: taskData.status,
@@ -980,6 +875,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           description: taskData.description,
           project_id: project.id,
           assignee_id: taskData.assignee?.id || null,
+          service_id: taskData.service_id ?? taskData.serviceId ?? null,
           client_id: taskData.clientId ?? taskData.client_id ?? null,
           stage: taskData.stage,
           status: taskData.status,
@@ -1188,14 +1084,14 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
   );
 
   return (
-    <Box sx={{ p: 4, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <Box sx={{ p: { xs: 2, sm: 3, lg: 4 }, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
       {/* Header */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 4 }}>
+      <Box sx={{ display: 'flex', alignItems: { xs: 'stretch', sm: 'center' }, gap: 2, mb: 4, flexWrap: 'wrap' }}>
         <IconButton onClick={onBack} sx={{ border: '1px solid rgba(148, 163, 184, 0.3)' }}>
           <ArrowBackIcon />
         </IconButton>
-        <Box sx={{ flex: 1 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 0.5 }}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 0.5, flexWrap: 'wrap' }}>
             <Typography variant="h4" sx={{ fontWeight: 700 }}>
               {project.name}
             </Typography>
@@ -1298,8 +1194,10 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
           <Tabs
             value={activeTab}
             onChange={(e, v) => setActiveTab(v)}
+            variant="scrollable"
+            scrollButtons="auto"
           sx={{
-            px: 3,
+            px: { xs: 1, sm: 3 },
             borderBottom: '1px solid rgba(148, 163, 184, 0.2)',
             '& .MuiTab-root': {
               textTransform: 'none',
@@ -1313,7 +1211,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
             ))}
         </Tabs>
 
-        <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <Box sx={{ p: { xs: 2, sm: 3 }, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden', minWidth: 0 }}>
             {/* Overview Tab */}
             {activeKey === 'overview' && (
             <Fade in timeout={300}>
@@ -1602,7 +1500,8 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                         ),
                       }}
                       sx={{ 
-                        minWidth: 250,
+                        width: { xs: '100%', sm: 'auto' },
+                        minWidth: { xs: '100%', sm: 250 },
                         '& .MuiOutlinedInput-root': {
                           borderRadius: 2,
                         }
@@ -3297,7 +3196,6 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
                   const initials = (member.first_name ? member.first_name.charAt(0) : '') + (member.last_name ? member.last_name.charAt(0) : '');
                   const role = member.role || 'Member';
                   const canManageMember = canManageThisMember(member);
-                  const isSelf = member.id === user?.id;
                   return (
                   <ListItem
                     key={member.id}
@@ -3572,6 +3470,7 @@ function ProjectDetail({ project, onBack, onSelectTask, workspace, user }) {
         currentUserId={user?.id}
         projectRole={project?.role}
         workspaceProjects={workspaceProjects}
+        workspaceId={workspace?.id}
         enableMultiProjectLinks={projectSettings.enableMultiProjectLinks}
       />
       

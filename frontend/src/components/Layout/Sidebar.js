@@ -12,8 +12,9 @@ import {
   ListItemText,
   Tooltip,
   Typography,
+  useMediaQuery,
 } from '@mui/material';
-import { alpha } from '@mui/material/styles';
+import { alpha, useTheme } from '@mui/material/styles';
 
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import FolderIcon from '@mui/icons-material/Folder';
@@ -25,6 +26,9 @@ import RepeatIcon from '@mui/icons-material/Repeat';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import BusinessIcon from '@mui/icons-material/Business';
+import HandymanIcon from '@mui/icons-material/Handyman';
+import InsightsIcon from '@mui/icons-material/Insights';
+import SupportAgentIcon from '@mui/icons-material/SupportAgent';
 import ChatIcon from '@mui/icons-material/Chat';
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
@@ -32,7 +36,7 @@ import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import PushPinIcon from '@mui/icons-material/PushPin';
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 
-import { getApprovalCount, getChatUnreadCount } from '../../apiClient';
+import { getApprovalCount, getChatUnreadCount, patchUserAppPreferences } from '../../apiClient';
 
 /**
  * Sidebar variants:
@@ -56,8 +60,11 @@ function Sidebar({
   // optional props
   sidebarVariant = 'collapsible', // "fixed" | "collapsible" | "expandable"
   defaultCollapsed = false,
-  persistKey = 'teamflow.sidebar.state',
+  mobileOpen = false,
+  onMobileClose,
 }) {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [pendingCount, setPendingCount] = useState(0);
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
 
@@ -76,27 +83,26 @@ function Sidebar({
   const canViewAdmin = !isPersonalWorkspace && (workspace?.role === 'Owner' || workspace?.role === 'Admin');
   const canViewChat = !isPersonalWorkspace;
 
-  // persist collapsed state ONLY for "collapsible"
   useEffect(() => {
     if (sidebarVariant !== 'collapsible') return;
-    try {
-      const raw = localStorage.getItem(persistKey);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (typeof parsed?.collapsed === 'boolean') setCollapsed(parsed.collapsed);
-    } catch {
-      // ignore
+    if (typeof user?.app_sidebar_collapsed === 'boolean') {
+      setCollapsed(user.app_sidebar_collapsed);
     }
-  }, [persistKey, sidebarVariant]);
+  }, [sidebarVariant, user?.app_sidebar_collapsed]);
 
   useEffect(() => {
     if (sidebarVariant !== 'collapsible') return;
-    try {
-      localStorage.setItem(persistKey, JSON.stringify({ collapsed }));
-    } catch {
-      // ignore
-    }
-  }, [collapsed, persistKey, sidebarVariant]);
+    if (!user?.id) return;
+    if (Boolean(user?.app_sidebar_collapsed) === collapsed) return;
+
+    const timeoutId = window.setTimeout(() => {
+      patchUserAppPreferences({ app_sidebar_collapsed: collapsed }).catch((error) => {
+        console.error('Failed to persist sidebar state:', error);
+      });
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [collapsed, sidebarVariant, user?.app_sidebar_collapsed, user?.id]);
 
   const isCollapsed = useMemo(() => {
     if (sidebarVariant === 'fixed') return false;
@@ -106,6 +112,7 @@ function Sidebar({
   }, [sidebarVariant, collapsed, pinned, hovered]);
 
   const drawerWidth = isCollapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH;
+  const effectiveDrawerWidth = isMobile ? 'min(78vw, 280px)' : drawerWidth;
 
   const displayName =
     user?.first_name && user?.last_name
@@ -165,6 +172,15 @@ function Sidebar({
       { id: 'projects', label: 'Projects', icon: <FolderIcon />, bg: '#EDE9FE', fg: '#6D28D9' },
       ...(canViewClients
         ? [{ id: 'clients', label: 'Clients', icon: <BusinessIcon />, bg: '#DCFCE7', fg: '#15803D' }]
+        : []),
+      ...(!isPersonalWorkspace
+        ? [{ id: 'services', label: 'Services', icon: <HandymanIcon />, bg: '#EDE9FE', fg: '#6d28d9' }]
+        : []),
+      ...(!isPersonalWorkspace
+        ? [{ id: 'operations', label: 'Operations', icon: <InsightsIcon />, bg: '#DBEAFE', fg: '#1d4ed8' }]
+        : []),
+      ...(!isPersonalWorkspace
+        ? [{ id: 'support', label: 'Support', icon: <SupportAgentIcon />, bg: '#FCE7F3', fg: '#be185d' }]
         : []),
       { id: 'tasks', label: 'Tasks', icon: <AssignmentIcon />, bg: '#FEF3C7', fg: '#B45309' },
       { id: 'recurring', label: 'Recurring', icon: <RepeatIcon />, bg: '#E0E7FF', fg: '#4338CA' },
@@ -344,9 +360,9 @@ function Sidebar({
             onClick={() => onNavigate(item.id)}
             sx={{
               borderRadius: 2,
-              px: isCollapsed ? 0.95 : 1.1,
-              py: 0.78,
-              gap: 1,
+              px: isCollapsed ? 0.9 : (isMobile ? 0.95 : 1.1),
+              py: isMobile ? 0.68 : 0.78,
+              gap: isMobile ? 0.85 : 1,
               justifyContent: isCollapsed ? 'center' : 'flex-start',
               position: 'relative',
               overflow: 'hidden',
@@ -396,36 +412,50 @@ function Sidebar({
     );
   };
 
+  const drawerPaperSx = {
+    width: effectiveDrawerWidth,
+    boxSizing: 'border-box',
+    border: 'none',
+    mt: `calc(${APPBAR_HEIGHT}px + var(--safe-area-top, 0px))`,
+    height: `calc(100vh - ${APPBAR_HEIGHT}px - var(--safe-area-top, 0px))`,
+    background: drawerBackground,
+    color: '#fff',
+    transition: 'width 180ms ease',
+    overflow: 'visible',
+    position: 'fixed',
+    borderTopRightRadius: isMobile ? 24 : 0,
+    borderBottomRightRadius: isMobile ? 24 : 0,
+    boxShadow: isMobile ? `0 24px 60px ${alpha('#000', 0.28)}` : 'none',
+  };
+
   return (
     <Drawer
-      variant="permanent"
+      variant={isMobile ? 'temporary' : 'permanent'}
+      open={isMobile ? mobileOpen : true}
+      onClose={isMobile ? onMobileClose : undefined}
+      ModalProps={isMobile ? { keepMounted: true } : undefined}
       onMouseEnter={sidebarVariant === 'expandable' ? () => setHovered(true) : undefined}
       onMouseLeave={sidebarVariant === 'expandable' ? () => setHovered(false) : undefined}
       sx={{
-        width: drawerWidth,
+        width: effectiveDrawerWidth,
         flexShrink: 0,
+        '& .MuiBackdrop-root': {
+          backdropFilter: isMobile ? 'blur(2px)' : undefined,
+          backgroundColor: isMobile ? alpha('#0b1220', 0.24) : undefined,
+        },
         '& .MuiDrawer-paper': {
-          width: drawerWidth,
-          boxSizing: 'border-box',
-          border: 'none',
-          mt: `${APPBAR_HEIGHT}px`,
-          height: `calc(100vh - ${APPBAR_HEIGHT}px)`,
-          background: drawerBackground,
-          color: '#fff',
-          transition: 'width 180ms ease',
-          overflow: 'visible', // IMPORTANT: allows the expand/collapse handle to remain clickable
-          position: 'fixed',
+          ...drawerPaperSx,
         },
       }}
     >
       {/* Always-visible expand/collapse/pin handle */}
-      <SideHandle />
+      {!isMobile && <SideHandle />}
 
       {/* Top user area (compact) */}
-      <Box sx={{ px: 1.4, pt: 1.2, pb: 1.0 }}>
+      <Box sx={{ px: isMobile ? 1.05 : 1.4, pt: isMobile ? 0.95 : 1.2, pb: isMobile ? 0.8 : 1.0 }}>
         <Box
           sx={{
-            p: 1.05,
+            p: isMobile ? 0.9 : 1.05,
             borderRadius: 2,
             backgroundColor: alpha('#FFFFFF', 0.10),
             border: `1px solid ${alpha('#FFFFFF', 0.12)}`,
@@ -438,8 +468,8 @@ function Sidebar({
             <Box sx={{ position: 'relative', flex: '0 0 auto' }}>
               <Avatar
                 sx={{
-                  width: 34,
-                  height: 34,
+                  width: isMobile ? 32 : 34,
+                  height: isMobile ? 32 : 34,
                   fontWeight: 900,
                   fontSize: '0.88rem',
                   bgcolor: '#f59e0b',
@@ -530,8 +560,8 @@ function Sidebar({
       {/* Menu scroll area */}
       <Box
         sx={{
-          px: 1.2,
-          pt: 1.05,
+          px: isMobile ? 0.95 : 1.2,
+          pt: isMobile ? 0.85 : 1.05,
           flex: 1,
           overflowY: 'auto',
           overflowX: 'hidden',
@@ -550,7 +580,7 @@ function Sidebar({
       </Box>
 
       {/* Bottom actions */}
-      <Box sx={{ px: 1.2, pb: 1.2 }}>
+      <Box sx={{ px: isMobile ? 0.95 : 1.2, pb: isMobile ? 1.0 : 1.2 }}>
         <Divider sx={{ borderColor: alpha('#FFFFFF', 0.10), mx: 0.2, mb: 1.0 }} />
 
         <List disablePadding>

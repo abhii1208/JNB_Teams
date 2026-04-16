@@ -4,6 +4,8 @@
  */
 import React from 'react';
 import { Snackbar, Alert, Box, Typography, IconButton } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import CloseIcon from '@mui/icons-material/Close';
 import TaskIcon from '@mui/icons-material/Assignment';
 import CommentIcon from '@mui/icons-material/Comment';
@@ -48,6 +50,8 @@ const getSeverity = (type) => {
 };
 
 function NotificationToast({ notification, onClose, onClick, autoHideDuration = 4000 }) {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   if (!notification) return null;
 
   const handleClick = () => {
@@ -62,8 +66,8 @@ function NotificationToast({ notification, onClose, onClick, autoHideDuration = 
       open={!!notification}
       autoHideDuration={autoHideDuration}
       onClose={onClose}
-      anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-      sx={{ mt: 8 }}
+      anchorOrigin={{ vertical: isMobile ? 'bottom' : 'top', horizontal: isMobile ? 'center' : 'right' }}
+      sx={{ mt: isMobile ? 0 : 8, mb: isMobile ? 12 : 0 }}
     >
       <Alert
         severity={getSeverity(notification.type)}
