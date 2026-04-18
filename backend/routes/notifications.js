@@ -142,8 +142,8 @@ router.put('/preferences', async (req, res) => {
   try {
     // Build dynamic update query
     const allowedFields = [
-      'task_assigned', 'task_unassigned', 'task_due_date_changed', 'task_mentioned',
-      'task_attachment', 'task_comment', 'task_completed', 'task_liked', 'task_dependency_changed',
+      'task_created', 'task_assigned', 'task_collaborator_added', 'task_unassigned', 'task_due_date_changed', 'task_mentioned',
+      'task_attachment', 'task_comment', 'task_completed', 'task_liked', 'task_dependency_changed', 'task_status_changed',
       'comment_liked', 'attachment_liked',
       'chat_direct_message', 'chat_group_message', 'chat_mentioned',
       'project_settings_changed', 'project_member_added', 'project_member_removed', 'project_role_changed',

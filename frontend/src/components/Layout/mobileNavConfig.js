@@ -72,5 +72,5 @@ export function getSecondaryMobileNav({
 }
 
 export const MOBILE_ACTION_ITEMS = [
-  { id: 'logout', label: 'Log out', icon: <LogoutRoundedIcon /> },
+  { id: 'logout', label: 'Log out / Switch account', icon: <LogoutRoundedIcon /> },
 ];

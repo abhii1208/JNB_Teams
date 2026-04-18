@@ -16,13 +16,16 @@ import BusinessIcon from '@mui/icons-material/Business';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 
 const notificationIcons = {
+  task_created: <TaskIcon fontSize="small" />,
   task_assigned: <TaskIcon fontSize="small" />,
+  task_collaborator_added: <TaskIcon fontSize="small" />,
   task_unassigned: <TaskIcon fontSize="small" />,
   task_due_changed: <TaskIcon fontSize="small" />,
   task_mentioned: <CommentIcon fontSize="small" />,
   task_attachment: <TaskIcon fontSize="small" />,
   task_comment: <CommentIcon fontSize="small" />,
   task_completed: <TaskIcon fontSize="small" />,
+  task_status_changed: <TaskIcon fontSize="small" />,
   chat_message: <ChatIcon fontSize="small" />,
   chat_group_message: <ChatIcon fontSize="small" />,
   chat_mentioned: <ChatIcon fontSize="small" />,
@@ -43,7 +46,7 @@ const getIcon = (type) => notificationIcons[type] || <NotificationsIcon fontSize
 const getSeverity = (type) => {
   if (!type) return 'info';
   const t = type.toLowerCase();
-  if (t.includes('approved') || t.includes('completed') || t.includes('assigned')) return 'success';
+  if (t.includes('approved') || t.includes('completed') || t.includes('assigned') || t.includes('created')) return 'success';
   if (t.includes('rejected') || t.includes('unassigned')) return 'error';
   if (t.includes('due') || t.includes('deadline')) return 'warning';
   return 'info';

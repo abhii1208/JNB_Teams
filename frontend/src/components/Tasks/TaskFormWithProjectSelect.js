@@ -53,7 +53,7 @@ function TaskFormWithProjectSelect({
   // When editing a task, find the project from the task data
   useEffect(() => {
     if (isEdit && task?.project_id) {
-      const foundProject = projects.find(p => p.id === task.project_id);
+      const foundProject = projects.find((p) => String(p.id) === String(task.project_id));
       if (foundProject) {
         setInternalProject(foundProject);
         setShowTaskForm(true);
@@ -61,9 +61,18 @@ function TaskFormWithProjectSelect({
     }
   }, [isEdit, task, projects]);
 
+  useEffect(() => {
+    if (!isEdit && selectedProject?.id) {
+      const foundProject = projects.find((p) => String(p.id) === String(selectedProject.id));
+      if (foundProject) {
+        setInternalProject(foundProject);
+      }
+    }
+  }, [isEdit, selectedProject, projects]);
+
   // Handle project selection
   const handleProjectSelect = (projectId) => {
-    const project = projects.find(p => p.id === projectId);
+    const project = projects.find((p) => String(p.id) === String(projectId));
     setInternalProject(project);
     if (onProjectSelect) onProjectSelect(project);
   };
@@ -127,8 +136,7 @@ function TaskFormWithProjectSelect({
       console.error('Failed to save task:', err);
       const msg = err?.response?.data?.error || err.message || 'Failed to save task';
       setSnackbar({ open: true, message: msg, severity: 'error' });
-      // close the form to keep UX consistent with other flows
-      handleTaskFormClose();
+      // Keep the form open so the user can correct the inputs.
     }
   };
 
@@ -161,12 +169,29 @@ function TaskFormWithProjectSelect({
       onClose={onClose}
       maxWidth="sm"
       fullWidth
-      PaperProps={{ sx: { width: { xs: 'calc(100vw - 16px)', sm: '100%' }, m: { xs: 1, sm: 2 } } }}
+      scroll="paper"
+      PaperProps={{
+        sx: {
+          width: { xs: 'calc(100vw - 16px)', sm: '100%' },
+          maxHeight: { xs: 'calc(100dvh - 16px)', sm: 'calc(100vh - 32px)' },
+          m: { xs: 1, sm: 2 },
+          display: 'flex',
+          flexDirection: 'column',
+        },
+      }}
     >
       <DialogTitle>
         {isEdit ? 'Edit Task' : 'Create New Task'}
       </DialogTitle>
-      <DialogContent sx={{ px: { xs: 2, sm: 3 } }}>
+      <DialogContent
+        dividers
+        sx={{
+          px: { xs: 2, sm: 3 },
+          overflowY: 'auto',
+          WebkitOverflowScrolling: 'touch',
+          flex: '1 1 auto',
+        }}
+      >
         <Box sx={{ py: { xs: 1.5, sm: 2 } }}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Select a project to create the task in:
@@ -200,7 +225,7 @@ function TaskFormWithProjectSelect({
           )}
         </Box>
       </DialogContent>
-      <DialogActions sx={{ p: { xs: 2, sm: 3 }, pt: 0, flexWrap: 'wrap', gap: 1 }}>
+      <DialogActions sx={{ p: { xs: 2, sm: 3 }, pt: 0, flexWrap: 'wrap', gap: 1, flexShrink: 0 }}>
         <Button onClick={onClose} sx={{ width: { xs: '100%', sm: 'auto' } }}>Cancel</Button>
         <Button 
           onClick={handleProceed} 

@@ -3,6 +3,9 @@
  * Real-time notification management with WebSocket integration
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { API_BASE, getNotifications, getNotificationCount } from '../../apiClient';
 
 const WS_BASE = API_BASE.replace(/^http/, 'ws');
@@ -13,24 +16,101 @@ export function useNotifications(workspaceId) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [newNotification, setNewNotification] = useState(null); // For toast display
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
+  const knownNotificationIdsRef = useRef(new Set());
+  const initializedRef = useRef(false);
+  const toastTimeoutRef = useRef(null);
+
+  const showDeviceNotification = useCallback(async (notification) => {
+    if (!notification?.id || !notification?.title) return;
+
+    try {
+      if (!Capacitor.isNativePlatform()) {
+        return;
+      }
+
+      await LocalNotifications.schedule({
+        notifications: [
+          {
+            id: Number(notification.id),
+            title: notification.title,
+            body: notification.message || 'You have a new update in JNB Teams.',
+            schedule: { at: new Date(Date.now() + 100) },
+            extra: {
+              notificationId: notification.id,
+              actionUrl: notification.action_url || null,
+              type: notification.type || null,
+              taskId: notification.task_id || null,
+              projectId: notification.project_id || null,
+              chatThreadId: notification.chat_thread_id || null,
+              supportTicketId: notification.support_ticket_id || null,
+            },
+          },
+        ],
+      });
+    } catch (err) {
+      console.error('Failed to show device notification:', err);
+    }
+  }, []);
+
+  const showToastNotification = useCallback((notification) => {
+    setNewNotification(notification);
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+    toastTimeoutRef.current = setTimeout(() => setNewNotification(null), 5000);
+  }, []);
+
+  const processNewNotifications = useCallback((items, { enableToast = true, enableDevice = true } = {}) => {
+    if (!Array.isArray(items) || items.length === 0) return;
+
+    const unseen = items.filter((item) => item?.id && !knownNotificationIdsRef.current.has(item.id));
+    if (!unseen.length) return;
+
+    unseen.forEach((item) => knownNotificationIdsRef.current.add(item.id));
+
+    const newest = unseen[0];
+    if (enableToast) {
+      showToastNotification(newest);
+    }
+    if (enableDevice) {
+      showDeviceNotification(newest);
+    }
+  }, [showDeviceNotification, showToastNotification]);
 
   // Fetch notifications from API
-  const fetchNotifications = useCallback(async () => {
+  const fetchNotifications = useCallback(async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       setError(null);
       const response = await getNotifications();
-      setNotifications(response.data || []);
-      setUnreadCount((response.data || []).filter(n => !n.read).length);
+      const nextNotifications = response.data || [];
+      const unreadItems = nextNotifications.filter((n) => !n.read);
+      setNotifications(nextNotifications);
+      setUnreadCount(unreadItems.length);
+
+      if (!initializedRef.current) {
+        knownNotificationIdsRef.current = new Set(nextNotifications.map((item) => item.id).filter(Boolean));
+        initializedRef.current = true;
+      } else {
+        processNewNotifications(unreadItems, {
+          enableToast: true,
+          enableDevice: true,
+        });
+      }
     } catch (err) {
       console.error('Failed to fetch notifications:', err);
       setError('Failed to load notifications');
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
-  }, []);
+  }, [processNewNotifications]);
 
   // Fetch unread count only
   const fetchUnreadCount = useCallback(async () => {
@@ -55,19 +135,25 @@ export function useNotifications(workspaceId) {
       console.warn('❌ Ignoring notification without title/message:', notification);
       return;
     }
+
+    const alreadyKnown = knownNotificationIdsRef.current.has(notification.id);
+    knownNotificationIdsRef.current.add(notification.id);
     
     console.log('✅ Adding valid notification:', notification.id, notification.title);
+    let shouldIncrementUnread = false;
     setNotifications(prev => {
-      const updated = [notification, ...prev];
+      shouldIncrementUnread = !prev.some((item) => item.id === notification.id);
+      const withoutDuplicate = prev.filter((item) => item.id !== notification.id);
+      const updated = [notification, ...withoutDuplicate];
       console.log('📋 Notifications state updated, count:', updated.length);
       return updated;
     });
-    setUnreadCount(prev => prev + 1);
-    // Set new notification for toast display
-    setNewNotification(notification);
-    // Clear toast after 3 seconds
-    setTimeout(() => setNewNotification(null), 3000);
-  }, []);
+    setUnreadCount(prev => (shouldIncrementUnread ? prev + 1 : prev));
+    if (!alreadyKnown) {
+      showToastNotification(notification);
+      showDeviceNotification(notification);
+    }
+  }, [showDeviceNotification, showToastNotification]);
 
   // Mark notification as read locally
   const markAsReadLocal = useCallback((id) => {
@@ -99,6 +185,42 @@ export function useNotifications(workspaceId) {
     setNewNotification(null);
   }, []);
 
+  useEffect(() => {
+    const setupLocalNotifications = async () => {
+      try {
+        if (!Capacitor.isNativePlatform()) return;
+        await LocalNotifications.requestPermissions();
+      } catch (err) {
+        console.error('Failed to request local notification permissions:', err);
+      }
+    };
+
+    setupLocalNotifications();
+  }, []);
+
+  useEffect(() => {
+    let appStateListener = null;
+
+    const bindAppState = async () => {
+      try {
+        if (!Capacitor.isNativePlatform()) return;
+        appStateListener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+          if (isActive) {
+            fetchNotifications({ silent: true });
+          }
+        });
+      } catch (err) {
+        console.error('Failed to bind app state listener for notifications:', err);
+      }
+    };
+
+    bindAppState();
+
+    return () => {
+      appStateListener?.remove?.();
+    };
+  }, [fetchNotifications]);
+
   // WebSocket connection for real-time notifications
   useEffect(() => {
     const token = localStorage.getItem('authToken');
@@ -118,6 +240,7 @@ export function useNotifications(workspaceId) {
 
         ws.onopen = () => {
           console.log('✅ Notification WebSocket connected');
+          setIsRealtimeConnected(true);
           reconnectAttempts = 0; // Reset on successful connection
           
           // Subscribe to workspace notifications
@@ -154,6 +277,7 @@ export function useNotifications(workspaceId) {
         ws.onclose = (event) => {
           console.log('WebSocket closed, code:', event.code);
           wsRef.current = null;
+          setIsRealtimeConnected(false);
           
           // Reconnect with exponential backoff unless intentionally closed
           if (event.code !== 1000 && reconnectAttempts < maxReconnectAttempts) {
@@ -166,6 +290,7 @@ export function useNotifications(workspaceId) {
 
         ws.onerror = (error) => {
           console.error('Notification WebSocket error:', error);
+          setIsRealtimeConnected(false);
         };
       } catch (err) {
         console.error('Failed to create WebSocket:', err);
@@ -177,6 +302,9 @@ export function useNotifications(workspaceId) {
     return () => {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
       }
       if (wsRef.current) {
         wsRef.current.close(1000, 'Component unmounted');
@@ -191,15 +319,43 @@ export function useNotifications(workspaceId) {
 
   // Periodic refresh every 30 seconds as fallback
   useEffect(() => {
-    const interval = setInterval(fetchUnreadCount, 30000);
+    const interval = setInterval(() => {
+      if (isRealtimeConnected) {
+        fetchNotifications({ silent: true });
+      } else {
+        fetchNotifications({ silent: true });
+      }
+    }, isRealtimeConnected ? 5000 : 3000);
     return () => clearInterval(interval);
-  }, [fetchUnreadCount]);
+  }, [fetchNotifications, fetchUnreadCount, isRealtimeConnected]);
+
+  // Refresh on app focus/visibility changes to keep mobile state fresh
+  useEffect(() => {
+    const refreshFromForeground = () => {
+      fetchNotifications({ silent: true });
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshFromForeground();
+      }
+    };
+
+    window.addEventListener('focus', refreshFromForeground);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', refreshFromForeground);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [fetchNotifications]);
 
   return {
     notifications,
     unreadCount,
     loading,
     error,
+    isRealtimeConnected,
     newNotification,
     fetchNotifications,
     fetchUnreadCount,

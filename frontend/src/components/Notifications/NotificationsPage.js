@@ -173,32 +173,28 @@ function NotificationsPage({ onNavigate, notifications: externalNotifications, o
     try {
       const response = await getNotifications();
       setNotifications(response.data || []);
+      onRefresh?.();
     } catch (err) {
       console.error('Failed to fetch notifications:', err);
       setError('Failed to load notifications');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onRefresh]);
 
-  // Use external notifications if provided (from real-time hook), otherwise fetch
+  // Seed from external notifications for responsiveness, then fetch the latest from API.
   useEffect(() => {
-    console.log('📊 NotificationsPage: externalNotifications changed, count:', externalNotifications?.length);
     if (externalNotifications) {
       setNotifications(externalNotifications);
-      setLoading(false);
-    } else {
-      fetchNotifications();
     }
+    fetchNotifications();
   }, [externalNotifications, fetchNotifications]);
 
-  // Auto-refresh every 10 seconds for real-time feel when no WebSocket
+  // Auto-refresh every 10 seconds for real-time feel.
   useEffect(() => {
-    if (!externalNotifications) {
-      const interval = setInterval(fetchNotifications, 10000);
-      return () => clearInterval(interval);
-    }
-  }, [externalNotifications, fetchNotifications]);
+    const interval = setInterval(fetchNotifications, 10000);
+    return () => clearInterval(interval);
+  }, [fetchNotifications]);
 
   const filteredNotifications = notifications
     // Filter out invalid notifications - must have id AND (title with content OR message with content)

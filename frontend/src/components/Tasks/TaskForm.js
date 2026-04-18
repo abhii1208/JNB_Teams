@@ -673,14 +673,17 @@ function TaskForm({
         onClose={onClose}
         maxWidth={false}
         fullWidth
-        scroll="body"
+        scroll="paper"
         PaperProps={{
           sx: {
             width: { xs: 'calc(100vw - 16px)', sm: '88vw', md: '66vw' },
             maxWidth: '1040px',
+            height: { xs: 'calc(100dvh - 16px)', sm: 'auto' },
             maxHeight: { xs: 'calc(100dvh - 16px)', sm: 'calc(100vh - 32px)' },
             borderRadius: 2.5,
             overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
             m: { xs: 1, sm: 2 },
           },
         }}
@@ -710,7 +713,17 @@ function TaskForm({
           </IconButton>
         </DialogTitle>
 
-        <DialogContent sx={{ p: { xs: 1.5, sm: 2 }, bgcolor: 'rgba(148,163,184,0.04)' }}>
+        <DialogContent
+          dividers
+          sx={{
+            p: { xs: 1.5, sm: 2 },
+            bgcolor: 'rgba(148,163,184,0.04)',
+            overflowY: 'auto',
+            WebkitOverflowScrolling: 'touch',
+            flex: '1 1 auto',
+            overscrollBehavior: 'contain',
+          }}
+        >
           {!canEdit && (
             <Alert variant="outlined" severity="info" sx={{ mb: 2 }}>
               This task is <strong>{task?.status || 'restricted'}</strong> and can only be edited by admin/owner.
@@ -1576,7 +1589,20 @@ function TaskForm({
           </Box>
         </DialogContent>
 
-        <DialogActions sx={{ p: { xs: 1.5, sm: 2 }, bgcolor: '#fff', borderTop: '1px solid rgba(148,163,184,0.25)', flexWrap: 'wrap', gap: 1, justifyContent: 'flex-end' }}>
+        <DialogActions
+          sx={{
+            p: { xs: 1.5, sm: 2 },
+            bgcolor: '#fff',
+            borderTop: '1px solid rgba(148,163,184,0.25)',
+            flexWrap: 'wrap',
+            gap: 1,
+            justifyContent: 'flex-end',
+            flexShrink: 0,
+            position: 'sticky',
+            bottom: 0,
+            zIndex: 1,
+          }}
+        >
           {canDelete && (
             <Button
               onClick={() => {

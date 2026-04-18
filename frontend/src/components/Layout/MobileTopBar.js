@@ -11,10 +11,15 @@ import {
   Stack,
   Toolbar,
   Typography,
+  ListItemIcon,
+  ListItemText,
+  Divider,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
 import NotificationsRoundedIcon from '@mui/icons-material/NotificationsRounded';
+import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
+import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
 import { PAGE_TITLES } from './mobileNavConfig';
 
 const MOBILE_TOPBAR_HEIGHT = 72;
@@ -27,8 +32,11 @@ function MobileTopBar({
   unreadNotificationCount = 0,
   onNotificationsClick,
   user,
+  onNavigate,
+  onLogout,
 }) {
   const [workspaceAnchorEl, setWorkspaceAnchorEl] = useState(null);
+  const [accountAnchorEl, setAccountAnchorEl] = useState(null);
 
   const title = PAGE_TITLES[currentPage] || 'Workspace';
   const subtitle = useMemo(() => {
@@ -57,12 +65,14 @@ function MobileTopBar({
     >
       <Toolbar sx={{ minHeight: MOBILE_TOPBAR_HEIGHT, px: 2, gap: 1.25 }}>
         <Avatar
+          onClick={(event) => setAccountAnchorEl(event.currentTarget)}
           sx={{
             width: 40,
             height: 40,
             bgcolor: '#0f766e',
             fontWeight: 800,
             boxShadow: `0 10px 24px ${alpha('#0f172a', 0.12)}`,
+            cursor: 'pointer',
           }}
         >
           {initials}
@@ -139,6 +149,60 @@ function MobileTopBar({
             </Stack>
           </MenuItem>
         ))}
+      </Menu>
+
+      <Menu
+        anchorEl={accountAnchorEl}
+        open={Boolean(accountAnchorEl)}
+        onClose={() => setAccountAnchorEl(null)}
+        PaperProps={{
+          sx: {
+            mt: 1,
+            borderRadius: 3,
+            minWidth: 230,
+            boxShadow: `0 18px 48px ${alpha('#0f172a', 0.16)}`,
+          },
+        }}
+      >
+        <Box sx={{ px: 2, py: 1.4 }}>
+          <Typography sx={{ fontWeight: 800, fontSize: '0.95rem' }}>
+            {`${user?.first_name || user?.firstName || ''} ${user?.last_name || user?.lastName || ''}`.trim() || 'Current Account'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {user?.email || 'Signed in user'}
+          </Typography>
+        </Box>
+
+        <Divider />
+
+        <MenuItem
+          onClick={() => {
+            setAccountAnchorEl(null);
+            onNavigate?.('settings');
+          }}
+        >
+          <ListItemIcon sx={{ minWidth: 34 }}>
+            <SettingsRoundedIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText primary="Settings" />
+        </MenuItem>
+
+        <MenuItem
+          onClick={() => {
+            setAccountAnchorEl(null);
+            onLogout?.();
+          }}
+          sx={{ color: '#b91c1c' }}
+        >
+          <ListItemIcon sx={{ minWidth: 34, color: '#b91c1c' }}>
+            <LogoutRoundedIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText
+            primary="Log out"
+            secondary="Use another account"
+            secondaryTypographyProps={{ sx: { color: alpha('#991b1b', 0.8) } }}
+          />
+        </MenuItem>
       </Menu>
     </AppBar>
   );

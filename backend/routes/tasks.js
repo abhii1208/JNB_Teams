@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../db');
 const notificationService = require('../services/notificationService');
+const { sendMail } = require('../services/mailService');
 
 const normalizeNumericInput = (value) => {
   if (value === '' || value === null || value === undefined) return null;
@@ -1480,15 +1481,30 @@ router.post('/', async (req, res) => {
       // don't fail the whole request for approval insertion errors
     }
     
-    await client.query('COMMIT');
-    
-    // Send notification AFTER commit so task exists in database
-    try {
-      if (assignee_id && assignee_id !== req.userId) {
-        await notificationService.notifyTaskAssigned({
+      await client.query('COMMIT');
+      
+      // Send notification AFTER commit so task exists in database
+      try {
+        await notificationService.createNotification({
+          userId: req.userId,
+          type: notificationService.NOTIFICATION_TYPES.TASK_CREATED,
+          title: 'Task Created',
+          message: `You created "${name}"`,
+          workspaceId,
+          projectId: project_id,
           taskId: task.id,
-          taskName: name,
-          assigneeId: assignee_id,
+          senderId: null,
+          metadata: {
+            task_name: name,
+            created_by_self: true,
+          },
+        });
+
+        if (assignee_id && assignee_id !== req.userId) {
+          await notificationService.notifyTaskAssigned({
+            taskId: task.id,
+            taskName: name,
+            assigneeId: assignee_id,
           assignerId: req.userId,
           projectId: project_id,
           workspaceId: workspaceId,
@@ -2246,15 +2262,20 @@ router.post('/:taskId/reminders', async (req, res) => {
       return res.status(404).json({ error: 'Task not found' });
     }
 
-    const workspaceMemberCheck = await client.query(
-      'SELECT user_id FROM workspace_members WHERE workspace_id = $1 AND user_id = ANY($2::int[])',
-      [task.workspace_id, recipientIds]
-    );
-    const validRecipientIds = workspaceMemberCheck.rows.map((row) => row.user_id);
-    if (!validRecipientIds.length) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'No valid recipients found in workspace' });
-    }
+      const workspaceMemberCheck = await client.query(
+        `SELECT wm.user_id, u.email,
+                COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.last_name), ''), u.username, u.email) AS name
+         FROM workspace_members wm
+         JOIN users u ON u.id = wm.user_id
+         WHERE wm.workspace_id = $1 AND wm.user_id = ANY($2::int[])`,
+        [task.workspace_id, recipientIds]
+      );
+      const validRecipients = workspaceMemberCheck.rows;
+      const validRecipientIds = validRecipients.map((row) => row.user_id);
+      if (!validRecipientIds.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'No valid recipients found in workspace' });
+      }
 
     const values = [];
     const placeholders = validRecipientIds.map((recipientId, index) => {
@@ -2269,32 +2290,81 @@ router.post('/:taskId/reminders', async (req, res) => {
       values
     );
 
-    await client.query(
-      'UPDATE tasks SET last_reminder_sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
-      [task.id]
-    );
+      await client.query(
+        'UPDATE tasks SET last_reminder_sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+        [task.id]
+      );
 
-    await client.query('COMMIT');
+      await client.query('COMMIT');
 
-    await Promise.all(validRecipientIds.map((recipientId) =>
-      notificationService.createNotification({
-        userId: recipientId,
-        senderId: req.userId,
-        type: notificationService.NOTIFICATION_TYPES.TASK_STATUS_CHANGED,
-        title: 'Task Reminder',
-        message: message || `Reminder for task "${task.name}"`,
-        workspaceId: task.workspace_id,
-        projectId: task.project_id,
-        taskId: task.id,
-        metadata: { reminder: true, delivery_channels: deliveryChannels },
-      })
-    ));
+      const shouldSendEmail = deliveryChannels.includes('email');
+      const emailResults = await Promise.all(validRecipients.map(async (recipient) => {
+        if (!shouldSendEmail || !recipient.email) {
+          return {
+            recipient_id: recipient.user_id,
+            email: recipient.email || null,
+            delivered: false,
+            status: shouldSendEmail ? 'missing_email' : 'skipped',
+          };
+        }
 
-    res.status(201).json({ success: true, recipients: validRecipientIds.length });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('Send task reminder error:', err);
-    res.status(500).json({ error: 'Failed to send reminder' });
+        try {
+          const emailText = message || `Reminder for task "${task.name}"`;
+          const mailResult = await sendMail({
+            to: recipient.email,
+            subject: `Task reminder: ${task.name}`,
+            text: `${emailText}\n\nTask: ${task.name}\nProject: ${task.project_name || 'N/A'}\nDue date: ${task.due_date || 'Not set'}`,
+            html: `
+              <p>${emailText}</p>
+              <p><strong>Task:</strong> ${task.name}</p>
+              <p><strong>Project:</strong> ${task.project_name || 'N/A'}</p>
+              <p><strong>Due date:</strong> ${task.due_date || 'Not set'}</p>
+            `,
+          });
+          return {
+            recipient_id: recipient.user_id,
+            email: recipient.email,
+            delivered: mailResult.delivered,
+            status: mailResult.status,
+          };
+        } catch (mailErr) {
+          console.error('Task reminder email failed:', mailErr);
+          return {
+            recipient_id: recipient.user_id,
+            email: recipient.email,
+            delivered: false,
+            status: 'failed',
+          };
+        }
+      }));
+
+      await Promise.all(validRecipientIds.map((recipientId) =>
+        notificationService.createNotification({
+          userId: recipientId,
+          senderId: req.userId,
+          type: notificationService.NOTIFICATION_TYPES.TASK_MENTIONED,
+          title: 'Task Reminder',
+          message: message || `Reminder for task "${task.name}"`,
+          workspaceId: task.workspace_id,
+          projectId: task.project_id,
+          taskId: task.id,
+          metadata: {
+            reminder: true,
+            delivery_channels: deliveryChannels,
+            email_results: emailResults,
+          },
+        })
+      ));
+
+      res.status(201).json({
+        success: true,
+        recipients: validRecipientIds.length,
+        email_results: emailResults,
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Send task reminder error:', err);
+      res.status(500).json({ error: 'Failed to send reminder' });
   } finally {
     client.release();
   }

@@ -1,0 +1,5 @@
+backend/migrations/039_add_user_date_of_birth.sql
+backend/migrations/040_workspace_calendar_items.sql
+backend/tmp/backend.err.log
+backend/tmp/backend.log
+images/dashboard-calendar-mockup.jpg

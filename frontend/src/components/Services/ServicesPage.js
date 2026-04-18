@@ -65,7 +65,7 @@ function ServicesPage({ workspace }) {
       setServices([]);
       const message = err?.response?.status === 401
         ? 'Your session expired. Please sign in again.'
-        : '';
+        : (err?.response?.data?.error || 'Failed to load services');
       setError(message);
     } finally {
       setLoading(false);

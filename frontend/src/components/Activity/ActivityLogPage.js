@@ -218,8 +218,11 @@ function ActivityLogPage({ workspace }) {
                   </TableCell>
                 </TableRow>
               ) : (
-                paginatedActivities.map((activity) => (
-                  <TableRow key={activity.id || `${activity.type || 'activity'}-${activity.created_at || Math.random()}`} hover>
+                paginatedActivities.map((activity, index) => (
+                  <TableRow
+                    key={activity.id || `${activity.type || 'activity'}-${activity.created_at || 'time'}-${activity.item_name || activity.entity_name || index}`}
+                    hover
+                  >
                     <TableCell>
                       {(() => {
                         const typeMeta = typeColors[activity.type] || fallbackTypeMeta;

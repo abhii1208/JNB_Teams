@@ -3,8 +3,11 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
+  FormControlLabel,
+  FormGroup,
   Divider,
   Drawer,
   IconButton,
@@ -82,16 +85,18 @@ function TaskDetailsDrawer({ open, taskId, onClose, onEdit, workspaceMembers = [
   const [loading, setLoading] = useState(false);
   const [task, setTask] = useState(null);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [commentText, setCommentText] = useState('');
   const [workLog, setWorkLog] = useState({ work_date: '', start_time: '', end_time: '', hours: '', notes: '' });
   const [reminder, setReminder] = useState({ recipient_ids: [], message: '', delivery_channels: ['in_app'] });
 
   const fetchDetails = useCallback(async () => {
     if (!taskId || !open) return;
-    setLoading(true);
-    setError('');
-    try {
-      const response = await getTaskDetails(taskId);
+      setLoading(true);
+      setError('');
+      setSuccess('');
+      try {
+        const response = await getTaskDetails(taskId);
       setTask(response.data);
     } catch (err) {
       console.error('Failed to fetch task details:', err);
@@ -129,10 +134,34 @@ function TaskDetailsDrawer({ open, taskId, onClose, onEdit, workspaceMembers = [
 
   const handleSendReminder = async () => {
     if (!reminder.recipient_ids.length) return;
-    await sendTaskReminder(taskId, reminder);
+    setError('');
+    setSuccess('');
+    const response = await sendTaskReminder(taskId, reminder);
+    const emailResults = response.data?.email_results || [];
+    const emailSentCount = emailResults.filter((entry) => entry.delivered).length;
+    const usedEmail = reminder.delivery_channels.includes('email');
     setReminder({ recipient_ids: [], message: '', delivery_channels: ['in_app'] });
+    setSuccess(
+      usedEmail
+        ? `Reminder sent in-app. Email delivered to ${emailSentCount} recipient${emailSentCount === 1 ? '' : 's'}.`
+        : 'Reminder sent in-app successfully.'
+    );
     await fetchDetails();
     onUpdated?.();
+  };
+
+  const toggleReminderChannel = (channel) => {
+    setReminder((prev) => {
+      const hasChannel = prev.delivery_channels.includes(channel);
+      const nextChannels = hasChannel
+        ? prev.delivery_channels.filter((item) => item !== channel)
+        : [...prev.delivery_channels, channel];
+
+      return {
+        ...prev,
+        delivery_channels: nextChannels.length ? nextChannels : ['in_app'],
+      };
+    });
   };
 
   return (
@@ -178,14 +207,15 @@ function TaskDetailsDrawer({ open, taskId, onClose, onEdit, workspaceMembers = [
         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8 }}>
           <CircularProgress />
         </Box>
-      ) : error ? (
-        <Box sx={{ p: 2.5 }}>
-          <Alert severity="error">{error}</Alert>
-        </Box>
-      ) : task ? (
-        <Box sx={{ p: 2.5, overflowY: 'auto' }}>
-          <Stack spacing={2.5}>
-            <Paper sx={{ p: 2, borderRadius: 3 }}>
+        ) : error ? (
+          <Box sx={{ p: 2.5 }}>
+            <Alert severity="error">{error}</Alert>
+          </Box>
+        ) : task ? (
+          <Box sx={{ p: 2.5, overflowY: 'auto' }}>
+            <Stack spacing={2.5}>
+              {success ? <Alert severity="success">{success}</Alert> : null}
+              <Paper sx={{ p: 2, borderRadius: 3 }}>
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 1.5 }}>
                 <Chip label={task.project_name || 'Project'} variant="outlined" />
                 <Chip label={task.status || 'Open'} sx={{ bgcolor: statusColor(task.status).bg, color: statusColor(task.status).color, fontWeight: 700 }} />
@@ -306,17 +336,37 @@ function TaskDetailsDrawer({ open, taskId, onClose, onEdit, workspaceMembers = [
                   <MenuItem key={option.id} value={option.id}>{option.label}</MenuItem>
                 ))}
               </TextField>
-              <TextField
-                fullWidth
-                size="small"
-                sx={{ mt: 1 }}
-                label="Reminder Message"
-                value={reminder.message}
-                onChange={(event) => setReminder((prev) => ({ ...prev, message: event.target.value }))}
-              />
-              <Button sx={{ mt: 1.5 }} variant="contained" startIcon={<SendIcon />} onClick={handleSendReminder}>
-                Send Reminder
-              </Button>
+                <TextField
+                  fullWidth
+                  size="small"
+                  sx={{ mt: 1 }}
+                  label="Reminder Message"
+                  value={reminder.message}
+                  onChange={(event) => setReminder((prev) => ({ ...prev, message: event.target.value }))}
+                />
+                <FormGroup row sx={{ mt: 1 }}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={reminder.delivery_channels.includes('in_app')}
+                        onChange={() => toggleReminderChannel('in_app')}
+                      />
+                    }
+                    label="In-app"
+                  />
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={reminder.delivery_channels.includes('email')}
+                        onChange={() => toggleReminderChannel('email')}
+                      />
+                    }
+                    label="Email"
+                  />
+                </FormGroup>
+                <Button sx={{ mt: 1.5 }} variant="contained" startIcon={<SendIcon />} onClick={handleSendReminder}>
+                  Send Reminder
+                </Button>
             </Paper>
           </Stack>
         </Box>

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { Box, CircularProgress, Typography, useMediaQuery } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import Sidebar from './Sidebar';
@@ -26,6 +28,46 @@ import OperationsPage from '../Operations/OperationsPage';
 import SupportPage from '../Support/SupportPage';
 import { ChecklistPage } from '../Checklist';
 import { getWorkspaces, getUserSettings, patchUserAppPreferences } from '../../apiClient';
+
+function navigateFromNotification(notification, handleNavigate) {
+  const type = notification?.type?.toLowerCase() || '';
+
+  if (notification?.action_url) {
+    const url = notification.action_url;
+    if (url.startsWith('/tasks/')) {
+      handleNavigate('tasks', { projectId: notification.project_id, taskId: parseInt(url.split('/tasks/')[1], 10) });
+      return;
+    }
+    if (url.startsWith('/approvals')) {
+      handleNavigate('approvals', { projectId: notification.project_id });
+      return;
+    }
+    if (url.startsWith('/chat/')) {
+      handleNavigate('chat', { threadId: parseInt(url.split('/chat/')[1], 10) });
+      return;
+    }
+    if (url.startsWith('/projects/')) {
+      handleNavigate('projects', { projectId: parseInt(url.split('/projects/')[1], 10) });
+      return;
+    }
+    if (url.startsWith('/clients/')) {
+      handleNavigate('clients', { clientId: parseInt(url.split('/clients/')[1], 10) });
+      return;
+    }
+    if (url.startsWith('/support/')) {
+      handleNavigate('support', { ticketId: parseInt(url.split('/support/')[1], 10) });
+      return;
+    }
+  }
+
+  if (type.includes('approval')) {
+    handleNavigate('approvals', { projectId: notification?.project_id });
+  } else if (type.includes('task') || notification?.task_id) {
+    handleNavigate('tasks', { projectId: notification?.project_id, taskId: notification?.task_id });
+  } else if (type.includes('chat') || notification?.chat_thread_id) {
+    handleNavigate('chat', { threadId: notification?.chat_thread_id });
+  }
+}
 
 function MainLayout({ userId, onLogout, themePreference = 'light', onThemePreferenceChange }) {
   const theme = useTheme();
@@ -101,33 +143,6 @@ function MainLayout({ userId, onLogout, themePreference = 'light', onThemePrefer
   } = useNotifications(currentWorkspace?.id);
 
   // Handle notification toast click - navigate to relevant page
-  const handleNotificationToastClick = (notification) => {
-    const type = notification.type?.toLowerCase() || '';
-    
-    if (notification.action_url) {
-      const url = notification.action_url;
-      if (url.startsWith('/tasks/')) {
-        handleNavigate('tasks', { projectId: notification.project_id, taskId: parseInt(url.split('/tasks/')[1]) });
-      } else if (url.startsWith('/approvals')) {
-        handleNavigate('approvals', { projectId: notification.project_id });
-      } else if (url.startsWith('/chat/')) {
-        handleNavigate('chat', { threadId: parseInt(url.split('/chat/')[1]) });
-      } else if (url.startsWith('/projects/')) {
-        handleNavigate('projects', { projectId: parseInt(url.split('/projects/')[1]) });
-      } else if (url.startsWith('/clients/')) {
-        handleNavigate('clients', { clientId: parseInt(url.split('/clients/')[1]) });
-      } else if (url.startsWith('/support/')) {
-        handleNavigate('support', { ticketId: parseInt(url.split('/support/')[1], 10) });
-      }
-    } else if (type.includes('approval')) {
-      handleNavigate('approvals', { projectId: notification.project_id });
-    } else if (type.includes('task') || notification.task_id) {
-      handleNavigate('tasks', { projectId: notification.project_id, taskId: notification.task_id });
-    } else if (type.includes('chat') || notification.chat_thread_id) {
-      handleNavigate('chat', { threadId: notification.chat_thread_id });
-    }
-  };
-
   useEffect(() => {
     const handlePopState = (event) => {
       const state = event.state;
@@ -152,7 +167,7 @@ function MainLayout({ userId, onLogout, themePreference = 'light', onThemePrefer
     window.history.replaceState(buildHistoryState(), document.title);
   }, [loading, buildHistoryState]);
 
-  const handleNavigate = (page, options = null) => {
+  const handleNavigate = useCallback((page, options = null) => {
     if (isMobile && page === 'more') {
       setMobileMoreOpen(true);
       return;
@@ -173,7 +188,40 @@ function MainLayout({ userId, onLogout, themePreference = 'light', onThemePrefer
       }),
       document.title
     );
-  };
+  }, [isMobile, buildHistoryState]);
+
+  const handleNotificationToastClick = useCallback((notification) => {
+    navigateFromNotification(notification, handleNavigate);
+  }, [handleNavigate]);
+
+  useEffect(() => {
+    let notificationActionListener = null;
+
+    const bindNotificationActions = async () => {
+      try {
+        if (!Capacitor.isNativePlatform()) return;
+        notificationActionListener = await LocalNotifications.addListener('localNotificationActionPerformed', (event) => {
+          const extra = event?.notification?.extra || {};
+          navigateFromNotification({
+            action_url: extra.actionUrl || null,
+            task_id: extra.taskId || null,
+            project_id: extra.projectId || null,
+            chat_thread_id: extra.chatThreadId || null,
+            support_ticket_id: extra.supportTicketId || null,
+            type: extra.type || 'task_assigned',
+          }, handleNavigate);
+        });
+      } catch (err) {
+        console.error('Failed to bind local notification actions:', err);
+      }
+    };
+
+    bindNotificationActions();
+
+    return () => {
+      notificationActionListener?.remove?.();
+    };
+  }, [handleNavigate]);
 
   const handleWorkspaceChange = (workspace) => {
     setCurrentWorkspace(workspace);
@@ -484,7 +532,12 @@ function MainLayout({ userId, onLogout, themePreference = 'light', onThemePrefer
           workspaces={workspaces}
           onWorkspaceChange={handleWorkspaceChange}
           unreadNotificationCount={unreadCount}
-          onNotificationsClick={() => handleNavigate('notifications')}
+          onNavigate={handleNavigate}
+          onLogout={onLogout}
+          onNotificationsClick={() => {
+            fetchNotifications();
+            handleNavigate('notifications');
+          }}
         />
       ) : (
         <TopAppBar
