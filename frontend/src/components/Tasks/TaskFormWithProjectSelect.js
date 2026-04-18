@@ -12,6 +12,7 @@ import {
   Select,
   MenuItem,
   Chip,
+  ListItemText,
 } from '@mui/material';
 import { Snackbar, Alert } from '@mui/material';
 import FolderIcon from '@mui/icons-material/Folder';
@@ -69,6 +70,24 @@ function TaskFormWithProjectSelect({
       }
     }
   }, [isEdit, selectedProject, projects]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (isEdit) return;
+
+    if (selectedProject?.id) {
+      const foundProject = projects.find((p) => String(p.id) === String(selectedProject.id));
+      setInternalProject(foundProject || null);
+      return;
+    }
+
+    setInternalProject((prev) => {
+      if (prev && projects.some((project) => String(project.id) === String(prev.id))) {
+        return prev;
+      }
+      return null;
+    });
+  }, [open, isEdit, selectedProject, projects]);
 
   // Handle project selection
   const handleProjectSelect = (projectId) => {
@@ -203,12 +222,40 @@ function TaskFormWithProjectSelect({
               value={internalProject?.id || ''}
               onChange={(e) => handleProjectSelect(e.target.value)}
               label="Project"
+              displayEmpty
+              MenuProps={{
+                disablePortal: true,
+                keepMounted: true,
+                PaperProps: {
+                  sx: {
+                    maxHeight: 320,
+                  },
+                },
+              }}
+              renderValue={(selected) => {
+                const project = projects.find((item) => String(item.id) === String(selected));
+                return project?.name || 'Select project';
+              }}
             >
+              <MenuItem value="" disabled>
+                <em>Select project</em>
+              </MenuItem>
               {projects.map(project => (
                 <MenuItem key={project.id} value={project.id}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, width: '100%' }}>
                     <FolderIcon fontSize="small" color="action" />
-                    <Typography variant="body2" sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</Typography>
+                    <ListItemText
+                      primary={project.name}
+                      primaryTypographyProps={{
+                        variant: 'body2',
+                        sx: {
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        },
+                      }}
+                    />
                     {project.stage && (
                       <Chip label={project.stage} size="small" sx={{ ml: 'auto' }} />
                     )}
