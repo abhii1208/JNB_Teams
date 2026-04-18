@@ -209,6 +209,29 @@ const parseJsonField = (value, fallback = []) => {
   }
 };
 
+const insertMinimalNotification = async (dbClient, {
+  userId,
+  type,
+  title,
+  message,
+  projectId = null,
+  taskId = null,
+}) => {
+  if (!userId || !type || !title || !message) return null;
+  try {
+    const result = await dbClient.query(
+      `INSERT INTO notifications (user_id, type, title, message, project_id, task_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [userId, type, title, message, projectId, taskId]
+    );
+    return result.rows[0] || null;
+  } catch (err) {
+    console.error('Minimal notification insert failed:', err);
+    return null;
+  }
+};
+
 const normalizeWorkLogInput = ({ start_time, end_time, hours, work_date, notes }) => {
   const normalizedHours = normalizeNumericInput(hours);
   let computedHours = normalizedHours;
@@ -1485,7 +1508,7 @@ router.post('/', async (req, res) => {
       
       // Send notification AFTER commit so task exists in database
       try {
-        await notificationService.createNotification({
+        const creatorNotification = await notificationService.createNotification({
           userId: req.userId,
           type: notificationService.NOTIFICATION_TYPES.TASK_CREATED,
           title: 'Task Created',
@@ -1499,21 +1522,41 @@ router.post('/', async (req, res) => {
             created_by_self: true,
           },
         });
+        if (!creatorNotification) {
+          await insertMinimalNotification(pool, {
+            userId: req.userId,
+            type: notificationService.NOTIFICATION_TYPES.TASK_CREATED,
+            title: 'Task Created',
+            message: `You created "${name}"`,
+            projectId: project_id,
+            taskId: task.id,
+          });
+        }
 
         if (assignee_id && assignee_id !== req.userId) {
-          await notificationService.notifyTaskAssigned({
+          const assigneeNotification = await notificationService.notifyTaskAssigned({
+              taskId: task.id,
+              taskName: name,
+              assigneeId: assignee_id,
+            assignerId: req.userId,
+            projectId: project_id,
+            workspaceId: workspaceId,
+          });
+          if (!assigneeNotification) {
+            await insertMinimalNotification(pool, {
+              userId: assignee_id,
+              type: notificationService.NOTIFICATION_TYPES.TASK_ASSIGNED,
+              title: 'Task Assigned',
+              message: `You were assigned "${name}"`,
+              projectId: project_id,
+              taskId: task.id,
+            });
+          }
+        }
+        const followers = await notificationService.getTaskFollowers(task.id, req.userId);
+        if (followers.length > 0) {
+          await notificationService.notifyTaskCreated({
             taskId: task.id,
-            taskName: name,
-            assigneeId: assignee_id,
-          assignerId: req.userId,
-          projectId: project_id,
-          workspaceId: workspaceId,
-        });
-      }
-      const followers = await notificationService.getTaskFollowers(task.id, req.userId);
-      if (followers.length > 0) {
-        await notificationService.notifyTaskCreated({
-          taskId: task.id,
           taskName: name,
           creatorId: req.userId,
           projectId: project_id,
@@ -1913,7 +1956,7 @@ router.put('/:taskId', async (req, res) => {
         
         // Notify new assignee they were assigned
         if (newAssigneeId && newAssigneeId !== req.userId) {
-          await notificationService.notifyTaskAssigned({
+          const assigneeNotification = await notificationService.notifyTaskAssigned({
             taskId: task.id,
             taskName: task.name,
             assigneeId: newAssigneeId,
@@ -1921,6 +1964,16 @@ router.put('/:taskId', async (req, res) => {
             projectId: task.project_id,
             workspaceId: access.workspace_id,
           });
+          if (!assigneeNotification) {
+            await insertMinimalNotification(pool, {
+              userId: newAssigneeId,
+              type: notificationService.NOTIFICATION_TYPES.TASK_ASSIGNED,
+              title: 'Task Assigned',
+              message: `You were assigned "${task.name}"`,
+              projectId: task.project_id,
+              taskId: task.id,
+            });
+          }
         }
       }
       
