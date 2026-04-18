@@ -5,6 +5,36 @@
  */
 const { pool } = require('../db');
 
+const DEFAULT_NOTIFICATION_PREFERENCES = {
+  task_assigned: true,
+  task_created: true,
+  task_unassigned: true,
+  task_collaborator_added: true,
+  task_due_date_changed: true,
+  task_mentioned: true,
+  task_attachment: true,
+  task_comment: true,
+  task_completed: true,
+  task_liked: true,
+  comment_liked: true,
+  attachment_liked: true,
+  chat_direct_message: true,
+  chat_group_message: true,
+  chat_mentioned: true,
+  project_settings_changed: true,
+  client_added: true,
+  client_changed: true,
+  approval_requested: true,
+  approval_approved: true,
+  approval_rejected: true,
+  support_ticket_created: true,
+  support_ticket_response: true,
+  support_ticket_status_changed: true,
+  in_app_enabled: true,
+  push_enabled: true,
+  email_enabled: true,
+};
+
 // Notification types with their metadata
 const NOTIFICATION_TYPES = {
   // Task notifications
@@ -155,43 +185,18 @@ async function getUserPreferences(userId, workspaceId = null) {
       ? `SELECT * FROM notification_preferences WHERE user_id = $1 AND (workspace_id = $2 OR workspace_id IS NULL) ORDER BY workspace_id NULLS LAST LIMIT 1`
       : `SELECT * FROM notification_preferences WHERE user_id = $1 AND workspace_id IS NULL LIMIT 1`;
     
-    const params = workspaceId ? [userId, workspaceId] : [userId];
-    const result = await pool.query(query, params);
-    
-    // Return default preferences if none exist
-    if (result.rows.length === 0) {
-      return {
-        task_assigned: true,
-        task_created: true,
-        task_unassigned: true,
-        task_collaborator_added: true,
-        task_due_date_changed: true,
-        task_mentioned: true,
-        task_attachment: true,
-        task_comment: true,
-        task_completed: true,
-        task_liked: true,
-        comment_liked: true,
-        attachment_liked: true,
-        chat_direct_message: true,
-        chat_group_message: true,
-        chat_mentioned: true,
-        project_settings_changed: true,
-        client_added: true,
-        client_changed: true,
-        approval_requested: true,
-        approval_approved: true,
-        approval_rejected: true,
-        in_app_enabled: true,
-        push_enabled: true,
-        email_enabled: true,
-      };
-    }
-    
-    return result.rows[0];
+      const params = workspaceId ? [userId, workspaceId] : [userId];
+      const result = await pool.query(query, params);
+      
+      // Return default preferences if none exist
+      if (result.rows.length === 0) {
+        return { ...DEFAULT_NOTIFICATION_PREFERENCES };
+      }
+      
+      return result.rows[0];
   } catch (err) {
     console.error('Error getting notification preferences:', err);
-    return null;
+    return { ...DEFAULT_NOTIFICATION_PREFERENCES };
   }
 }
 
@@ -199,7 +204,8 @@ async function getUserPreferences(userId, workspaceId = null) {
  * Check if user should receive this notification type
  */
 function shouldNotify(preferences, notificationType) {
-  if (!preferences || !preferences.in_app_enabled) return false;
+  if (!preferences) return true;
+  if (preferences.in_app_enabled === false) return false;
   
   const prefMap = {
     [NOTIFICATION_TYPES.TASK_CREATED]: 'task_created',
@@ -251,8 +257,8 @@ async function createNotification({
   senderId = null,
   metadata = {},
   broadcast = true,
-}) {
-  try {
+  }) {
+    try {
     // Don't notify self
     if (senderId && userId === senderId) {
       return null;
@@ -276,30 +282,55 @@ async function createNotification({
     });
 
     // Insert notification
-    const result = await pool.query(
-      `INSERT INTO notifications 
-       (user_id, type, title, message, workspace_id, project_id, task_id, 
-        chat_thread_id, chat_message_id, client_id, support_ticket_id, sender_id, action_url, action_type, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-       RETURNING *`,
-      [
-        userId,
-        type,
-        title,
-        message,
-        workspaceId,
-        projectId,
-        taskId,
-        chatThreadId,
-        chatMessageId,
-        clientId,
-        supportTicketId,
-        senderId,
-        actionUrl,
-        type,
-        JSON.stringify(metadata),
-      ]
-    );
+      let result;
+      try {
+        result = await pool.query(
+          `INSERT INTO notifications 
+           (user_id, type, title, message, workspace_id, project_id, task_id, 
+            chat_thread_id, chat_message_id, client_id, support_ticket_id, sender_id, action_url, action_type, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+           RETURNING *`,
+          [
+            userId,
+            type,
+            title,
+            message,
+            workspaceId,
+            projectId,
+            taskId,
+            chatThreadId,
+            chatMessageId,
+            clientId,
+            supportTicketId,
+            senderId,
+            actionUrl,
+            type,
+            JSON.stringify(metadata),
+          ]
+        );
+      } catch (insertErr) {
+        const missingColumnError = insertErr?.code === '42703' || /column .* does not exist/i.test(insertErr?.message || '');
+        const missingRelationError = insertErr?.code === '42P01';
+
+        if (!missingColumnError && !missingRelationError) {
+          throw insertErr;
+        }
+
+        console.warn('Notification insert fallback triggered:', insertErr.message);
+        result = await pool.query(
+          `INSERT INTO notifications (user_id, type, title, message, project_id, task_id)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING *`,
+          [
+            userId,
+            type,
+            title,
+            message,
+            projectId,
+            taskId,
+          ]
+        );
+      }
 
     const notification = result.rows[0];
 
